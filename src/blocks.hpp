@@ -2,7 +2,9 @@
 #include <cstdint>
 
 // ---------------------------------------------------------------------------
-// Block ids (early-Minecraft style palette)
+// 方块运行时 ID（存档/内存中的 uint8 索引）
+// 规范 ID 是 BLOCK_DEFS[].id 里的命名空间字符串（Resource location），
+// 两者通过方块注册表一一对应。见 docs/standards.md §方块。
 // ---------------------------------------------------------------------------
 enum Block : uint8_t {
     B_AIR = 0,
@@ -38,53 +40,78 @@ enum Tile : uint8_t {
     T_COUNT = 21,
 };
 
-// Face indices
+// Face indices（MC 语义: F_PY=up 顶面, F_NY=down 底面, ±X/±Z 四侧面）
 enum Face : int { F_PX = 0, F_NX = 1, F_PY = 2, F_NY = 3, F_PZ = 4, F_NZ = 5 };
 
+// ---------------------------------------------------------------------------
+// 方块注册表（对齐 MC 规范: 每种方块 = 命名空间 ID + 一组规范属性）
+//  - id:            命名空间 ID（本项目的默认命名空间为 voxmine:，规范见
+//                   docs/standards.md §命名空间ID）。未来存档/联机/模组
+//                   以此字符串为准，运行时 uint8 id 仅是内部索引。
+//  - name:          显示名（中文）。
+//  - opaque:        完全遮挡（用于面剔除；等价 MC 的 opaque 全方块）。
+//  - solid:         有碰撞箱（参与玩家/实体碰撞）。
+//  - lightEmission: 发光等级 0..15（MC 光照规范；当前无光源，全 0，光照引擎预留）。
+//  - opacity:       光照衰减 0..15（MC: 不透明块 15，树叶/水 1，空气/玻璃 0）。
+//  - tileTop/Side/Bottom: 图集 tile（F_PY / 侧面 / F_NY）。
+// ---------------------------------------------------------------------------
+struct BlockDef {
+    const char* id;
+    const char* name;
+    bool        opaque;
+    bool        solid;
+    uint8_t     lightEmission;
+    uint8_t     opacity;
+    uint8_t     tileTop;
+    uint8_t     tileSide;
+    uint8_t     tileBottom;
+};
+
+inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
+    /*B_AIR     */ {"voxmine:air",            "空气",     false, false, 0, 0,  T_WHITE,   T_WHITE,   T_WHITE  },
+    /*B_STONE    */ {"voxmine:stone",          "石头",     true,  true,  0, 15, T_STONE,   T_STONE,   T_STONE  },
+    /*B_GRASS    */ {"voxmine:grass_block",    "草方块",   true,  true,  0, 15, T_GRASS_TOP, T_GRASS_SIDE, T_DIRT},
+    /*B_DIRT     */ {"voxmine:dirt",           "泥土",     true,  true,  0, 15, T_DIRT,    T_DIRT,    T_DIRT   },
+    /*B_BEDROCK  */ {"voxmine:bedrock",        "基岩",     true,  true,  0, 15, T_BEDROCK, T_BEDROCK, T_BEDROCK},
+    /*B_COBBLE   */ {"voxmine:cobblestone",    "圆石",     true,  true,  0, 15, T_COBBLE,  T_COBBLE,  T_COBBLE },
+    /*B_PLANKS   */ {"voxmine:oak_planks",     "橡木木板", true,  true,  0, 15, T_PLANKS,  T_PLANKS,  T_PLANKS },
+    /*B_LOG      */ {"voxmine:oak_log",        "橡木原木", true,  true,  0, 15, T_LOG_TOP, T_LOG_SIDE, T_LOG_TOP},
+    /*B_LEAVES   */ {"voxmine:oak_leaves",     "橡木树叶", false, true,  0, 1,  T_LEAVES,  T_LEAVES,  T_LEAVES },
+    /*B_SAND     */ {"voxmine:sand",           "沙子",     true,  true,  0, 15, T_SAND,    T_SAND,    T_SAND   },
+    /*B_GRAVEL   */ {"voxmine:gravel",         "沙砾",     true,  true,  0, 15, T_GRAVEL,  T_GRAVEL,  T_GRAVEL },
+    /*B_COAL     */ {"voxmine:coal_ore",       "煤矿石",   true,  true,  0, 15, T_COAL,    T_COAL,    T_COAL   },
+    /*B_IRON     */ {"voxmine:iron_ore",       "铁矿石",   true,  true,  0, 15, T_IRON,    T_IRON,    T_IRON   },
+    /*B_GOLD     */ {"voxmine:gold_ore",       "金矿石",   true,  true,  0, 15, T_GOLD,    T_GOLD,    T_GOLD   },
+    /*B_DIAMOND  */ {"voxmine:diamond_ore",    "钻石矿石", true,  true,  0, 15, T_DIAMOND, T_DIAMOND, T_DIAMOND},
+    /*B_REDSTONE */ {"voxmine:redstone_ore",   "红石矿石", true,  true,  0, 15, T_REDSTONE, T_REDSTONE, T_REDSTONE},
+    /*B_WATER    */ {"voxmine:water",          "水",       false, false, 0, 1,  T_WATER,   T_WATER,   T_WATER  },
+    /*B_SNOW     */ {"voxmine:snow",           "雪块",     true,  true,  0, 15, T_SNOW,    T_SNOW,    T_SNOW   },
+    /*B_GLASS    */ {"voxmine:glass",          "玻璃",     false, true,  0, 0,  T_GLASS,   T_GLASS,   T_GLASS  },
+};
+
+// 注册表访问；越界回落为空气定义（等价 MC 对未知方块的容错处理）。
+inline const BlockDef& blockDef(uint8_t id) {
+    return BLOCK_DEFS[id < B_COUNT ? id : (uint8_t)B_AIR];
+}
+
+// ---- 属性查询（由注册表驱动；对越界 id 保持旧行为: 视为不透明/有碰撞）----
 inline bool blockIsOpaque(uint8_t id) {
-    switch (id) {
-        case B_AIR: case B_WATER: case B_LEAVES: case B_GLASS:
-            return false;
-        default:
-            return true;
-    }
+    return id < B_COUNT ? BLOCK_DEFS[id].opaque : true;
 }
 
 inline bool blockIsSolid(uint8_t id) {
-    switch (id) {
-        case B_AIR: case B_WATER:
-            return false;
-        default:
-            return true;
-    }
+    return id < B_COUNT ? BLOCK_DEFS[id].solid : true;
 }
 
 inline bool blockIsRenderable(uint8_t id) {
     return id != B_AIR;
 }
 
-// Texture tile used by a block for a given face.
-// Returns false for non-renderable / water handled separately.
+// 方块在指定面使用的贴图 tile。水等特殊渲染仍由 mesher 单独处理。
 inline uint8_t blockTile(uint8_t id, int face) {
-    switch (id) {
-        case B_GRASS:  return face == F_PY ? T_GRASS_TOP : (face == F_NY ? T_DIRT : T_GRASS_SIDE);
-        case B_DIRT:   return T_DIRT;
-        case B_STONE:  return T_STONE;
-        case B_BEDROCK: return T_BEDROCK;
-        case B_COBBLE: return T_COBBLE;
-        case B_PLANKS: return T_PLANKS;
-        case B_LOG:    return (face == F_PY || face == F_NY) ? T_LOG_TOP : T_LOG_SIDE;
-        case B_LEAVES: return T_LEAVES;
-        case B_SAND:   return T_SAND;
-        case B_GRAVEL: return T_GRAVEL;
-        case B_COAL:   return T_COAL;
-        case B_IRON:   return T_IRON;
-        case B_GOLD:   return T_GOLD;
-        case B_DIAMOND: return T_DIAMOND;
-        case B_REDSTONE: return T_REDSTONE;
-        case B_WATER:  return T_WATER;
-        case B_SNOW:   return T_SNOW;
-        case B_GLASS:  return T_GLASS;
-        default:       return T_WHITE;
-    }
+    if (id >= B_COUNT) return T_WHITE;
+    const BlockDef& d = BLOCK_DEFS[id];
+    if (face == F_PY) return d.tileTop;
+    if (face == F_NY) return d.tileBottom;
+    return d.tileSide;
 }

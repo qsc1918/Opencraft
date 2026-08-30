@@ -107,8 +107,17 @@ void Player::update(Input& in, World& world, float dt) {
     }
     onGround = grounded;
 
-    // clamp to world
-    if (p.y - eyeHeight < 0) { p.y = eyeHeight; vel.y = 0; }
+    // clamp to world（Y=0 即世界底；MC 1.18+ 主世界底为 Y=-64，见 docs/standards.md）
+    if (p.y - eyeHeight < WORLD_MIN_Y) { p.y = eyeHeight + WORLD_MIN_Y; vel.y = 0; }
 
     cam.pos = p;
+    syncEntity();
+}
+
+void Player::syncEntity() {
+    ent.type = &ENTITY_PLAYER;
+    ent.pos = Vec3(cam.pos.x, cam.pos.y - eyeHeight, cam.pos.z); // 眼睛 → 脚部中心
+    ent.vel = vel;
+    ent.yaw = cam.yaw;
+    ent.pitch = cam.pitch;
 }

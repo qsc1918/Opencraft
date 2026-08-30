@@ -61,7 +61,7 @@ void placeTree(uint8_t* b, int wx, int wz, int rootY, Rng& rng) {
         for (int dx = -r; dx <= r; dx++) {
             for (int dz = -r; dz <= r; dz++) {
                 int x = cxBase + dx, z = czBase + dz;
-                if (x < 0 || x >= 16 || z < 0 || z >= 16) continue;
+                if (x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE) continue;
                 if (dx == 0 && dz == 0 && dy <= 0) continue; // trunk space (dy=1 caps the trunk top)
                 if (dx * dx + dz * dz > r * r + 1) continue;
                 uint8_t cur = ref(b, x, ly, z);
@@ -83,15 +83,15 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
     Noise caveN(seed ^ 0x27d4eb2dU), caveN2(seed ^ 0x165667b1U);
     Noise beachN(seed ^ 0x9e3779b9U ^ 0x1337U);
 
-    int baseWX = cx * 16, baseWZ = cz * 16;
+    int baseWX = cx * CHUNK_SIZE, baseWZ = cz * CHUNK_SIZE;
 
-    // Precompute per-column surface height for the cave pass (avoids a 16×16×128
-    // scan later). At this point the topmost non-air block per column is exactly
-    // `height` (≥5) or bedrock at y=4 for very low terrain (height<5).
-    int localTop[16][16];
+    // Precompute per-column surface height for the cave pass (avoids a
+    // 16×16×128 full scan later). At this point the topmost non-air block per
+    // column is exactly `height` (≥5) or bedrock at y=4 for very low terrain (height<5).
+    int localTop[CHUNK_SIZE][CHUNK_SIZE];
 
-    for (int lx = 0; lx < 16; lx++) {
-        for (int lz = 0; lz < 16; lz++) {
+    for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+        for (int lz = 0; lz < CHUNK_SIZE; lz++) {
             int wx = baseWX + lx, wz = baseWZ + lz;
 
             // layered heightmap. Use a smooth value-noise pyramid so adjacent
@@ -143,8 +143,8 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
 
     // caves (3D) — localTop already computed from height during the column fill.
     for (int y = 3; y < 90; y++) {
-        for (int lx = 0; lx < 16; lx++) {
-            for (int lz = 0; lz < 16; lz++) {
+        for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+            for (int lz = 0; lz < CHUNK_SIZE; lz++) {
                 int wx = baseWX + lx, wz = baseWZ + lz;
                 uint8_t cur = ref(out, lx, y, lz);
                 if (cur == B_AIR || cur == B_BEDROCK) continue;
@@ -165,21 +165,21 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
     Rng rng((uint64_t)seed * 0x100000001ULL ^ ((uint64_t)(uint32_t)cx << 32) ^ (uint32_t)cz ^ 0x6a09e667ULL);
     for (const Ore& ore : kOres) {
         for (int t = 0; t < ore.tries; t++) {
-            int ox = rng.irange(0, 15), oz = rng.irange(0, 15);
+            int ox = rng.irange(0, CHUNK_SIZE - 1), oz = rng.irange(0, CHUNK_SIZE - 1);
             int oy = rng.irange(ore.minY, ore.maxY);
             for (int s = 0; s < ore.size; s++) {
                 int x = ox + rng.irange(-2, 2);
                 int y = oy + rng.irange(-2, 2);
                 int z = oz + rng.irange(-2, 2);
-                if (x < 0 || x > 15 || z < 0 || z > 15 || y < 1 || y >= WORLD_HEIGHT) continue;
+                if (x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE || y < 1 || y >= WORLD_HEIGHT) continue;
                 if (ref(out, x, y, z) == B_STONE) ref(out, x, y, z) = ore.id;
             }
         }
     }
 
     // trees
-    for (int lx = 0; lx < 16; lx++) {
-        for (int lz = 0; lz < 16; lz++) {
+    for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+        for (int lz = 0; lz < CHUNK_SIZE; lz++) {
             int wx = baseWX + lx, wz = baseWZ + lz;
             int height = 0;
             for (int y = WORLD_HEIGHT - 1; y >= 3; y--) {
@@ -189,7 +189,7 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
             uint8_t top = ref(out, lx, height, lz);
             if (top != B_GRASS && top != B_SNOW) continue;
             // avoid chunk borders so trees never cross into neighbors
-            if (lx < 2 || lx > 13 || lz < 2 || lz > 13) continue;
+            if (lx < 2 || lx >= CHUNK_SIZE - 2 || lz < 2 || lz >= CHUNK_SIZE - 2) continue;
             SurfaceInfo si = surfaceFor(tempN, moistN, wx, wz, height);
             if (si.desert) continue;
             float moist = moistN.value2(wx * 0.008f + 50.0f, wz * 0.008f + 50.0f);
@@ -208,8 +208,8 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
     // only ~20% of the time (low-frequency noise -> wet cave patches, most caves dry)
     // so the underground isn't a giant lake like vanilla aquifers.
     Noise waterN(seed ^ 0xb5297a4dU);
-    for (int lx = 0; lx < 16; lx++) {
-        for (int lz = 0; lz < 16; lz++) {
+    for (int lx = 0; lx < CHUNK_SIZE; lx++) {
+        for (int lz = 0; lz < CHUNK_SIZE; lz++) {
             int wx = baseWX + lx, wz = baseWZ + lz;
             // topmost naturally-solid block = terrain surface (caves are air below it)
             int top = WORLD_HEIGHT - 1;

@@ -1,6 +1,7 @@
 #pragma once
 #include "blocks.hpp"
 #include "noise.hpp"
+#include "specs.hpp"
 #include "util.hpp"
 #include <atomic>
 #include <array>
@@ -19,11 +20,9 @@
 #include <unordered_set>
 #include <vector>
 
-constexpr int CHUNK_SIZE = 16;
-constexpr int WORLD_HEIGHT = 128;
-constexpr int SEA_LEVEL = 62;
-constexpr int CHUNK_VOL = CHUNK_SIZE * WORLD_HEIGHT * CHUNK_SIZE;
-
+// 区块/世界常量（CHUNK_SIZE、WORLD_HEIGHT、SEA_LEVEL、SECTION_*、光照/刻/
+// 世界边界/坐标换算函数）已收编到 specs.hpp —— 它们是世界结构规范的一部分，
+// 不要在本文件重新定义。见 docs/standards.md。
 inline int chunkIndex(int x, int y, int z) { return x + (z << 4) + (y << 8); }
 
 // 8-byte packed vertex for terrain/water meshes.

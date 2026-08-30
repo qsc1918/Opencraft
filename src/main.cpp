@@ -225,8 +225,10 @@ int main(int argc, char** argv) {
                     }
                     return true;
                 };
-                auto flCoord = [](int a, int b) { int q = a / b; if ((a % b) < 0) q--; return q; };
-                int spawnX = 8, spawnZ = 8, spawnTopY = 0;
+                // 区块坐标换算统一走 specs.hpp（floor 语义，负坐标正确）。
+                // 出生点锚: 区块 (0,0) 中心方块（MC 出生搜索也以世界原点附近为锚）。
+                const int anchor = CHUNK_SIZE / 2;
+                int spawnX = anchor, spawnZ = anchor, spawnTopY = 0;
                 bool found = false;
                 auto columnTop = [&](int x, int z, bool groundOnly, int& yOut) {
                     for (int y = WORLD_HEIGHT - 1; y >= 0; y--) {
@@ -242,8 +244,8 @@ int main(int argc, char** argv) {
                     for (int dx = -radius; dx <= radius && !found; dx++) {
                         for (int dz = -radius; dz <= radius && !found; dz++) {
                             if (radius > 0 && std::abs(dx) != radius && std::abs(dz) != radius) continue;
-                            int x = 8 + dx, z = 8 + dz;
-                            world->forceGenerateChunk(flCoord(x, 16), flCoord(z, 16));
+                            int x = anchor + dx, z = anchor + dz;
+                            world->forceGenerateChunk(blockToChunkCoord(x), blockToChunkCoord(z));
                             int sY = -1;
                             uint8_t topBlock = columnTop(x, z, true, sY);
                             if (sY < 0) continue;
@@ -262,13 +264,13 @@ int main(int argc, char** argv) {
                     }
                 }
                 if (!found) {
-                    int bestFloor = -1, bestX = 8, bestZ = 8;
+                    int bestFloor = -1, bestX = anchor, bestZ = anchor;
                     for (int radius = 0; radius <= 12; radius++) {
                         for (int dx = -radius; dx <= radius; dx++) {
                             for (int dz = -radius; dz <= radius; dz++) {
                                 if (radius > 0 && std::abs(dx) != radius && std::abs(dz) != radius) continue;
-                                int x = 8 + dx, z = 8 + dz;
-                                world->forceGenerateChunk(flCoord(x, 16), flCoord(z, 16));
+                                int x = anchor + dx, z = anchor + dz;
+                                world->forceGenerateChunk(blockToChunkCoord(x), blockToChunkCoord(z));
                                 int sY = -1;
                                 columnTop(x, z, false, sY);
                                 if (sY < 0) continue;
@@ -279,9 +281,9 @@ int main(int argc, char** argv) {
                     }
                     spawnX = bestX; spawnZ = bestZ; spawnTopY = bestFloor > 0 ? bestFloor : 0;
                     found = true;
-                    if (spawnTopY <= 0) { spawnX = 8; spawnZ = 8; }
+                    if (spawnTopY <= 0) { spawnX = anchor; spawnZ = anchor; }
                 }
-                if (spawnTopY <= 0) player.cam.pos = Vec3(8.5f, 80.0f, 8.5f);
+                if (spawnTopY <= 0) player.cam.pos = Vec3(anchor + 0.5f, 80.0f, anchor + 0.5f);
                 else player.cam.pos = Vec3((float)spawnX + 0.5f, (float)spawnTopY + 1.0f + player.eyeHeight,
                                            (float)spawnZ + 0.5f);
             }

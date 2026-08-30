@@ -27,11 +27,8 @@ void World::stopWorkers() {
     workers_.clear();
 }
 
-inline int floordiv(int a, int b) {
-    int q = a / b, r = a % b;
-    if (r < 0) { q--; }
-    return q;
-}
+// 坐标换算统一使用 specs.hpp 的 floorDiv / blockToChunkCoord / blockToChunkLocal
+//（区块坐标 = floor(方块坐标/16)，负坐标向下取整 —— MC 规范语义）。
 
 std::shared_ptr<Chunk> World::chunkAt(int cx, int cz) const {
     uint64_t key = chunkKey(cx, cz);
@@ -71,20 +68,20 @@ void World::snapshotChunks(std::vector<ChunkInfo>& out) {
 }
 
 uint8_t World::getBlock(int x, int y, int z) const {
-    if (y < 0 || y >= WORLD_HEIGHT) return B_AIR;
-    int cx = floordiv(x, CHUNK_SIZE), cz = floordiv(z, CHUNK_SIZE);
-    int lx = x - cx * CHUNK_SIZE, lz = z - cz * CHUNK_SIZE;
+    if (y < WORLD_MIN_Y || y >= WORLD_HEIGHT) return B_AIR;
+    int cx = blockToChunkCoord(x), cz = blockToChunkCoord(z);
+    int lx = blockToChunkLocal(x), lz = blockToChunkLocal(z);
     auto c = chunkAt(cx, cz);
     if (!c || c->state.load() < 1) return B_AIR;
     return c->blocks[chunkIndex(lx, y, lz)];
 }
 
 bool World::setBlock(int x, int y, int z, uint8_t id) {
-    if (y < 0 || y >= WORLD_HEIGHT) return false;
-    int cx = floordiv(x, CHUNK_SIZE), cz = floordiv(z, CHUNK_SIZE);
+    if (y < WORLD_MIN_Y || y >= WORLD_HEIGHT) return false;
+    int cx = blockToChunkCoord(x), cz = blockToChunkCoord(z);
     auto c = chunkAt(cx, cz);
     if (!c || c->state.load() < 1) return false;
-    int lx = x - cx * CHUNK_SIZE, lz = z - cz * CHUNK_SIZE;
+    int lx = blockToChunkLocal(x), lz = blockToChunkLocal(z);
     {
         std::unique_lock<std::shared_mutex> lk(blocksMutex_);
         if (c->blocks[chunkIndex(lx, y, lz)] == id) return false;
@@ -136,7 +133,7 @@ void World::forceMeshChunk(int cx, int cz) {
         queuedMesh_.erase(key);
         meshing_.erase(key);
     }
-    float wx = cx * 16.0f + 8.0f, wz = cz * 16.0f + 8.0f;
+    float wx = (cx + 0.5f) * CHUNK_SIZE, wz = (cz + 0.5f) * CHUNK_SIZE;
     float dx = wx - lastPx_, dz = wz - lastPz_;
     uint64_t prio = (uint64_t)(dx * dx + dz * dz);
     std::lock_guard<std::mutex> lk(queueLock_);
@@ -176,7 +173,7 @@ void World::scheduleMesh(int cx, int cz) {
         std::lock_guard<std::mutex> lk(queueLock_);
         if (queuedMesh_.count(key) || meshing_.count(key)) return;
         queuedMesh_.insert(key);
-        float wx = cx * 16.0f + 8.0f, wz = cz * 16.0f + 8.0f;
+        float wx = (cx + 0.5f) * CHUNK_SIZE, wz = (cz + 0.5f) * CHUNK_SIZE;
         float dx = wx - lastPx_, dz = wz - lastPz_;
         uint64_t prio = (uint64_t)(dx * dx + dz * dz);
         queue_.push(WorldTask{true, cx, cz, prio, c});
@@ -339,8 +336,8 @@ void World::workerLoop() {
 void World::update(float px, float pz, int renderDist) {
     lastPx_ = px;
     lastPz_ = pz;
-    int ccx = floordiv((int)std::floor(px), CHUNK_SIZE);
-    int ccz = floordiv((int)std::floor(pz), CHUNK_SIZE);
+    int ccx = blockToChunkCoord((int)std::floor(px));
+    int ccz = blockToChunkCoord((int)std::floor(pz));
 
     // Skip the expensive ensure+queue loop when the player has not moved to a
     // new chunk since the last call and no chunks are stuck in state 0 (meaning
@@ -371,11 +368,11 @@ void World::update(float px, float pz, int renderDist) {
                         if (it == chunks_.end()) {
                             auto c = std::make_shared<Chunk>();
                             chunks_[key] = c;
-                            float wx = cx * 16.0f + 8.0f, wz = cz * 16.0f + 8.0f;
+                            float wx = (cx + 0.5f) * CHUNK_SIZE, wz = (cz + 0.5f) * CHUNK_SIZE;
                             float dx = wx - px, dz = wz - pz;
                             toGen.push_back({cx, cz, (uint64_t)(dx * dx + dz * dz)});
                         } else if (it->second->state.load() == 0) {
-                            float wx = cx * 16.0f + 8.0f, wz = cz * 16.0f + 8.0f;
+                            float wx = (cx + 0.5f) * CHUNK_SIZE, wz = (cz + 0.5f) * CHUNK_SIZE;
                             float dx = wx - px, dz = wz - pz;
                             toGen.push_back({cx, cz, (uint64_t)(dx * dx + dz * dz)});
                         }

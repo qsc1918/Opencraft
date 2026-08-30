@@ -537,8 +537,8 @@ void Renderer::updateTerrainUBO(VkCtx& ctx, const Camera& cam, float renderDist,
                          (int)std::floor(cam.pos.y),
                          (int)std::floor(cam.pos.z)) == B_WATER;
     u.underwater = underwater ? 1.0f : 0.0f;
-    u.fogStart = renderDist * 16.0f * 0.70f;
-    u.fogEnd = renderDist * 16.0f * 0.94f;
+    u.fogStart = renderDist * (float)CHUNK_SIZE * 0.70f;
+    u.fogEnd = renderDist * (float)CHUNK_SIZE * 0.94f;
     fogEndWorld_ = u.fogEnd;
     u.skyR = 0.60f; u.skyG = 0.77f;
     u.skyB = 0.90f;
@@ -861,12 +861,13 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
     const float camX = cam.pos.x, camY = cam.pos.y, camZ = cam.pos.z;
     const float f2 = fogEndWorld_ * fogEndWorld_;
     auto chunkCulled = [&](int cx, int cz) {
-        float minX = cx * 16.0f, minZ = cz * 16.0f;
-        if (!fr.testAABB(minX, 0, minZ, minX + 16, WORLD_HEIGHT, minZ + 16)) return true;
+        float minX = cx * (float)CHUNK_SIZE, minZ = cz * (float)CHUNK_SIZE;
+        float maxX = minX + CHUNK_SIZE, maxZ = minZ + CHUNK_SIZE;
+        if (!fr.testAABB(minX, 0, minZ, maxX, WORLD_HEIGHT, maxZ)) return true;
         if (f2 > 0.0f) {
-            float nx = clampf(camX, minX, minX + 16);
+            float nx = clampf(camX, minX, maxX);
             float ny = clampf(camY, 0.0f, (float)WORLD_HEIGHT);
-            float nz = clampf(camZ, minZ, minZ + 16);
+            float nz = clampf(camZ, minZ, maxZ);
             float dx = nx - camX, dy = ny - camY, dz = nz - camZ;
             if (dx * dx + dy * dy + dz * dz > f2) return true;
         }
@@ -891,7 +892,7 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
         Chunk& c = *v.c;
         if (!c.opaqueBuf || !c.opaqueCount) continue;
         draws++;
-        Vec3 origin((float)(v.cx * 16), 0, (float)(v.cz * 16));
+        Vec3 origin((float)(v.cx * CHUNK_SIZE), 0, (float)(v.cz * CHUNK_SIZE));
         vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &origin);
         VkBuffer vb = (VkBuffer)(uintptr_t)c.opaqueBuf;
         VkDeviceSize off = 0;
@@ -906,7 +907,7 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
     for (auto& v : visible) {
         Chunk& c = *v.c;
         if (!c.waterBuf || !c.waterCount) continue;
-        Vec3 origin((float)(v.cx * 16), 0, (float)(v.cz * 16));
+        Vec3 origin((float)(v.cx * CHUNK_SIZE), 0, (float)(v.cz * CHUNK_SIZE));
         vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &origin);
         VkBuffer vb = (VkBuffer)(uintptr_t)c.waterBuf;
         VkDeviceSize off = 0;
