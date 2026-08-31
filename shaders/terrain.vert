@@ -26,8 +26,9 @@ void main() {
 
     int tex = int(inMeta.z);
     vec2 tileUV = vec2(float(inMeta.x), float(inMeta.y));
+    // 图集为 32px cell 布局: cell 原点 = tileIdx * cellPx, 贴图在 cell 内偏移 8px（边缘扩展边框）
     vec2 tileIdx = vec2(float(tex % int(ubo.misc.z)), float(tex / int(ubo.misc.z)));
-    vec2 px = tileIdx * ubo.misc.w + tileUV + 0.5;
+    vec2 px = tileIdx * ubo.misc.w + vec2(ubo.misc.w * 0.25) + tileUV + 0.5;
     vUV = px / ubo.misc.y;
     vShade = float(inMeta.w) / 255.0;
     vDist = length(wp - ubo.camPos.xyz);

@@ -1,5 +1,6 @@
 #pragma once
 #include "atlas.hpp"
+#include "items.hpp"
 #include "util.hpp"
 #include "vk.hpp"
 #include "window.hpp"
@@ -58,6 +59,7 @@ public:
     // Inventory (E) screen
     void setInventoryOpen(bool open);
     bool inventoryOpen() const { return invOpen_; }
+    void setInventoryPage(int page) { invPage_ = page; }  // 0=方块 1=物品
     void setCursor(float x, float y) { cursorX_ = x; cursorY_ = y; }
 
 private:
@@ -143,6 +145,8 @@ private:
     float timeScale_ = 1.0f / 1200.0f; // full day/night cycle in 20 minutes
 
     bool invOpen_ = false;
+    int invPage_ = 0;              // 0=方块页 1=物品页
+    uint16_t selectedItem_ = I_NONE; // 物品页当前选中（生存模式预留）
     float cursorX_ = 0.0f, cursorY_ = 0.0f;
     bool prevMouse0_ = false;
     uint8_t placementBlock_ = B_GRASS;

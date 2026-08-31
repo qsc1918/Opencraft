@@ -544,7 +544,7 @@ void Renderer::updateTerrainUBO(VkCtx& ctx, const Camera& cam, float renderDist,
     u.skyB = 0.90f;
     u.atlasPx = (float)atlas_.width;
     u.tilesX = (float)atlas_.tilesX;
-    u.tilePx = (float)atlas_.tileSize;
+    u.tilePx = (float)atlas_.cellSize; // shader 用 cell 布局计算 tile 原点（含 8px 边距）
     u.dayLight = dayLight;
     u.sunX = sunDir.x; u.sunY = sunDir.y; u.sunZ = sunDir.z;
     memcpy(terrainUBOMap_[slot], &u, sizeof(UboData));
@@ -1037,27 +1037,48 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
         }
     }
 
-    // inventory (E) screen
+    // inventory (E) screen — 两个标签页: 0=方块 1=物品（装备类物品，生存模式预留）
     if (invOpen_) {
         const float invSlot = 44.0f, invGap = 4.0f;
-        int rows = (kInvCount + kInvCols - 1) / kInvCols;
+        int count = invPage_ == 0 ? kInvCount : (I_COUNT - 1);
+        int rows = (count + kInvCols - 1) / kInvCols;
         float gridW = kInvCols * invSlot + (kInvCols - 1) * invGap;
         float gridH = rows * invSlot + (rows - 1) * invGap;
         float gx0 = (windowW_ - gridW) * 0.5f;
         float gy0 = (windowH_ - gridH) * 0.5f;
         // dim background
         pushQuad(0, 0, (float)windowW_, (float)windowH_, T_WHITE, 0.05f, 0.05f, 0.05f, 0.55f);
-        int currentInvIdx = -1;
-        for (int i = 0; i < kInvCount; i++)
-            if (kInvBlocks[i] == placementBlock_) { currentInvIdx = i; break; }
-        for (int i = 0; i < kInvCount; i++) {
+        // tab buttons (icon 标识: 石头=方块页, 铁镐=物品页)
+        const float tabW = 64.0f, tabH = 28.0f, tabGap = 8.0f;
+        float ty0 = gy0 - tabH - 10.0f;
+        for (int t = 0; t < 2; t++) {
+            float tx0 = gx0 + t * (tabW + tabGap);
+            bool active = t == invPage_;
+            pushQuad(tx0, ty0, tx0 + tabW, ty0 + tabH, T_WHITE,
+                     active ? 0.45f : 0.18f, active ? 0.45f : 0.18f, active ? 0.45f : 0.18f, 0.92f);
+            pushQuad(tx0 + 6, ty0 + 5, tx0 + 22, ty0 + 21, t == 0 ? T_STONE : (T_ITEM_BASE + 8), 1, 1, 1, 1);
+            if (in.mouse[0] && !prevMouse0_ && cursorX_ >= tx0 && cursorX_ <= tx0 + tabW &&
+                cursorY_ >= ty0 && cursorY_ <= ty0 + tabH) {
+                invPage_ = t;
+            }
+        }
+        int currentIdx = -1;
+        if (invPage_ == 0) {
+            for (int i = 0; i < kInvCount; i++)
+                if (kInvBlocks[i] == placementBlock_) { currentIdx = i; break; }
+        } else {
+            for (int i = 1; i < I_COUNT; i++)
+                if ((uint16_t)i == selectedItem_) { currentIdx = i - 1; break; }
+        }
+        for (int i = 0; i < count; i++) {
             int col = i % kInvCols, row = i / kInvCols;
             float x0 = gx0 + col * (invSlot + invGap);
             float y0 = gy0 + row * (invSlot + invGap);
-            bool sel = i == currentInvIdx;
+            bool sel = i == currentIdx;
             pushQuad(x0, y0, x0 + invSlot, y0 + invSlot, T_WHITE,
                      sel ? 0.50f : 0.22f, sel ? 0.50f : 0.22f, sel ? 0.50f : 0.22f, 0.92f);
-            int tile = blockTile(kInvBlocks[i], F_PY);
+            int tile = invPage_ == 0 ? blockTile(kInvBlocks[i], F_PY)
+                                     : ITEM_DEFS[i + 1].iconTile;
             pushQuad(x0 + 4, y0 + 4, x0 + invSlot - 4, y0 + invSlot - 4, tile, 1, 1, 1, 1);
             if (sel) {
                 pushQuad(x0, y0, x0 + invSlot, y0 + 2.0f, T_WHITE, 1, 1, 1, 1);
@@ -1066,14 +1087,15 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
                 pushQuad(x0 + invSlot - 2.0f, y0, x0 + invSlot, y0 + invSlot, T_WHITE, 1, 1, 1, 1);
             }
         }
-        // click to select
-        if (in.mouse[0] && !prevMouse0_) {
-            for (int i = 0; i < kInvCount; i++) {
+        // click to select（tab 点击优先，点中 tab 时本帧不再选中格子）
+        if (in.mouse[0] && !prevMouse0_ && cursorY_ >= gy0) {
+            for (int i = 0; i < count; i++) {
                 int col = i % kInvCols, row = i / kInvCols;
                 float x0 = gx0 + col * (invSlot + invGap);
                 float y0 = gy0 + row * (invSlot + invGap);
                 if (cursorX_ >= x0 && cursorX_ <= x0 + invSlot && cursorY_ >= y0 && cursorY_ <= y0 + invSlot) {
-                    placementBlock_ = kInvBlocks[i];
+                    if (invPage_ == 0) placementBlock_ = kInvBlocks[i];
+                    else selectedItem_ = (uint16_t)(i + 1);
                     break;
                 }
             }

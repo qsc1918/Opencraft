@@ -32,6 +32,7 @@ struct Args {
     bool drive = false;
     bool noVsync = false;
     bool invStart = false;
+    int invPage = 0;
     int gpuIndex = -1;
     std::string menuShot;
     int menuScreen = 1; // Menuscreen::MainMenu
@@ -58,6 +59,7 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--drive") a.drive = true;
         else if (arg == "--no-vsync") a.noVsync = true;
         else if (arg == "--inventory") a.invStart = true;
+        else if (arg == "--inv-page") a.invPage = std::stoi(next());
         else if (arg == "--gpu-index") a.gpuIndex = std::stoi(next());
         else if (arg == "--menu-shot") a.menuShot = next();
         else if (arg == "--menu-screen") a.menuScreen = std::stoi(next());
@@ -163,6 +165,7 @@ int main(int argc, char** argv) {
     auto applyFirst = [&]() {
         if (a.timeArg >= 0.0f) renderer.setTimeOfDay(a.timeArg);
         if (a.invStart) renderer.setInventoryOpen(true);
+        renderer.setInventoryPage(a.invPage);
     };
     applyFirst();
 

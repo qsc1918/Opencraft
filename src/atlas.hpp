@@ -7,9 +7,11 @@
 struct Atlas {
     int width = 0;          // total atlas pixel width
     int height = 0;
-    int tileSize = 16;      // per-tile pixels
-    int tilesX = 8;         // tiles across
-    int tilesY = 8;
+    int tileSize = 16;      // per-tile texture pixels
+    int cellSize = 32;      // atlas cell per tile = tile + 8px edge-extension border
+    int tilePad = 8;        // texture origin inside the cell
+    int tilesX = 16;        // tiles across (16x16 cells = 256 tiles: blocks + items + 预留)
+    int tilesY = 16;
     std::vector<uint8_t> rgba; // tightly packed RGBA
     bool built = false;
 

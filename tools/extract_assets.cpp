@@ -81,8 +81,39 @@ static std::string outputRoot() {
 
 static bool runTar(const std::string& jar, const std::string& outDir) {
     std::string cmd = "tar -xf \"" + jar + "\" -C \"" + outDir
-                      + "\" assets/minecraft/textures/block assets/minecraft/textures/gui/sprites/widget 2>nul";
+                      + "\" assets/minecraft/textures/block assets/minecraft/textures/gui/sprites/widget"
+                        " assets/minecraft/textures/item 2>nul";
     return system(cmd.c_str()) == 0;
+}
+
+// 物品贴图（1.0 时代装备体系）: assets/minecraft/textures/item/*.png -> assets/item/
+static void appendItemEntries(std::vector<AssetEntry>& out) {
+    static const char* kToolTiers[] = {"wooden", "stone", "iron", "golden", "diamond"};
+    static const char* kToolKinds[] = {"pickaxe", "axe", "shovel", "sword"};
+    static const char* kArmorMats[] = {"leather", "iron", "golden", "diamond"};
+    static const char* kArmorParts[] = {"helmet", "chestplate", "leggings", "boots"};
+    static const char* kMisc[] = {"flint_and_steel", "ender_pearl", "eye_of_ender"};
+    char buf[128];
+    for (const char* tier : kToolTiers)
+        for (const char* kind : kToolKinds) {
+            _snprintf(buf, sizeof(buf) - 1, "assets/minecraft/textures/item/%s_%s.png", tier, kind);
+            std::string src = buf;
+            _snprintf(buf, sizeof(buf) - 1, "item/%s_%s.png", tier, kind);
+            out.push_back({strdup(src.c_str()), strdup(buf)});
+        }
+    for (const char* mat : kArmorMats)
+        for (const char* part : kArmorParts) {
+            _snprintf(buf, sizeof(buf) - 1, "assets/minecraft/textures/item/%s_%s.png", mat, part);
+            std::string src = buf;
+            _snprintf(buf, sizeof(buf) - 1, "item/%s_%s.png", mat, part);
+            out.push_back({strdup(src.c_str()), strdup(buf)});
+        }
+    for (const char* m : kMisc) {
+        _snprintf(buf, sizeof(buf) - 1, "assets/minecraft/textures/item/%s.png", m);
+        std::string src = buf;
+        _snprintf(buf, sizeof(buf) - 1, "item/%s.png", m);
+        out.push_back({strdup(src.c_str()), strdup(buf)});
+    }
 }
 
 int main(int argc, char** argv) {
@@ -116,8 +147,10 @@ int main(int argc, char** argv) {
     }
 
     fs::path dstRoot = fs::path(outputRoot()) / "assets";
+    std::vector<AssetEntry> entries(std::begin(kAssets), std::end(kAssets));
+    appendItemEntries(entries);
     int copied = 0, missing = 0;
-    for (const AssetEntry& e : kAssets) {
+    for (const AssetEntry& e : entries) {
         fs::path src = tmp / e.src;
         fs::path dst = dstRoot / e.dst;
         fs::create_directories(dst.parent_path());
