@@ -115,6 +115,8 @@ void Player::update(Input& in, World& world, float dt) {
 }
 
 void Player::syncEntity() {
+    ent.id = 1;                    // 玩家固定 ID（非 World 管理）
+    ent.kind = EntityKind::Generic;
     ent.type = &ENTITY_PLAYER;
     ent.pos = Vec3(cam.pos.x, cam.pos.y - eyeHeight, cam.pos.z); // 眼睛 → 脚部中心
     ent.vel = vel;

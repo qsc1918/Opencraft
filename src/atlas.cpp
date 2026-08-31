@@ -10,6 +10,7 @@ static const char* kTileFiles[T_COUNT] = {
     "coal_ore.png",        "iron_ore.png",         "gold_ore.png",      "diamond_ore.png",
     "redstone_ore.png",    "water_still.png",      "snow.png",          "glass.png",
     "white_concrete.png",
+    nullptr, // T_END_CRYSTAL — 程序化（无 MC 素材，EULA 安全）
 };
 
 // 物品图标贴图（assets/item/），tile 序号 = T_ITEM_BASE + 数组下标，顺序与
@@ -57,7 +58,39 @@ const Tint kTileTint[T_COUNT] = {
     {1, 1, 1},
     {1, 1, 1},
     {1, 1, 1},
+    {1, 1, 1},             // T_END_CRYSTAL（程序化）
 };
+
+// ---------------------------------------------------------------------------
+// 程序化 tile：给没有 png 的 tile 生成 16x16 纹理（代码生成，非 MC 素材）。
+// 玩家用 extract_assets 提取的贴图若存在则覆盖同路径 png —— 目前这些 tile
+// 没有对应 png，永远走程序化。
+// ---------------------------------------------------------------------------
+#include "util.hpp" // hash32
+static void fillProceduralTile(int t, Atlas& a) {
+    auto put = [&](int tile, int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t al) {
+        int tx = tile % a.tilesX, ty = tile / a.tilesX;
+        size_t dst = ((size_t)(ty * a.cellSize + a.tilePad + y) * a.width +
+                      (tx * a.cellSize + a.tilePad + x)) * 4;
+        a.rgba[dst + 0] = r; a.rgba[dst + 1] = g;
+        a.rgba[dst + 2] = b; a.rgba[dst + 3] = al;
+    };
+    switch (t) {
+    case T_END_CRYSTAL: {
+        // 紫水晶底 + 亮粉高光碎纹
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint32_t n = hash32((uint32_t)(x * 37 + y * 91 + 13));
+                uint8_t v = (uint8_t)(150 + (n & 31));
+                uint8_t r = (uint8_t)(v + 60), g = (uint8_t)(v * 2 / 5), b = (uint8_t)(v + 90);
+                if (((x * 7 + y * 5) % 11) == 0) { r = 255; g = 170; b = 240; } // 高光纹
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    default: break; // 其他 tile 留白（255）
+    }
+}
 
 float Atlas::tileU(int tile, int corner) const {
     int tx = tile % tilesX;
@@ -116,6 +149,7 @@ Atlas buildAtlas(const std::string& dir) {
     };
 
     for (int t = 0; t < T_COUNT; t++) {
+        if (!kTileFiles[t]) { fillProceduralTile(t, a); continue; }
         std::string path = dir + "\\" + kTileFiles[t];
         std::vector<uint8_t> img;
         int w = 0, h = 0;

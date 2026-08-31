@@ -1,5 +1,6 @@
 #pragma once
 #include "blocks.hpp"
+#include "entity.hpp"
 #include "noise.hpp"
 #include "specs.hpp"
 #include "util.hpp"
@@ -151,6 +152,14 @@ public:
 
     uint32_t seed;
 
+    // ---- 实体管理（主线程模拟；渲染线程只读 entities()）----
+    Entity* spawnEntity(std::unique_ptr<Entity> e);
+    const std::vector<std::unique_ptr<Entity>>& entities() const { return entities_; }
+    // 推进所有实体并移除 dead（主线程每帧调用）
+    void tickEntities(float dt);
+    // 沿射线找最近实体（攻击命中测试）；命中点写入 hit
+    Entity* raycastEntity(Vec3 origin, Vec3 dir, float maxDist, Vec3* hit = nullptr);
+
     // Called on the main thread right before a chunk is erased from the map.
     std::function<void(Chunk&)> onDestroyChunk;
 
@@ -187,4 +196,7 @@ private:
     uint32_t unloadCounter_ = 0;
 
     std::vector<std::array<int, 4>> editLog_;
+
+    std::vector<std::unique_ptr<Entity>> entities_;  // 主线程持有
+    EntityId nextEntityId_ = 1;
 };

@@ -68,6 +68,7 @@ private:
     void createDescriptors(VkCtx& ctx);
     void updateTerrainUBO(VkCtx& ctx, const Camera& cam, float renderDist, int slot);
     void drawChunks(VkCtx& ctx, const Camera& cam);
+    void drawEntities(VkCtx& ctx, const Camera& cam);
     void drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in);
     void captureScreenshot(VkCtx& ctx, uint32_t imageIndex);
     void uploadPart(VkCtx& ctx, Chunk& c, bool opaque,
@@ -93,6 +94,7 @@ private:
     VkPipeline waterPipe_ = VK_NULL_HANDLE;
     VkPipeline skyPipe_ = VK_NULL_HANDLE;
     VkPipeline uiPipe_ = VK_NULL_HANDLE;
+    VkPipeline entityPipe_ = VK_NULL_HANDLE;  // 实体盒模型管线（无面剔除，深度写入）
 
     VkImage atlasImage_ = VK_NULL_HANDLE;
     VkDeviceMemory atlasMem_ = VK_NULL_HANDLE;
@@ -110,6 +112,10 @@ private:
     Buffer2 uiBuf_[VkCtx::MAX_FRAMES_IN_FLIGHT];
     void* uiMap_[VkCtx::MAX_FRAMES_IN_FLIGHT] = {};
     VkDescriptorSet uiSet_[VkCtx::MAX_FRAMES_IN_FLIGHT] = {};
+
+    // 实体动态缓冲区（每帧 CPU 构建盒模型，主线程绘制）
+    Buffer2 entityVB_[VkCtx::MAX_FRAMES_IN_FLIGHT];
+    void* entityMap_[VkCtx::MAX_FRAMES_IN_FLIGHT] = {};
 
     // Chunk GPU buffers that are no longer referenced but cannot be freed while a
     // frame in flight may still read them. Freed once enough frames have elapsed.
@@ -159,4 +165,5 @@ private:
 
     // Reusable raw-pointer snapshot of world chunks (avoids shared_ptr per frame).
     std::vector<World::ChunkInfo> snapshot_;
+    std::vector<TerrainVertex> entityVerts_;  // 每帧构建的实体盒模型顶点
 };

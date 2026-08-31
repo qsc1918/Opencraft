@@ -1,4 +1,5 @@
 #include "camera.hpp"
+#include "entities.hpp"
 #include "player.hpp"
 #include "raycast.hpp"
 #include "renderer.hpp"
@@ -34,6 +35,7 @@ struct Args {
     bool invStart = false;
     int invPage = 0;
     int gpuIndex = -1;
+    std::string crystalPos; // --crystal x,y,z 末影水晶测试生成
     std::string menuShot;
     int menuScreen = 1; // Menuscreen::MainMenu
 };
@@ -60,6 +62,7 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--no-vsync") a.noVsync = true;
         else if (arg == "--inventory") a.invStart = true;
         else if (arg == "--inv-page") a.invPage = std::stoi(next());
+        else if (arg == "--crystal") a.crystalPos = next();
         else if (arg == "--gpu-index") a.gpuIndex = std::stoi(next());
         else if (arg == "--menu-shot") a.menuShot = next();
         else if (arg == "--menu-screen") a.menuScreen = std::stoi(next());
@@ -323,6 +326,15 @@ int main(int argc, char** argv) {
             fprintf(stderr, "[main] break (%d,%d,%d)\n", bx, by, bz);
             world->setBlock(bx, by, bz, B_AIR);
         }
+        if (!a.crystalPos.empty()) {
+            float x = 12.5f, y = 72.0f, z = 8.5f;
+            if (sscanf(a.crystalPos.c_str(), "%f,%f,%f", &x, &y, &z) >= 1) {
+                auto crystal = std::make_unique<EndCrystal>();
+                crystal->pos = Vec3(x, y, z);
+                world->spawnEntity(std::move(crystal));
+                fprintf(stderr, "[main] spawned EndCrystal at (%.1f, %.1f, %.1f)\n", x, y, z);
+            }
+        }
         if (!a.screenshot.empty()) {
             int totalFrames = a.drive ? 400 : 30;
             for (int i = 0; i < totalFrames && win.pump(); i++) {
@@ -330,6 +342,7 @@ int main(int argc, char** argv) {
                 Input& in = win.input();
                 if (a.drive) { in.keys['W'] = true; player.cam.pitch = -0.1f; player.cam.markDirty(); }
                 player.update(in, *world, 1.0f / 60.0f);
+                world->tickEntities(1.0f / 60.0f);
                 renderer.render(ctx, player.cam, player, in, 1.0f / 60.0f, (float)renderDist, !a.noUI);
                 win.endFrame();
             }
@@ -421,10 +434,15 @@ int main(int argc, char** argv) {
                 player.cam.addPitch(-my * 0.003f);
                 
                 player.update(in, *world, dt);
-                
+                world->tickEntities(dt);
                 RayHit hit = raycastWorld(*world, player.cam.pos, player.cam.forward(), 6.0f);
                 if (in.mouse[0] && !in_prevL) {
-                    if (hit.hit) {
+                    // 先测试实体命中（龙/水晶），再测试方块命中
+                    Vec3 entityHit;
+                    Entity* entHit = world->raycastEntity(player.cam.pos, player.cam.forward(), 6.0f, &entityHit);
+                    if (entHit) {
+                        entHit->hurt(10.0f); // 攻击水晶造成伤害
+                    } else if (hit.hit) {
                         uint8_t t = world->getBlock(hit.x, hit.y, hit.z);
                         if (t != B_AIR && t != B_WATER) world->setBlock(hit.x, hit.y, hit.z, B_AIR);
                     }

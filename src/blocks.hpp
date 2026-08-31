@@ -30,6 +30,8 @@ enum Block : uint8_t {
 };
 
 // Tile ids into the texture atlas (assigned when atlas is built)
+// 20 = 白色占位；21 起为程序化纹理 tile（无 png，代码生成，EULA 安全）。
+// 物品图标从 items.hpp 的 T_ITEM_BASE 开始。
 enum Tile : uint8_t {
     T_GRASS_TOP = 0,   T_GRASS_SIDE = 1,  T_DIRT = 2,      T_STONE = 3,
     T_BEDROCK = 4,     T_COBBLE = 5,      T_PLANKS = 6,    T_LOG_SIDE = 7,
@@ -37,7 +39,8 @@ enum Tile : uint8_t {
     T_COAL = 12,       T_IRON = 13,       T_GOLD = 14,     T_DIAMOND = 15,
     T_REDSTONE = 16,   T_WATER = 17,      T_SNOW = 18,     T_GLASS = 19,
     T_WHITE = 20,
-    T_COUNT = 21,
+    T_END_CRYSTAL = 21,   // 末影水晶体（程序化紫晶）
+    T_COUNT = 22,
 };
 
 // Face indices（MC 语义: F_PY=up 顶面, F_NY=down 底面, ±X/±Z 四侧面）

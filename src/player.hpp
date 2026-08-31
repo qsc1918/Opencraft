@@ -11,7 +11,7 @@ class World;
 //   cam.pos  = 眼睛位置（渲染相机）
 //   ent.pos  = 脚部中心（MC 实体 Pos 语义），由 syncEntity() 与 cam 保持同步
 struct Player {
-    Entity ent{1, &ENTITY_PLAYER, {}, {}, 0.0f, 0.0f};
+    Entity ent;       // 默认构造；由 syncEntity 填充 type/kind/id（每帧同步）
     Camera cam;
     Vec3 vel{0, 0, 0};
     bool flying = false;

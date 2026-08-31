@@ -333,6 +333,65 @@ void World::workerLoop() {
     }
 }
 
+// ---- 实体管理（主线程；见 docs/standards.md §实体）----
+
+Entity* World::spawnEntity(std::unique_ptr<Entity> e) {
+    if (!e) return nullptr;
+    e->id = nextEntityId_++;
+    Entity* raw = e.get();
+    entities_.push_back(std::move(e));
+    return raw;
+}
+
+void World::tickEntities(float dt) {
+    for (auto& e : entities_) e->tick(*this, dt);
+    entities_.erase(std::remove_if(entities_.begin(), entities_.end(),
+                                   [](const std::unique_ptr<Entity>& e) { return e->dead; }),
+                    entities_.end());
+}
+
+// 射线 vs 实体 AABB（slab 法）；实体碰撞箱: 宽 type->width，高 type->height，
+// 底面在 pos.y（脚部中心语义）。
+static bool rayAABB(Vec3 o, Vec3 d, Vec3 mn, Vec3 mx, float maxDist, float* outT) {
+    float t0 = 0.0f, t1 = maxDist;
+    float lo[3] = {mn.x, mn.y, mn.z}, hi[3] = {mx.x, mx.y, mx.z};
+    float oo[3] = {o.x, o.y, o.z}, dd[3] = {d.x, d.y, d.z};
+    for (int i = 0; i < 3; i++) {
+        if (std::fabs(dd[i]) < 1e-9f) {
+            if (oo[i] < lo[i] || oo[i] > hi[i]) return false;
+            continue;
+        }
+        float inv = 1.0f / dd[i];
+        float ta = (lo[i] - oo[i]) * inv, tb = (hi[i] - oo[i]) * inv;
+        if (ta > tb) { float tmp = ta; ta = tb; tb = tmp; }
+        t0 = ta > t0 ? ta : t0;
+        t1 = tb < t1 ? tb : t1;
+        if (t0 > t1) return false;
+    }
+    *outT = t0;
+    return true;
+}
+
+Entity* World::raycastEntity(Vec3 origin, Vec3 dir, float maxDist, Vec3* hit) {
+    Entity* best = nullptr;
+    float bestT = maxDist;
+    Vec3 d = length(dir) > 1e-9f ? normalize(dir) : Vec3(0, 0, 0);
+    for (auto& e : entities_) {
+        if (e->dead) continue;
+        float hw = e->type ? e->type->width * 0.5f : 0.5f;
+        float hh = e->type ? e->type->height : 1.0f;
+        Vec3 mn(e->pos.x - hw, e->pos.y, e->pos.z - hw);
+        Vec3 mx(e->pos.x + hw, e->pos.y + hh, e->pos.z + hw);
+        float t = 0;
+        if (rayAABB(origin, d, mn, mx, bestT, &t)) {
+            bestT = t;
+            best = e.get();
+            if (hit) *hit = origin + d * t;
+        }
+    }
+    return best;
+}
+
 void World::update(float px, float pz, int renderDist) {
     lastPx_ = px;
     lastPz_ = pz;

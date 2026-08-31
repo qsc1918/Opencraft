@@ -1,5 +1,6 @@
 #include "renderer.hpp"
 #include "camera.hpp"
+#include "entities.hpp"
 #include "player.hpp"
 #include "window.hpp"
 #include "png.hpp"
@@ -285,6 +286,20 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
                 (int)(terrainPipe_ != VK_NULL_HANDLE), (int)(waterPipe_ != VK_NULL_HANDLE),
                 (int)(skyPipe_ != VK_NULL_HANDLE), (int)(uiPipe_ != VK_NULL_HANDLE));
         return false;
+    }
+    // 实体管线: 复用 terrain 布局+着色器, 无面剔除（盒模型内外面都可能被看到）
+    entityPipe_ = makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
+                               "terrain.vert.spv", "terrain.frag.spv",
+                               &terrBinding, terrAttrs, 1, 2,
+                               VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
+                               false, true, true);
+    if (!entityPipe_) fprintf(stderr, "[renderer] WARNING: entity pipeline creation failed\n");
+
+    // 实体动态顶点缓冲区（CPU 每帧构建盒模型，256KB 足够 ~8K 个方块面）
+    for (int i = 0; i < VkCtx::MAX_FRAMES_IN_FLIGHT; i++) {
+        createBuffer(ctx, 256 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, entityVB_[i]);
+        vkMapMemory(ctx.device, entityVB_[i].m, 0, VK_WHOLE_SIZE, 0, &entityMap_[i]);
     }
 
     // screenshot buffer
@@ -853,6 +868,78 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
     return true;
 }
 
+// 盒模型构建：向 verts 追加一个旋转盒（6 面 × 6 顶点 = 36 verts，无索引）。
+// c = 中心坐标，h = 半尺寸，yaw = 绕 Y 轴旋转（弧度），tile = 图集 tile，shade = 亮度基值。
+static void appendBox(std::vector<TerrainVertex>& verts, Vec3 c, Vec3 h, float yaw,
+                      uint8_t tile, uint8_t shade) {
+    float cy = cosf(yaw), sy = sinf(yaw);
+    auto rot = [&](float lx, float ly, float lz) -> Vec3 {
+        return {c.x + lx * cy - lz * sy, c.y + ly, c.z + lx * sy + lz * cy};
+    };
+    Vec3 v[8] = {
+        rot(-h.x, -h.y, -h.z), rot( h.x, -h.y, -h.z), rot( h.x,  h.y, -h.z), rot(-h.x,  h.y, -h.z),
+        rot(-h.x, -h.y,  h.z), rot( h.x, -h.y,  h.z), rot( h.x,  h.y,  h.z), rot(-h.x,  h.y,  h.z),
+    };
+    // 面定义: [顶点索引×4] + 方向亮度系数
+    struct Face { int vi[4]; uint8_t sh; };
+    Face faces[6] = {
+        {{1,0,3,2}, (uint8_t)(shade*255/255)},  // +X 面 (PX)
+        {{4,5,6,7}, (uint8_t)(shade*255/255)},  // -X 面 (NX)
+        {{3,7,6,2}, (uint8_t)(shade*255/255)},  // +Y 顶面 (PY) 最亮
+        {{5,4,0,1}, (uint8_t)(shade*140/255)},  // -Y 底面 (NY) 最暗
+        {{5,1,2,6}, (uint8_t)(shade*210/255)},  // +Z 面 (PZ)
+        {{0,4,7,3}, (uint8_t)(shade*190/255)},  // -Z 面 (NZ)
+    };
+    for (auto& f : faces) {
+        for (int t : {0,1,2, 0,2,3}) {
+            Vec3 p = v[f.vi[t]];
+            TerrainVertex vt;
+            vt.x = (int8_t)p.x; vt.y = (int8_t)p.y; vt.z = (int8_t)p.z;
+            vt.pad = 0;
+            vt.u = (t < 3) ? ((t == 0 || t == 3) ? 0 : 15) : ((t == 2) ? 15 : 0);
+            vt.v = (t <= 1) ? 0 : 15;
+            vt.tex = tile;
+            vt.shade = f.sh;
+            verts.push_back(vt);
+        }
+    }
+}
+
+void Renderer::drawEntities(VkCtx& ctx, const Camera& cam) {
+    if (!world_ || !entityPipe_) return;
+    entityVerts_.clear();
+    const Vec3 zero(0, 0, 0);
+    for (auto& e : world_->entities()) {
+        if (e->dead) continue;
+        if (e->kind == EntityKind::EndCrystal) {
+            // 末影水晶: 两层旋转立方体（外层大 + 内层小，方向相反）
+            auto* crystal = static_cast<EndCrystal*>(e.get());
+            Vec3 center = e->pos + Vec3(0, 1.0f + sinf(e->age * 1.2f) * 0.15f, 0);  // 悬浮+微浮动
+            // 外层: 半宽 0.8, 高 1.5, 绕 Y 旋转 phase
+            appendBox(entityVerts_, center, Vec3(0.8f, 0.75f, 0.8f), crystal->phase,
+                      T_END_CRYSTAL, 220);
+            // 内层: 小芯, 反向旋转
+            appendBox(entityVerts_, center, Vec3(0.35f, 0.45f, 0.35f), -crystal->phase * 0.7f,
+                      T_END_CRYSTAL, 255);
+        }
+    }
+    if (entityVerts_.empty()) return;
+    // 上传顶点
+    memcpy(entityMap_[curFrame_], entityVerts_.data(), entityVerts_.size() * sizeof(TerrainVertex));
+    VkCommandBuffer cb = ctx.cmds[curFrame_];
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, entityPipe_);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainLayout_, 0, 1, &terrainSet_[curFrame_], 0, nullptr);
+    Vec3 origin(0, 0, 0);
+    vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &origin);
+    VkBuffer vb = entityVB_[curFrame_].b;
+    VkDeviceSize off = 0;
+    vkCmdBindVertexBuffers(cb, 0, 1, &vb, &off);
+    vkCmdDraw(cb, (uint32_t)entityVerts_.size(), 1, 0, 0);
+}
+
+// drawChunks 之后的函数位置: 请在 drawChunks 关闭大括号之后找合适位置插入 drawEntities
+// （renderer.cpp 的 drawChunks 在 ~930 行结束）
+
 void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
     Frustum fr;
     fr.extract(cachedVP_);
@@ -884,6 +971,9 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
         visible.push_back({si.c, si.cx, si.cz});
     }
 
+    // drawEntities 已在上面声明实现；这里在 drawChunks 中插入调用点:
+    // 在 Pass 1（不透明块）之后、Pass 2（半透明水）之前绘制实体。
+
     int draws = 0;
     // Pass 1: draw ALL opaque geometry
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainPipe_);
@@ -900,6 +990,8 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
         vkCmdBindIndexBuffer(cb, vb, c.opaqueVertBytes, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cb, c.opaqueCount, 1, 0, 0, 1);
     }
+    // Pass 1.5: draw entities（实体在不透明几何之后、半透明水之前绘制）
+    drawEntities(ctx, cam);
 
     // Pass 2: draw ALL water (semi-transparent, must be after opaque)
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, waterPipe_);
@@ -1137,6 +1229,11 @@ void Renderer::shutdown(VkCtx& ctx) {
         if (r.m) vkFreeMemory(ctx.device, r.m, nullptr);
     }
     freePool_.clear();
+    // 实体动态缓冲区
+    for (int i = 0; i < VkCtx::MAX_FRAMES_IN_FLIGHT; i++) {
+        if (entityMap_[i]) vkUnmapMemory(ctx.device, entityVB_[i].m);
+        entityVB_[i].destroy(ctx.device);
+    }
     if (pool_) vkDestroyDescriptorPool(ctx.device, pool_, nullptr);
     if (terrainDSL_) vkDestroyDescriptorSetLayout(ctx.device, terrainDSL_, nullptr);
     if (uiDSL_) vkDestroyDescriptorSetLayout(ctx.device, uiDSL_, nullptr);
@@ -1145,6 +1242,7 @@ void Renderer::shutdown(VkCtx& ctx) {
     if (waterPipe_) vkDestroyPipeline(ctx.device, waterPipe_, nullptr);
     if (skyPipe_) vkDestroyPipeline(ctx.device, skyPipe_, nullptr);
     if (uiPipe_) vkDestroyPipeline(ctx.device, uiPipe_, nullptr);
+    if (entityPipe_) vkDestroyPipeline(ctx.device, entityPipe_, nullptr);
     if (terrainLayout_) vkDestroyPipelineLayout(ctx.device, terrainLayout_, nullptr);
     if (skyLayout_) vkDestroyPipelineLayout(ctx.device, skyLayout_, nullptr);
     if (uiLayout_) vkDestroyPipelineLayout(ctx.device, uiLayout_, nullptr);
