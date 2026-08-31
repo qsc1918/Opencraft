@@ -36,3 +36,7 @@ desktop.ini
 
 # Logs
 *.log
+
+# Local release artifacts (not redistributable builds)
+/releases/
+/perf_artifacts/
