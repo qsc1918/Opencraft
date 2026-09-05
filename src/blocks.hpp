@@ -26,7 +26,21 @@ enum Block : uint8_t {
     B_WATER = 16,
     B_SNOW = 17,
     B_GLASS = 18,
-    B_COUNT = 19,
+    // --- Nether blocks ---
+    B_NETHERRACK = 19,
+    B_SOUL_SAND  = 20,
+    B_GLOWSTONE  = 21,
+    B_NETHER_BRICK = 22,
+    B_OBSIDIAN    = 23,
+    B_LAVA        = 24,
+    B_NETHER_PORTAL = 25,
+    // --- End blocks ---
+    B_END_STONE       = 26,
+    B_END_PORTAL_FRAME = 27,
+    B_END_PORTAL       = 28,
+    B_END_GATEWAY      = 29,
+    B_DRAGON_EGG       = 30,
+    B_COUNT = 31,
 };
 
 // Tile ids into the texture atlas (assigned when atlas is built)
@@ -40,7 +54,21 @@ enum Tile : uint8_t {
     T_REDSTONE = 16,   T_WATER = 17,      T_SNOW = 18,     T_GLASS = 19,
     T_WHITE = 20,
     T_END_CRYSTAL = 21,   // 末影水晶体（程序化紫晶）
-    T_COUNT = 22,
+    // --- Nether tile ---
+    T_NETHERRACK = 22,
+    T_SOUL_SAND  = 23,
+    T_GLOWSTONE  = 24,
+    T_NETHER_BRICK = 25,
+    T_OBSIDIAN    = 26,
+    T_LAVA        = 27,
+    T_NETHER_PORTAL = 28,
+    // --- End tile ---
+    T_END_STONE       = 29,
+    T_END_PORTAL_FRAME = 30,
+    T_END_PORTAL       = 31,
+    T_END_GATEWAY      = 32,
+    T_DRAGON_EGG       = 33,
+    T_COUNT = 34,
 };
 
 // Face indices（MC 语义: F_PY=up 顶面, F_NY=down 底面, ±X/±Z 四侧面）
@@ -90,6 +118,20 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
     /*B_WATER    */ {"voxmine:water",          "水",       false, false, 0, 1,  T_WATER,   T_WATER,   T_WATER  },
     /*B_SNOW     */ {"voxmine:snow",           "雪块",     true,  true,  0, 15, T_SNOW,    T_SNOW,    T_SNOW   },
     /*B_GLASS    */ {"voxmine:glass",          "玻璃",     false, true,  0, 0,  T_GLASS,   T_GLASS,   T_GLASS  },
+    // --- Nether ---
+    /*B_NETHERRACK*/ {"voxmine:netherrack",    "地狱岩",   true,  true,  0, 15, T_NETHERRACK, T_NETHERRACK, T_NETHERRACK},
+    /*B_SOUL_SAND */ {"voxmine:soul_sand",     "灵魂沙",   true,  true,  0, 15, T_SOUL_SAND,  T_SOUL_SAND,  T_SOUL_SAND},
+    /*B_GLOWSTONE */ {"voxmine:glowstone",     "萤石",     true,  true,  15, 1,  T_GLOWSTONE,  T_GLOWSTONE,  T_GLOWSTONE},
+    /*B_NETHER_BRICK*/ {"voxmine:nether_brick","地狱砖",   true,  true,  0, 15, T_NETHER_BRICK, T_NETHER_BRICK, T_NETHER_BRICK},
+    /*B_OBSIDIAN  */ {"voxmine:obsidian",      "黑曜石",   true,  true,  0, 15, T_OBSIDIAN,  T_OBSIDIAN,  T_OBSIDIAN},
+    /*B_LAVA      */ {"voxmine:lava",          "岩浆",     false, false, 15, 1,  T_LAVA,      T_LAVA,      T_LAVA  },
+    /*B_NETHER_PORTAL*/ {"voxmine:nether_portal","传送门", false, false, 11, 0,  T_NETHER_PORTAL, T_NETHER_PORTAL, T_NETHER_PORTAL},
+    // --- End ---
+    /*B_END_STONE */ {"voxmine:end_stone",     "末地石",   true,  true,  0, 15, T_END_STONE, T_END_STONE, T_END_STONE},
+    /*B_END_PORTAL_FRAME*/ {"voxmine:end_portal_frame","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME},
+    /*B_END_PORTAL */ {"voxmine:end_portal",   "末地传送门", false, false, 15, 0, T_END_PORTAL, T_END_PORTAL, T_END_PORTAL},
+    /*B_END_GATEWAY*/ {"voxmine:end_gateway",  "折跃门",   false, false, 15, 0,  T_END_GATEWAY, T_END_GATEWAY, T_END_GATEWAY},
+    /*B_DRAGON_EGG*/ {"voxmine:dragon_egg",    "龙蛋",     true,  true,  1,  15, T_DRAGON_EGG, T_DRAGON_EGG, T_DRAGON_EGG},
 };
 
 // 注册表访问；越界回落为空气定义（等价 MC 对未知方块的容错处理）。

@@ -10,7 +10,11 @@ static const char* kTileFiles[T_COUNT] = {
     "coal_ore.png",        "iron_ore.png",         "gold_ore.png",      "diamond_ore.png",
     "redstone_ore.png",    "water_still.png",      "snow.png",          "glass.png",
     "white_concrete.png",
-    nullptr, // T_END_CRYSTAL — 程序化（无 MC 素材，EULA 安全）
+    nullptr, // T_END_CRYSTAL — 程序化
+    "netherrack.png",      "soul_sand.png",        "glowstone.png",     "nether_brick.png",
+    "obsidian.png",        "lava_still.png",       "nether_portal.png",
+    "end_stone.png",       "end_portal_frame.png", "end_portal.png",    "end_gateway.png",
+    "dragon_egg.png",
 };
 
 // 物品图标贴图（assets/item/），tile 序号 = T_ITEM_BASE + 数组下标，顺序与
@@ -38,27 +42,39 @@ const char* itemIconFile(uint8_t iconTile) {
 struct Tint { float r, g, b; };
 const Tint kTileTint[T_COUNT] = {
     {0.62f, 1.02f, 0.40f}, // grass top  -> green
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
+    {1, 1, 1},              // grass side
+    {1, 1, 1},              // dirt
+    {1, 1, 1},              // stone
+    {1, 1, 1},              // bedrock
+    {1, 1, 1},              // cobble
+    {1, 1, 1},              // planks
+    {1, 1, 1},              // log side
+    {1, 1, 1},              // log top
     {0.34f, 0.76f, 0.26f}, // leaves -> foliage green
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
+    {1, 1, 1},              // sand
+    {1, 1, 1},              // gravel
+    {1, 1, 1},              // coal ore
+    {1, 1, 1},              // iron ore
+    {1, 1, 1},              // gold ore
+    {1, 1, 1},              // diamond ore
+    {1, 1, 1},              // redstone ore
     {0.40f, 0.62f, 1.10f}, // water -> blue
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},
-    {1, 1, 1},             // T_END_CRYSTAL（程序化）
+    {1, 1, 1},              // snow
+    {1, 1, 1},              // glass
+    {1, 1, 1},              // white
+    {1, 1, 1},              // T_END_CRYSTAL (procedural)
+    {1, 1, 1},              // netherrack
+    {0.85f, 0.75f, 0.55f}, // soul_sand -> brown tint
+    {1.2f, 1.15f, 0.7f},   // glowstone -> warm bright
+    {0.7f, 0.5f, 0.45f},   // nether_brick -> dark red-brown
+    {0.75f, 0.65f, 0.9f},  // obsidian -> purple-black tint
+    {1.1f, 0.7f, 0.2f},    // lava -> orange-hot
+    {0.8f, 0.5f, 1.0f},    // nether_portal -> purple
+    {1.1f, 1.05f, 0.7f},   // end_stone -> pale yellow tint
+    {0.6f, 0.8f, 0.5f},    // end_portal_frame -> greenish
+    {0.3f, 0.2f, 0.5f},    // end_portal -> dark purple
+    {0.4f, 0.3f, 0.6f},    // end_gateway -> dark purple-grey
+    {0.55f, 0.45f, 0.65f}, // dragon_egg -> dark speckled purple
 };
 
 // ---------------------------------------------------------------------------
@@ -75,6 +91,11 @@ static void fillProceduralTile(int t, Atlas& a) {
         a.rgba[dst + 0] = r; a.rgba[dst + 1] = g;
         a.rgba[dst + 2] = b; a.rgba[dst + 3] = al;
     };
+    // helper: deterministic hash → [0..255]
+    auto hval = [](int x, int y, int salt) -> uint8_t {
+        uint32_t h = hash32((uint32_t)((uint32_t)x * 374761393u + (uint32_t)y * 668265263u + (uint32_t)salt * 2654435761u));
+        return (uint8_t)(h & 255);
+    };
     switch (t) {
     case T_END_CRYSTAL: {
         // 紫水晶底 + 亮粉高光碎纹
@@ -84,6 +105,181 @@ static void fillProceduralTile(int t, Atlas& a) {
                 uint8_t v = (uint8_t)(150 + (n & 31));
                 uint8_t r = (uint8_t)(v + 60), g = (uint8_t)(v * 2 / 5), b = (uint8_t)(v + 90);
                 if (((x * 7 + y * 5) % 11) == 0) { r = 255; g = 170; b = 240; } // 高光纹
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    case T_NETHERRACK: {
+        // 暗红岩石 + 噪点纹理
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0x100);
+                uint8_t r = (uint8_t)(140 + (n & 31));
+                uint8_t g = (uint8_t)(40 + ((n >> 4) & 15));
+                uint8_t b = (uint8_t)(30 + ((n >> 2) & 7));
+                // 细裂纹
+                if ((x + y * 3) % 13 == 0 || (x * 5 + y) % 17 == 0) {
+                    r -= 30; g -= 10; b -= 5;
+                }
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    case T_SOUL_SAND: {
+        // 棕色沙 + 暗面纹（MC 灵魂沙有脸纹，这里简化为随机纹理）
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0x200);
+                uint8_t r = (uint8_t)(110 + (n & 31));
+                uint8_t g = (uint8_t)(85 + ((n >> 3) & 15));
+                uint8_t b = (uint8_t)(50 + ((n >> 5) & 7));
+                // 脸纹简化：4×4 暗区
+                int lx = x % 8, ly = y % 8;
+                if ((lx >= 1 && lx <= 2 && ly >= 1 && ly <= 2) ||
+                    (lx >= 5 && lx <= 6 && ly >= 1 && ly <= 2) ||
+                    (lx >= 2 && lx <= 5 && ly >= 4 && ly <= 5)) {
+                    r -= 25; g -= 15; b -= 8;
+                }
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    case T_GLOWSTONE: {
+        // 明亮黄橙色 + 高光碎块
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0x300);
+                uint8_t r = (uint8_t)(210 + (n & 31));
+                uint8_t g = (uint8_t)(185 + ((n >> 2) & 31));
+                uint8_t b = (uint8_t)(60 + ((n >> 4) & 15));
+                // 明暗块
+                if (((x * 3 + y * 7) % 9) < 3) { r += 20; g += 15; }
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    case T_NETHER_BRICK: {
+        // 暗红砖 + 灰浆缝
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0x400);
+                // 砖块布局：每 8 高一行，交错偏移 4
+                int row = y / 4;
+                int off = (row & 1) ? 4 : 0;
+                bool mortar = ((x + off) % 8 == 0) || (y % 4 == 0);
+                if (mortar) {
+                    put(t, x, y, 50, 30, 30, 255);
+                } else {
+                    uint8_t r = (uint8_t)(100 + (n & 15));
+                    uint8_t g = (uint8_t)(35 + ((n >> 3) & 7));
+                    uint8_t b = (uint8_t)(30 + ((n >> 5) & 7));
+                    put(t, x, y, r, g, b, 255);
+                }
+            }
+        break;
+    }
+    case T_OBSIDIAN: {
+        // 深紫黑色 + 微闪
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0x500);
+                uint8_t v = (uint8_t)(20 + (n & 15));
+                uint8_t r = (uint8_t)(v + ((n >> 4) & 3));
+                uint8_t g = (uint8_t)(v);
+                uint8_t b = (uint8_t)(v + 8 + ((n >> 6) & 7));
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    case T_LAVA: {
+        // 岩浆：橙红底 + 暗红纹（静态帧；MC lava 帧动画此处简化）
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0x600);
+                uint8_t n2 = hval(x * 3, y * 5, 0x610);
+                uint8_t r = (uint8_t)(200 + (n2 & 31));
+                uint8_t g = (uint8_t)(80 + (n & 31) + ((n2 >> 4) & 15));
+                uint8_t b = (uint8_t)(10 + ((n >> 5) & 7));
+                // 暗纹带
+                if (((x + y * 2) % 7 == 0) && (n2 & 3) == 0) {
+                    r -= 60; g -= 30;
+                }
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    case T_NETHER_PORTAL: {
+        // 紫色漩涡纹理
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0x700);
+                float cx = x - 7.5f, cy = y - 7.5f;
+                float r2 = cx * cx + cy * cy;
+                float wave = sinf(r2 * 0.3f + n * 0.02f) * 0.5f + 0.5f;
+                uint8_t r = (uint8_t)(60 + wave * 100 + ((n >> 4) & 31));
+                uint8_t g = (uint8_t)(10 + wave * 30);
+                uint8_t b = (uint8_t)(120 + wave * 100 + ((n >> 2) & 31));
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    case T_END_STONE: {
+        // 浅黄灰色石头
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0x800);
+                uint8_t r = (uint8_t)(210 + (n & 15));
+                uint8_t g = (uint8_t)(200 + ((n >> 2) & 15));
+                uint8_t b = (uint8_t)(170 + ((n >> 4) & 15));
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    case T_END_PORTAL_FRAME: {
+        // 绿灰石框 + 顶部凹槽
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0x900);
+                uint8_t r = (uint8_t)(70 + (n & 15));
+                uint8_t g = (uint8_t)(90 + ((n >> 2) & 15));
+                uint8_t b = (uint8_t)(55 + ((n >> 4) & 7));
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    case T_END_PORTAL: {
+        // 纯黑底 + 小白点星
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0xA00);
+                bool star = (n < 12); // ~5% 白星点
+                if (star) put(t, x, y, 255, 255, 255, 255);
+                else      put(t, x, y, 0, 0, 8, 255);
+            }
+        break;
+    }
+    case T_END_GATEWAY: {
+        // 深紫黑 + 星点（与 end_portal 类似但稍亮）
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0xB00);
+                bool star = (n < 15);
+                if (star) put(t, x, y, 200, 200, 255, 255);
+                else      put(t, x, y, 10, 5, 20, 255);
+            }
+        break;
+    }
+    case T_DRAGON_EGG: {
+        // 深紫黑 + 明斑点
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0xC00);
+                uint8_t v = (uint8_t)(15 + (n & 7));
+                uint8_t r = (uint8_t)(v + 5);
+                uint8_t g = (uint8_t)(v);
+                uint8_t b = (uint8_t)(v + 10);
+                // 亮斑点
+                if ((n & 7) == 0) { r += 40; b += 50; }
                 put(t, x, y, r, g, b, 255);
             }
         break;

@@ -88,10 +88,11 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                 uint8_t id = view.at(x, y, z);
                 if (id == B_AIR) continue;
 
-                if (id == B_WATER) {
+                if (id == B_WATER || id == B_LAVA) {
                     // only emit top face — side/bottom faces are invisible
                     // through the semi-transparent surface and cause dark artifacts
-                    if (waterCull(view.at(x, y + 1, z))) continue;
+                    if (id == B_WATER && waterCull(view.at(x, y + 1, z))) continue;
+                    if (id == B_LAVA && waterCull(view.at(x, y + 1, z))) continue;
                     {
                         int face = F_PY;
                         uint32_t base = (uint32_t)wv.size();
@@ -102,7 +103,7 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                             vt.z = (int8_t)(z + kC[face][c][2]);
                             vt.u = (uint8_t)kU[face][c];
                             vt.v = (uint8_t)kV[face][c];
-                            vt.tex = T_WATER;
+                            vt.tex = (id == B_LAVA) ? T_LAVA : T_WATER;
                             vt.shade = bakeShade(face, 3, true);
                             wv.push_back(vt);
                         }

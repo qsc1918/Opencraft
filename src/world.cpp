@@ -156,7 +156,7 @@ void World::forceGenerateChunk(int cx, int cz) {
         else c = it->second;
     }
     if (c->state.load() >= 1) return;
-    gen::generateColumn(seed, cx, cz, c->blocks.data());
+    gen::generateForDim(currentDim_, seed, cx, cz, c->blocks.data());
     c->state.store(1);
     c->dirty.store(true);
     scheduleMesh(currentDim_, cx, cz);
@@ -230,7 +230,7 @@ bool World::popTask(WorldTask& out) {
 
 void World::generateChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chunk>& c) {
     auto& d = dims_[dim];
-    gen::generateColumn(seed, cx, cz, c->blocks.data());
+    gen::generateForDim(dim, seed, cx, cz, c->blocks.data());
     c->state.store(1);
     scheduleMesh(dim, cx, cz);
     scheduleMesh(dim, cx + 1, cz);
