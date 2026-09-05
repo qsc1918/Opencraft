@@ -35,7 +35,8 @@ struct Args {
     bool invStart = false;
     int invPage = 0;
     int gpuIndex = -1;
-    std::string crystalPos; // --crystal x,y,z 末影水晶测试生成
+    std::string crystalPos;
+    std::string dimArg;
     std::string menuShot;
     int menuScreen = 1; // Menuscreen::MainMenu
 };
@@ -63,6 +64,7 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--inventory") a.invStart = true;
         else if (arg == "--inv-page") a.invPage = std::stoi(next());
         else if (arg == "--crystal") a.crystalPos = next();
+        else if (arg == "--dim") a.dimArg = next();
         else if (arg == "--gpu-index") a.gpuIndex = std::stoi(next());
         else if (arg == "--menu-shot") a.menuShot = next();
         else if (arg == "--menu-screen") a.menuScreen = std::stoi(next());
@@ -179,6 +181,8 @@ int main(int argc, char** argv) {
         renderer.setWorld(*world);
         worldName = name;
         player = Player();
+        if (a.dimArg == "nether") { player.dim = DIM_NETHER; world->setDimension(DIM_NETHER); }
+        else if (a.dimArg == "end") { player.dim = DIM_END; world->setDimension(DIM_END); }
         player.cam.yaw = a.yaw;
         player.cam.pitch = a.pitch;
         player.cam.markDirty();

@@ -1,5 +1,6 @@
 #pragma once
 #include "camera.hpp"
+#include "dimensions.hpp"
 #include "entity.hpp"
 #include "window.hpp"
 
@@ -17,6 +18,7 @@ struct Player {
     bool flying = false;
     bool onGround = false;
     bool inWater = false;
+    DimensionId dim = DIM_OVERWORLD;  // 当前所在维度
     float height = ENTITY_PLAYER.height;          // 1.8（碰撞箱高）
     float halfWidth = ENTITY_PLAYER.width * 0.5f; // 0.3（碰撞箱半宽）
     float eyeHeight = ENTITY_PLAYER.eyeHeight;    // 1.62（眼高）

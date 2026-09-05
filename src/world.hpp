@@ -1,5 +1,6 @@
 #pragma once
 #include "blocks.hpp"
+#include "dimensions.hpp"
 #include "entity.hpp"
 #include "noise.hpp"
 #include "specs.hpp"
@@ -75,8 +76,9 @@ inline uint64_t chunkKey(int cx, int cz) {
 
 struct WorldTask {
     bool isMesh = false;
+    DimensionId dim = DIM_OVERWORLD;
     int32_t cx = 0, cz = 0;
-    uint64_t prio = 0; // lower = earlier
+    uint64_t prio = 0;
     std::shared_ptr<Chunk> chunk;
 };
 
@@ -100,6 +102,18 @@ struct MeshView {
     }
 };
 
+// 每维度存储：区块表、缓存、任务追踪集合（共享同一个 worker 池）
+struct DimStorage {
+    std::unordered_map<uint64_t, std::shared_ptr<Chunk>> chunks;
+    static constexpr int kCacheN = 8;
+    mutable std::array<std::pair<uint64_t, std::shared_ptr<Chunk>>, kCacheN> cache{};
+    mutable uint32_t cacheIdx = 0;
+    std::unordered_set<uint64_t> queuedGen, queuedMesh, generating, meshing;
+    float lastPx = 0, lastPz = 0;
+    int lastCCX = INT_MIN, lastCCZ = INT_MIN, lastRenderDist = -1;
+    uint32_t unloadCounter = 0;
+};
+
 class World {
 public:
     explicit World(uint32_t seed);
@@ -108,95 +122,79 @@ public:
     void startWorkers(int n);
     void stopWorkers();
 
+    // ---- 维度切换 ----
+    void setDimension(DimensionId dim) { currentDim_ = dim; }
+    DimensionId getDimension() const { return currentDim_; }
+
     // Main-thread scheduling: ensure chunks around (px,pz) exist & are queued.
     void update(float px, float pz, int renderDist);
 
-    // Block read for gameplay code (main thread). Safe & returns air for ungenerated chunks.
+    // Block read (main thread, current dimension). Returns air for ungenerated.
     uint8_t getBlock(int x, int y, int z) const;
-
-    // Player edit. Marks affected chunks dirty. Returns true if changed.
+    // Player edit (current dimension). Returns true if changed.
     bool setBlock(int x, int y, int z, uint8_t id);
 
     std::shared_ptr<Chunk> chunkAt(int cx, int cz) const;
 
-    // Iterate all chunks (main thread only).
+    // Iterate all chunks (main thread, current dimension).
     void forEachChunk(const std::function<void(std::shared_ptr<Chunk>&, int, int)>& fn);
 
-    // Raw-pointer snapshot (avoids shared_ptr atomic ops per frame).
+    // Raw-pointer snapshot (current dimension).
     struct ChunkInfo { Chunk* c; int cx; int cz; };
     void snapshotChunks(std::vector<ChunkInfo>& out);
 
     void markDirty(int cx, int cz);
 
-    // Recorded block edits (x,y,z,blockId) for saving; x,y,z absolute coords.
     const std::vector<std::array<int, 4>>& editLog() const { return editLog_; }
     void clearEditLog() { editLog_.clear(); }
 
-    // Synchronously create + generate a chunk (used when loading a save, where the
-    // worker pool has no tasks yet, so there is no race).
     void forceGenerateChunk(int cx, int cz);
-
-    // Load a single chunk's block data from a binary stream (save loading).
     void loadChunkFromDisk(int cx, int cz, std::istream& f);
-
-    // Force re-mesh of a chunk (used after loading to fix boundary faces).
     void forceMeshChunk(int cx, int cz);
 
     size_t chunkCount() const {
         std::lock_guard<std::mutex> lk(mapLock_);
-        return chunks_.size();
+        return dims_[currentDim_].chunks.size();
     }
 
-    // Number of worker threads active.
     int workerCount() const { return (int)workers_.size(); }
 
     uint32_t seed;
 
-    // ---- 实体管理（主线程模拟；渲染线程只读 entities()）----
+    // ---- 实体管理（主线程模拟；渲染线程只读）----
     Entity* spawnEntity(std::unique_ptr<Entity> e);
     const std::vector<std::unique_ptr<Entity>>& entities() const { return entities_; }
-    // 推进所有实体并移除 dead（主线程每帧调用）
     void tickEntities(float dt);
-    // 沿射线找最近实体（攻击命中测试）；命中点写入 hit
     Entity* raycastEntity(Vec3 origin, Vec3 dir, float maxDist, Vec3* hit = nullptr);
 
-    // Called on the main thread right before a chunk is erased from the map.
     std::function<void(Chunk&)> onDestroyChunk;
 
 private:
     void workerLoop();
-    void generateChunk(int cx, int cz, const std::shared_ptr<Chunk>& c);
-    void meshChunk(int cx, int cz, const std::shared_ptr<Chunk>& c);
-    void scheduleMesh(int cx, int cz);
-    void enqueue(bool isMesh, int cx, int cz, uint64_t prio);
+    void generateChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chunk>& c);
+    void meshChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chunk>& c);
+    void scheduleMesh(DimensionId dim, int cx, int cz);
+    void enqueue(DimensionId dim, bool isMesh, int cx, int cz, uint64_t prio);
     bool popTask(WorldTask& out);
 
-    mutable std::mutex mapLock_;
-    std::unordered_map<uint64_t, std::shared_ptr<Chunk>> chunks_;
-    mutable std::shared_mutex blocksMutex_;
+    // 按维度访问快捷方式
+    DimStorage& dc() { return dims_[currentDim_]; }
+    const DimStorage& dc() const { return dims_[currentDim_]; }
 
-    // Small direct-mapped cache to avoid mapLock_ for repeated chunkAt() lookups.
-    static constexpr int kChunkCacheN = 8;
-    mutable std::array<std::pair<uint64_t, std::shared_ptr<Chunk>>, kChunkCacheN> chunkCache_{};
-    mutable uint32_t chunkCacheIdx_ = 0;
+    mutable std::mutex mapLock_;
+    std::array<DimStorage, DIM_COUNT> dims_;
+    DimensionId currentDim_ = DIM_OVERWORLD;
+    mutable std::shared_mutex blocksMutex_;
 
     std::priority_queue<WorldTask, std::vector<WorldTask>, std::function<bool(const WorldTask&, const WorldTask&)>> queue_;
     std::mutex queueLock_;
     std::condition_variable queueCV_;
-    std::unordered_set<uint64_t> queuedGen_;
-    std::unordered_set<uint64_t> queuedMesh_;
-    std::unordered_set<uint64_t> generating_;
-    std::unordered_set<uint64_t> meshing_;
 
     std::vector<std::thread> workers_;
     std::atomic<bool> running_{false};
 
-    float lastPx_ = 0.0f, lastPz_ = 0.0f;
-    int lastCCX_ = INT_MIN, lastCCZ_ = INT_MIN, lastRenderDist_ = -1;
-    uint32_t unloadCounter_ = 0;
-
     std::vector<std::array<int, 4>> editLog_;
 
-    std::vector<std::unique_ptr<Entity>> entities_;  // 主线程持有
+    std::vector<std::unique_ptr<Entity>> entities_;
     EntityId nextEntityId_ = 1;
 };

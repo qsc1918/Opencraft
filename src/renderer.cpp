@@ -555,8 +555,11 @@ void Renderer::updateTerrainUBO(VkCtx& ctx, const Camera& cam, float renderDist,
     u.fogStart = renderDist * (float)CHUNK_SIZE * 0.70f;
     u.fogEnd = renderDist * (float)CHUNK_SIZE * 0.94f;
     fogEndWorld_ = u.fogEnd;
-    u.skyR = 0.60f; u.skyG = 0.77f;
-    u.skyB = 0.90f;
+    // 维度相关的天空/雾颜色（从 dimensions.hpp DIMENSION_TYPES 读取）
+    const auto& dimType = getDimensionType(world_ ? world_->getDimension() : DIM_OVERWORLD);
+    u.skyR = dimType.skyColorR / 255.0f;
+    u.skyG = dimType.skyColorG / 255.0f;
+    u.skyB = dimType.skyColorB / 255.0f;
     u.atlasPx = (float)atlas_.width;
     u.tilesX = (float)atlas_.tilesX;
     u.tilePx = (float)atlas_.cellSize; // shader 用 cell 布局计算 tile 原点（含 8px 边距）
@@ -565,14 +568,23 @@ void Renderer::updateTerrainUBO(VkCtx& ctx, const Camera& cam, float renderDist,
     memcpy(terrainUBOMap_[slot], &u, sizeof(UboData));
 
     struct SkyUbo { float hx, hy, hz, ha; float zx, zy, zz, za; } s;
-    // day sky
-    Vec3 horizon(0.60f, 0.77f, 0.90f);
-    Vec3 zenith(0.35f, 0.55f, 0.86f);
-    // night sky
-    Vec3 nHorizon(0.10f, 0.12f, 0.22f);
-    Vec3 nZenith(0.04f, 0.05f, 0.14f);
-    horizon = lerp(nHorizon, horizon, dayLight);
-    zenith = lerp(nZenith, zenith, dayLight);
+    // 天空颜色：按维度区分（下界/末地无昼夜循环，固定颜色）
+    // dimType 已在上面 terrain UBO 处声明
+    Vec3 horizon, zenith;
+    if (world_ && world_->getDimension() != DIM_OVERWORLD) {
+        // 下界/末地: 固定天空色（环境光已由 dimension ambient_light 控制）
+        float r = dimType.skyColorR / 255.0f, g = dimType.skyColorG / 255.0f, b = dimType.skyColorB / 255.0f;
+        horizon = Vec3(r * 0.8f, g * 0.8f, b * 0.8f);  // 地平线稍暗
+        zenith = Vec3(r, g, b);
+    } else {
+        // 主世界: 昼夜循环渐变
+        Vec3 dayHorizon(0.60f, 0.77f, 0.90f);
+        Vec3 dayZenith(0.35f, 0.55f, 0.86f);
+        Vec3 nHorizon(0.10f, 0.12f, 0.22f);
+        Vec3 nZenith(0.04f, 0.05f, 0.14f);
+        horizon = lerp(nHorizon, dayHorizon, dayLight);
+        zenith = lerp(nZenith, dayZenith, dayLight);
+    }
     s.hx = horizon.x; s.hy = horizon.y; s.hz = horizon.z;
     s.ha = underwater ? 1.0f : 0.0f;   // reuse horizon.a as the underwater flag
     s.zx = zenith.x; s.zy = zenith.y; s.zz = zenith.z;

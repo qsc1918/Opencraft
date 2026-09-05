@@ -32,24 +32,25 @@ void World::stopWorkers() {
 
 std::shared_ptr<Chunk> World::chunkAt(int cx, int cz) const {
     uint64_t key = chunkKey(cx, cz);
-    for (int i = 0; i < kChunkCacheN; i++) {
-        if (chunkCache_[i].first == key && chunkCache_[i].second) {
-            return chunkCache_[i].second;
+    auto& dim = dc();
+    for (int i = 0; i < DimStorage::kCacheN; i++) {
+        if (dim.cache[i].first == key && dim.cache[i].second) {
+            return dim.cache[i].second;
         }
     }
     std::lock_guard<std::mutex> lk(mapLock_);
-    auto it = chunks_.find(key);
-    auto result = it == chunks_.end() ? nullptr : it->second;
+    auto it = dim.chunks.find(key);
+    auto result = it == dim.chunks.end() ? nullptr : it->second;
     if (result) {
-        chunkCache_[chunkCacheIdx_ % kChunkCacheN] = {key, result};
-        chunkCacheIdx_++;
+        dim.cache[dim.cacheIdx % DimStorage::kCacheN] = {key, result};
+        dim.cacheIdx++;
     }
     return result;
 }
 
 void World::forEachChunk(const std::function<void(std::shared_ptr<Chunk>&, int, int)>& fn) {
     std::lock_guard<std::mutex> lk(mapLock_);
-    for (auto& kv : chunks_) {
+    for (auto& kv : dc().chunks) {
         int cx = (int)(int32_t)(kv.first >> 32);
         int cz = (int)(int32_t)kv.first;
         fn(kv.second, cx, cz);
@@ -59,8 +60,8 @@ void World::forEachChunk(const std::function<void(std::shared_ptr<Chunk>&, int, 
 void World::snapshotChunks(std::vector<ChunkInfo>& out) {
     std::lock_guard<std::mutex> lk(mapLock_);
     out.clear();
-    out.reserve(chunks_.size());
-    for (auto& kv : chunks_) {
+    out.reserve(dc().chunks.size());
+    for (auto& kv : dc().chunks) {
         int cx = (int)(int32_t)(kv.first >> 32);
         int cz = (int)(int32_t)kv.first;
         out.push_back({kv.second.get(), cx, cz});
@@ -100,16 +101,17 @@ bool World::setBlock(int x, int y, int z, uint8_t id) {
 }
 
 void World::markDirty(int cx, int cz) {
-    scheduleMesh(cx, cz);
+    scheduleMesh(currentDim_, cx, cz);
 }
 
 void World::loadChunkFromDisk(int cx, int cz, std::istream& f) {
     uint64_t key = chunkKey(cx, cz);
+    auto& dim = dc();
     std::shared_ptr<Chunk> c;
     {
         std::lock_guard<std::mutex> lk(mapLock_);
-        auto it = chunks_.find(key);
-        if (it == chunks_.end()) { c = std::make_shared<Chunk>(); chunks_[key] = c; }
+        auto it = dim.chunks.find(key);
+        if (it == dim.chunks.end()) { c = std::make_shared<Chunk>(); dim.chunks[key] = c; }
         else c = it->second;
     }
     f.read((char*)c->blocks.data(), CHUNK_VOL);
@@ -119,51 +121,54 @@ void World::loadChunkFromDisk(int cx, int cz, std::istream& f) {
 
 void World::forceMeshChunk(int cx, int cz) {
     uint64_t key = chunkKey(cx, cz);
+    auto& dim = dc();
     std::shared_ptr<Chunk> c;
     {
         std::lock_guard<std::mutex> lk(mapLock_);
-        auto it = chunks_.find(key);
-        if (it == chunks_.end()) return;
+        auto it = dim.chunks.find(key);
+        if (it == dim.chunks.end()) return;
         c = it->second;
     }
     if (c->state.load() < 1) return;
     c->dirty.store(true);
     {
         std::lock_guard<std::mutex> lk(queueLock_);
-        queuedMesh_.erase(key);
-        meshing_.erase(key);
+        dim.queuedMesh.erase(key);
+        dim.meshing.erase(key);
     }
     float wx = (cx + 0.5f) * CHUNK_SIZE, wz = (cz + 0.5f) * CHUNK_SIZE;
-    float dx = wx - lastPx_, dz = wz - lastPz_;
+    float dx = wx - dim.lastPx, dz = wz - dim.lastPz;
     uint64_t prio = (uint64_t)(dx * dx + dz * dz);
     std::lock_guard<std::mutex> lk(queueLock_);
-    queuedMesh_.insert(key);
-    queue_.push(WorldTask{true, cx, cz, prio, c});
+    dim.queuedMesh.insert(key);
+    queue_.push(WorldTask{true, currentDim_, cx, cz, prio, c});
     queueCV_.notify_one();
 }
 
 void World::forceGenerateChunk(int cx, int cz) {
     uint64_t key = chunkKey(cx, cz);
+    auto& dim = dc();
     std::shared_ptr<Chunk> c;
     {
         std::lock_guard<std::mutex> lk(mapLock_);
-        auto it = chunks_.find(key);
-        if (it == chunks_.end()) { c = std::make_shared<Chunk>(); chunks_[key] = c; }
+        auto it = dim.chunks.find(key);
+        if (it == dim.chunks.end()) { c = std::make_shared<Chunk>(); dim.chunks[key] = c; }
         else c = it->second;
     }
     if (c->state.load() >= 1) return;
     gen::generateColumn(seed, cx, cz, c->blocks.data());
     c->state.store(1);
     c->dirty.store(true);
-    scheduleMesh(cx, cz);
+    scheduleMesh(currentDim_, cx, cz);
 }
 
-void World::scheduleMesh(int cx, int cz) {
+void World::scheduleMesh(DimensionId dim, int cx, int cz) {
+    auto& d = dims_[dim];
     std::shared_ptr<Chunk> c;
     {
         std::lock_guard<std::mutex> lk(mapLock_);
-        auto it = chunks_.find(chunkKey(cx, cz));
-        if (it == chunks_.end()) return;
+        auto it = d.chunks.find(chunkKey(cx, cz));
+        if (it == d.chunks.end()) return;
         c = it->second;
     }
     if (c->state.load() < 1) return;
@@ -171,33 +176,34 @@ void World::scheduleMesh(int cx, int cz) {
     uint64_t key = chunkKey(cx, cz);
     {
         std::lock_guard<std::mutex> lk(queueLock_);
-        if (queuedMesh_.count(key) || meshing_.count(key)) return;
-        queuedMesh_.insert(key);
+        if (d.queuedMesh.count(key) || d.meshing.count(key)) return;
+        d.queuedMesh.insert(key);
         float wx = (cx + 0.5f) * CHUNK_SIZE, wz = (cz + 0.5f) * CHUNK_SIZE;
-        float dx = wx - lastPx_, dz = wz - lastPz_;
+        float dx = wx - d.lastPx, dz = wz - d.lastPz;
         uint64_t prio = (uint64_t)(dx * dx + dz * dz);
-        queue_.push(WorldTask{true, cx, cz, prio, c});
+        queue_.push(WorldTask{true, dim, cx, cz, prio, c});
         queueCV_.notify_one();
     }
 }
 
-void World::enqueue(bool isMesh, int cx, int cz, uint64_t prio) {
+void World::enqueue(DimensionId dim, bool isMesh, int cx, int cz, uint64_t prio) {
+    auto& d = dims_[dim];
     std::shared_ptr<Chunk> c;
     {
         std::lock_guard<std::mutex> lk(mapLock_);
-        auto it = chunks_.find(chunkKey(cx, cz));
-        if (it == chunks_.end()) return;
+        auto it = d.chunks.find(chunkKey(cx, cz));
+        if (it == d.chunks.end()) return;
         c = it->second;
     }
     std::lock_guard<std::mutex> lk(queueLock_);
     if (isMesh) {
-        if (queuedMesh_.count(chunkKey(cx, cz)) || meshing_.count(chunkKey(cx, cz))) return;
-        queuedMesh_.insert(chunkKey(cx, cz));
+        if (d.queuedMesh.count(chunkKey(cx, cz)) || d.meshing.count(chunkKey(cx, cz))) return;
+        d.queuedMesh.insert(chunkKey(cx, cz));
     } else {
-        if (queuedGen_.count(chunkKey(cx, cz)) || generating_.count(chunkKey(cx, cz))) return;
-        queuedGen_.insert(chunkKey(cx, cz));
+        if (d.queuedGen.count(chunkKey(cx, cz)) || d.generating.count(chunkKey(cx, cz))) return;
+        d.queuedGen.insert(chunkKey(cx, cz));
     }
-    queue_.push(WorldTask{isMesh, cx, cz, prio, c});
+    queue_.push(WorldTask{isMesh, dim, cx, cz, prio, c});
     queueCV_.notify_one();
 }
 
@@ -211,31 +217,34 @@ bool World::popTask(WorldTask& out) {
     out = queue_.top();
     queue_.pop();
     uint64_t key = chunkKey(out.cx, out.cz);
+    auto& d = dims_[out.dim];
     if (out.isMesh) {
-        queuedMesh_.erase(key);
-        meshing_.insert(key);
+        d.queuedMesh.erase(key);
+        d.meshing.insert(key);
     } else {
-        queuedGen_.erase(key);
-        generating_.insert(key);
+        d.queuedGen.erase(key);
+        d.generating.insert(key);
     }
     return true;
 }
 
-void World::generateChunk(int cx, int cz, const std::shared_ptr<Chunk>& c) {
+void World::generateChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chunk>& c) {
+    auto& d = dims_[dim];
     gen::generateColumn(seed, cx, cz, c->blocks.data());
     c->state.store(1);
-    scheduleMesh(cx, cz);
-    scheduleMesh(cx + 1, cz);
-    scheduleMesh(cx - 1, cz);
-    scheduleMesh(cx, cz + 1);
-    scheduleMesh(cx, cz - 1);
+    scheduleMesh(dim, cx, cz);
+    scheduleMesh(dim, cx + 1, cz);
+    scheduleMesh(dim, cx - 1, cz);
+    scheduleMesh(dim, cx, cz + 1);
+    scheduleMesh(dim, cx, cz - 1);
     {
         std::lock_guard<std::mutex> lk(queueLock_);
-        generating_.erase(chunkKey(cx, cz));
+        d.generating.erase(chunkKey(cx, cz));
     }
 }
 
-void World::meshChunk(int cx, int cz, const std::shared_ptr<Chunk>& c) {
+void World::meshChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chunk>& c) {
+    auto& d = dims_[dim];
     MeshView view;
     view.blocks.fill(B_AIR);
 
@@ -245,8 +254,8 @@ void World::meshChunk(int cx, int cz, const std::shared_ptr<Chunk>& c) {
     {
         std::lock_guard<std::mutex> mlk(mapLock_);
         auto get = [&](int ncx, int ncz) -> std::shared_ptr<Chunk> {
-            auto it = chunks_.find(chunkKey(ncx, ncz));
-            return (it != chunks_.end() && it->second->state.load() >= 1) ? it->second : nullptr;
+            auto it = d.chunks.find(chunkKey(ncx, ncz));
+            return (it != d.chunks.end() && it->second->state.load() >= 1) ? it->second : nullptr;
         };
         neighbors[0] = get(cx + 1, cz);
         neighbors[1] = get(cx - 1, cz);
@@ -319,7 +328,7 @@ void World::meshChunk(int cx, int cz, const std::shared_ptr<Chunk>& c) {
     }
     {
         std::lock_guard<std::mutex> lk(queueLock_);
-        meshing_.erase(chunkKey(cx, cz));
+        d.meshing.erase(chunkKey(cx, cz));
     }
 }
 
@@ -327,9 +336,9 @@ void World::workerLoop() {
     WorldTask t;
     while (popTask(t)) {
         if (t.isMesh)
-            meshChunk(t.cx, t.cz, t.chunk);
+            meshChunk(t.dim, t.cx, t.cz, t.chunk);
         else
-            generateChunk(t.cx, t.cz, t.chunk);
+            generateChunk(t.dim, t.cx, t.cz, t.chunk);
     }
 }
 
@@ -393,18 +402,19 @@ Entity* World::raycastEntity(Vec3 origin, Vec3 dir, float maxDist, Vec3* hit) {
 }
 
 void World::update(float px, float pz, int renderDist) {
-    lastPx_ = px;
-    lastPz_ = pz;
+    auto& dim = dc();
+    dim.lastPx = px;
+    dim.lastPz = pz;
     int ccx = blockToChunkCoord((int)std::floor(px));
     int ccz = blockToChunkCoord((int)std::floor(pz));
 
     // Skip the expensive ensure+queue loop when the player has not moved to a
     // new chunk since the last call and no chunks are stuck in state 0 (meaning
     // all previously queued generations have been picked up).
-    bool posChanged = (ccx != lastCCX_ || ccz != lastCCZ_ || renderDist != lastRenderDist_);
-    lastCCX_ = ccx;
-    lastCCZ_ = ccz;
-    lastRenderDist_ = renderDist;
+    bool posChanged = (ccx != dim.lastCCX || ccz != dim.lastCCZ || renderDist != dim.lastRenderDist);
+    dim.lastCCX = ccx;
+    dim.lastCCZ = ccz;
+    dim.lastRenderDist = renderDist;
 
     // Ensure chunks exist + queue generation.
     // Skip the expensive scan when the player has not moved to a new chunk — all
@@ -423,10 +433,10 @@ void World::update(float px, float pz, int renderDist) {
                     for (int cz = z0; cz <= z1; cz++) {
                         if (r > 0 && cx > x0 && cx < x1 && cz > z0 && cz < z1) continue;
                         uint64_t key = chunkKey(cx, cz);
-                        auto it = chunks_.find(key);
-                        if (it == chunks_.end()) {
+                        auto it = dim.chunks.find(key);
+                        if (it == dim.chunks.end()) {
                             auto c = std::make_shared<Chunk>();
-                            chunks_[key] = c;
+                            dim.chunks[key] = c;
                             float wx = (cx + 0.5f) * CHUNK_SIZE, wz = (cz + 0.5f) * CHUNK_SIZE;
                             float dx = wx - px, dz = wz - pz;
                             toGen.push_back({cx, cz, (uint64_t)(dx * dx + dz * dz)});
@@ -444,20 +454,20 @@ void World::update(float px, float pz, int renderDist) {
             uint64_t key = chunkKey(g.cx, g.cz);
             {
                 std::lock_guard<std::mutex> qlk(queueLock_);
-                if (queuedGen_.count(key) || generating_.count(key)) continue;
+                if (dim.queuedGen.count(key) || dim.generating.count(key)) continue;
             }
-            enqueue(false, g.cx, g.cz, g.prio);
+            enqueue(currentDim_, false, g.cx, g.cz, g.prio);
         }
     }
 
     // unload far chunks — throttle to once every 15 frames to avoid iterating
     // the entire chunk map + acquiring queueLock per candidate every frame.
-    if (++unloadCounter_ >= 15) {
-    unloadCounter_ = 0;
+    if (++dim.unloadCounter >= 15) {
+    dim.unloadCounter = 0;
     std::vector<uint64_t> toErase;
     {
         std::lock_guard<std::mutex> lk(mapLock_);
-        for (auto& kv : chunks_) {
+        for (auto& kv : dim.chunks) {
             int cx = (int)(int32_t)(kv.first >> 32);
             int cz = (int)(int32_t)kv.first;
             int dist = std::max(std::abs(cx - ccx), std::abs(cz - ccz));
@@ -466,17 +476,17 @@ void World::update(float px, float pz, int renderDist) {
                 uint64_t key = kv.first;
                 {
                     std::lock_guard<std::mutex> qlk(queueLock_);
-                    if (generating_.count(key) || meshing_.count(key) || queuedMesh_.count(key) || queuedGen_.count(key))
+                    if (dim.generating.count(key) || dim.meshing.count(key) || dim.queuedMesh.count(key) || dim.queuedGen.count(key))
                         continue;
                 }
                 toErase.push_back(key);
             }
         }
         for (uint64_t key : toErase) {
-            auto it = chunks_.find(key);
-            if (it != chunks_.end()) {
+            auto it = dim.chunks.find(key);
+            if (it != dim.chunks.end()) {
                 if (onDestroyChunk) onDestroyChunk(*it->second);
-                chunks_.erase(it);
+                dim.chunks.erase(it);
             }
         }
     }
