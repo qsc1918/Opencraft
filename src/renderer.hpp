@@ -53,7 +53,7 @@ public:
 
     int selectedSlot() const { return selectedSlot_; }
     uint8_t selectedBlock() const;
-    // 当前手持的杂项物品 id（物品页点击选中；普通方块返回 I_NONE）。
+    // 当前手持的杂项物品 id（快捷栏选中格是打火石/末影之眼时返回对应 ItemId；否则 I_NONE）。
     uint16_t heldMiscItem() const;
     float fps() const { return fps_; }
     int debugDraws() const { return debugDraws_; }
@@ -154,12 +154,13 @@ private:
 
     bool invOpen_ = false;
     int invPage_ = 0;              // 0=方块页 1=物品页
-    uint16_t selectedItem_ = I_NONE; // 物品页当前选中（生存模式预留）
     float cursorX_ = 0.0f, cursorY_ = 0.0f;
     bool prevMouse0_ = false;
-    uint8_t placementBlock_ = B_GRASS;
-    uint8_t hotbar_[9] = {B_GRASS, B_STONE, B_COBBLE, B_PLANKS, B_LOG,
-                          B_DIRT, B_SAND, B_GRAVEL, B_GLASS};
+    // 快捷栏：每格是一个"手持资源"。约定：< kItemTag 是方块 id（blockTile/放置），
+    // >= kItemTag 是物品（kItemTag + ItemId，用 itemDef().iconTile 渲染、右键使用）。
+    static constexpr int kItemTag = 0x100;
+    int hotbar_[9] = {B_GRASS, B_STONE, B_COBBLE, B_PLANKS, B_LOG,
+                      B_DIRT, B_SAND, B_GRAVEL, B_GLASS};
     // inventory contents (all placeable blocks)
     static const uint8_t kInvBlocks[];
     static const int kInvCount;

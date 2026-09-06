@@ -705,21 +705,26 @@ const uint8_t Renderer::kInvBlocks[] = {
 const int Renderer::kInvCount = (int)(sizeof(kInvBlocks) / sizeof(kInvBlocks[0]));
 
 uint8_t Renderer::selectedBlock() const {
-    return placementBlock_;
+    // 当前快捷栏选中格：若携带有方块（< kItemTag）返回其方块 id，否则 B_AIR。
+    int h = hotbar_[selectedSlot_];
+    if (h >= kItemTag) {
+        uint16_t item = (uint16_t)(h - kItemTag);
+        const ItemDef& d = itemDef(item);
+        return d.category == ITEM_BLOCK ? d.blockId : (uint8_t)B_AIR;
+    }
+    return (uint8_t)h;
 }
 
 uint16_t Renderer::heldMiscItem() const {
-    // 只在物品页选中的是杂项物品时返回（打火石/末影之眼），否则 I_NONE。
-    if (invPage_ != 1) return I_NONE;
-    return selectedItem_ == I_FLINT_AND_STEEL || selectedItem_ == I_EYE_OF_ENDER
-        ? selectedItem_ : I_NONE;
+    // 当前快捷栏选中格若是打火石/末影之眼，返回对应 ItemId，否则 I_NONE。
+    int h = hotbar_[selectedSlot_];
+    if (h < kItemTag) return I_NONE;
+    uint16_t item = (uint16_t)(h - kItemTag);
+    return item == I_FLINT_AND_STEEL || item == I_EYE_OF_ENDER ? item : I_NONE;
 }
 
 void Renderer::setInventoryOpen(bool open) {
-    if (invOpen_ && !open) {
-        // closing the inventory: place the picked block into the selected hotbar slot
-        hotbar_[selectedSlot_] = placementBlock_;
-    }
+    // 物品栏点击已直接更新对应快捷栏格子，关闭时不再覆盖。
     invOpen_ = open;
 }
 
@@ -1042,17 +1047,17 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
     Mat4 vp = cachedVP_;
 
     // build UI quads
-    if (in.keys['1']) { selectedSlot_ = 0; placementBlock_ = hotbar_[0]; }
-    if (in.keys['2']) { selectedSlot_ = 1; placementBlock_ = hotbar_[1]; }
-    if (in.keys['3']) { selectedSlot_ = 2; placementBlock_ = hotbar_[2]; }
-    if (in.keys['4']) { selectedSlot_ = 3; placementBlock_ = hotbar_[3]; }
-    if (in.keys['5']) { selectedSlot_ = 4; placementBlock_ = hotbar_[4]; }
-    if (in.keys['6']) { selectedSlot_ = 5; placementBlock_ = hotbar_[5]; }
-    if (in.keys['7']) { selectedSlot_ = 6; placementBlock_ = hotbar_[6]; }
-    if (in.keys['8']) { selectedSlot_ = 7; placementBlock_ = hotbar_[7]; }
-    if (in.keys['9']) { selectedSlot_ = 8; placementBlock_ = hotbar_[8]; }
-    if (in.scrollAccum > 0) { selectedSlot_ = (selectedSlot_ - 1 + 9) % 9; placementBlock_ = hotbar_[selectedSlot_]; }
-    if (in.scrollAccum < 0) { selectedSlot_ = (selectedSlot_ + 1) % 9; placementBlock_ = hotbar_[selectedSlot_]; }
+    if (in.keys['1']) selectedSlot_ = 0;
+    if (in.keys['2']) selectedSlot_ = 1;
+    if (in.keys['3']) selectedSlot_ = 2;
+    if (in.keys['4']) selectedSlot_ = 3;
+    if (in.keys['5']) selectedSlot_ = 4;
+    if (in.keys['6']) selectedSlot_ = 5;
+    if (in.keys['7']) selectedSlot_ = 6;
+    if (in.keys['8']) selectedSlot_ = 7;
+    if (in.keys['9']) selectedSlot_ = 8;
+    if (in.scrollAccum > 0) selectedSlot_ = (selectedSlot_ - 1 + 9) % 9;
+    if (in.scrollAccum < 0) selectedSlot_ = (selectedSlot_ + 1) % 9;
 
     std::vector<UIVertex> quads;
     quads.reserve(512);
@@ -1137,8 +1142,10 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
         float x0 = hx0 + i * (slotSize + gap);
         bool sel = i == selectedSlot_;
         pushQuad(x0, hy0, x0 + slotSize, hy0 + slotSize, T_WHITE,
-                 sel ? 0.45f : 0.15f, sel ? 0.45f : 0.15f, sel ? 0.45f : 0.15f, 0.85f);
-        int tile = blockTile(hotbar_[i], F_PY);
+                 sel ? 0.45f : 0.15f, sel ? 0.45f : 0.15f, sel ? 0.45f : 0.15f, 0.95f);
+        int h = hotbar_[i];
+        int tile = h >= kItemTag ? itemDef((uint16_t)(h - kItemTag)).iconTile
+                                 : blockTile((uint8_t)h, F_PY);
         pushQuad(x0 + 5, hy0 + 5, x0 + slotSize - 5, hy0 + slotSize - 5, tile, 1, 1, 1, 1);
         if (sel) {
             pushQuad(x0, hy0, x0 + slotSize, hy0 + 1.5f, T_WHITE, 1, 1, 1, 1);
@@ -1175,11 +1182,14 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
         }
         int currentIdx = -1;
         if (invPage_ == 0) {
+            // 当前快捷栏选中格若是方块，找出它在方块页里的索引
+            int cur = hotbar_[selectedSlot_];
             for (int i = 0; i < kInvCount; i++)
-                if (kInvBlocks[i] == placementBlock_) { currentIdx = i; break; }
+                if (cur < kItemTag && kInvBlocks[i] == (uint8_t)cur) { currentIdx = i; break; }
         } else {
+            int cur = hotbar_[selectedSlot_];
             for (int i = 1; i < I_COUNT; i++)
-                if ((uint16_t)i == selectedItem_) { currentIdx = i - 1; break; }
+                if (cur >= kItemTag && (cur - kItemTag) == (int)i) { currentIdx = i - 1; break; }
         }
         for (int i = 0; i < count; i++) {
             int col = i % kInvCols, row = i / kInvCols;
@@ -1205,8 +1215,9 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
                 float x0 = gx0 + col * (invSlot + invGap);
                 float y0 = gy0 + row * (invSlot + invGap);
                 if (cursorX_ >= x0 && cursorX_ <= x0 + invSlot && cursorY_ >= y0 && cursorY_ <= y0 + invSlot) {
-                    if (invPage_ == 0) placementBlock_ = kInvBlocks[i];
-                    else selectedItem_ = (uint16_t)(i + 1);
+                    // 点击选中：把资源放到当前快捷栏选中格。
+                    if (invPage_ == 0) hotbar_[selectedSlot_] = kInvBlocks[i];
+                    else hotbar_[selectedSlot_] = kItemTag + (i + 1);
                     break;
                 }
             }
