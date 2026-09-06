@@ -53,6 +53,8 @@ public:
 
     int selectedSlot() const { return selectedSlot_; }
     uint8_t selectedBlock() const;
+    // 当前手持的杂项物品 id（物品页点击选中；普通方块返回 I_NONE）。
+    uint16_t heldMiscItem() const;
     float fps() const { return fps_; }
     int debugDraws() const { return debugDraws_; }
 

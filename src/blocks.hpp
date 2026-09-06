@@ -40,7 +40,8 @@ enum Block : uint8_t {
     B_END_PORTAL       = 28,
     B_END_GATEWAY      = 29,
     B_DRAGON_EGG       = 30,
-    B_COUNT = 31,
+    B_END_PORTAL_FRAME_EYE = 31,  // 放了末影之眼的末地传送门框架
+    B_COUNT = 32,
 };
 
 // Tile ids into the texture atlas (assigned when atlas is built)
@@ -68,7 +69,8 @@ enum Tile : uint8_t {
     T_END_PORTAL       = 31,
     T_END_GATEWAY      = 32,
     T_DRAGON_EGG       = 33,
-    T_COUNT = 34,
+    T_END_PORTAL_FRAME_EYE = 34,  // 放了眼的有眼框架
+    T_COUNT = 35,
 };
 
 // Face indices（MC 语义: F_PY=up 顶面, F_NY=down 底面, ±X/±Z 四侧面）
@@ -132,6 +134,7 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
     /*B_END_PORTAL */ {"voxmine:end_portal",   "末地传送门", false, false, 15, 0, T_END_PORTAL, T_END_PORTAL, T_END_PORTAL},
     /*B_END_GATEWAY*/ {"voxmine:end_gateway",  "折跃门",   false, false, 15, 0,  T_END_GATEWAY, T_END_GATEWAY, T_END_GATEWAY},
     /*B_DRAGON_EGG*/ {"voxmine:dragon_egg",    "龙蛋",     true,  true,  1,  15, T_DRAGON_EGG, T_DRAGON_EGG, T_DRAGON_EGG},
+    /*B_END_PORTAL_FRAME_EYE*/ {"voxmine:end_portal_frame_eye","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_EYE},
 };
 
 // 注册表访问；越界回落为空气定义（等价 MC 对未知方块的容错处理）。

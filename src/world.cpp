@@ -48,6 +48,57 @@ std::shared_ptr<Chunk> World::chunkAt(int cx, int cz) const {
     return result;
 }
 
+std::shared_ptr<Chunk> World::chunkAtInDim(DimensionId dim, int cx, int cz) const {
+    auto& ds = dims_[dim];
+    uint64_t key = chunkKey(cx, cz);
+    for (int i = 0; i < DimStorage::kCacheN; i++) {
+        if (ds.cache[i].first == key && ds.cache[i].second) return ds.cache[i].second;
+    }
+    std::lock_guard<std::mutex> lk(mapLock_);
+    auto it = ds.chunks.find(key);
+    auto result = it == ds.chunks.end() ? nullptr : it->second;
+    if (result) {
+        ds.cache[ds.cacheIdx % DimStorage::kCacheN] = {key, result};
+        ds.cacheIdx++;
+    }
+    return result;
+}
+
+uint8_t World::getBlockInDim(DimensionId dim, int x, int y, int z) const {
+    if (y < WORLD_MIN_Y || y >= WORLD_HEIGHT) return B_AIR;
+    int cx = blockToChunkCoord(x), cz = blockToChunkCoord(z);
+    int lx = blockToChunkLocal(x), lz = blockToChunkLocal(z);
+    auto c = chunkAtInDim(dim, cx, cz);
+    if (!c || c->state.load() < 1) return B_AIR;
+    return c->blocks[chunkIndex(lx, y, lz)];
+}
+
+bool World::setBlockInDim(DimensionId dim, int x, int y, int z, uint8_t id) {
+    if (y < WORLD_MIN_Y || y >= WORLD_HEIGHT) return false;
+    int cx = blockToChunkCoord(x), cz = blockToChunkCoord(z);
+    auto c = chunkAtInDim(dim, cx, cz);
+    if (!c || c->state.load() < 1) return false;
+    int lx = blockToChunkLocal(x), lz = blockToChunkLocal(z);
+    {
+        std::unique_lock<std::shared_mutex> lk(blocksMutex_);
+        if (c->blocks[chunkIndex(lx, y, lz)] == id) return false;
+        c->blocks[chunkIndex(lx, y, lz)] = id;
+    }
+    auto& ds = dims_[dim];
+    ds.queuedMesh.erase(chunkKey(cx, cz));
+    ds.meshing.erase(chunkKey(cx, cz));
+    float wx = (cx + 0.5f) * CHUNK_SIZE, wz = (cz + 0.5f) * CHUNK_SIZE;
+    float dx = wx - ds.lastPx, dz = wz - ds.lastPz;
+    uint64_t prio = (uint64_t)(dx * dx + dz * dz);
+    std::lock_guard<std::mutex> lk(queueLock_);
+    if (!ds.queuedMesh.count(chunkKey(cx, cz))) {
+        ds.queuedMesh.insert(chunkKey(cx, cz));
+        queue_.push(WorldTask{true, dim, cx, cz, prio, c});
+        queueCV_.notify_one();
+    }
+    return true;
+}
+
 void World::forEachChunk(const std::function<void(std::shared_ptr<Chunk>&, int, int)>& fn) {
     std::lock_guard<std::mutex> lk(mapLock_);
     for (auto& kv : dc().chunks) {

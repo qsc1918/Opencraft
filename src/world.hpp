@@ -134,6 +134,10 @@ public:
     // Player edit (current dimension). Returns true if changed.
     bool setBlock(int x, int y, int z, uint8_t id);
 
+    // 跨维度方块读写（传送门查找出口/放置出口传送门时用；不改变 currentDim_）。
+    uint8_t getBlockInDim(DimensionId dim, int x, int y, int z) const;
+    bool setBlockInDim(DimensionId dim, int x, int y, int z, uint8_t id);
+
     std::shared_ptr<Chunk> chunkAt(int cx, int cz) const;
 
     // Iterate all chunks (main thread, current dimension).
@@ -180,6 +184,9 @@ private:
     // 按维度访问快捷方式
     DimStorage& dc() { return dims_[currentDim_]; }
     const DimStorage& dc() const { return dims_[currentDim_]; }
+
+    // 指定维度的 chunk 查找（跨维度传送门查找时用）。
+    std::shared_ptr<Chunk> chunkAtInDim(DimensionId dim, int cx, int cz) const;
 
     mutable std::mutex mapLock_;
     std::array<DimStorage, DIM_COUNT> dims_;

@@ -1,6 +1,7 @@
 #include "camera.hpp"
 #include "entities.hpp"
 #include "player.hpp"
+#include "portal.hpp"
 #include "raycast.hpp"
 #include "renderer.hpp"
 #include "save.hpp"
@@ -39,6 +40,7 @@ struct Args {
     std::string dimArg;
     std::string menuShot;
     int menuScreen = 1; // Menuscreen::MainMenu
+    bool spawnPortal = false; // 调试/演示：在出生点生成一个点火的传送门
 };
 
 static Args parseArgs(int argc, char** argv) {
@@ -68,6 +70,7 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--gpu-index") a.gpuIndex = std::stoi(next());
         else if (arg == "--menu-shot") a.menuShot = next();
         else if (arg == "--menu-screen") a.menuScreen = std::stoi(next());
+        else if (arg == "--spawn-portal") a.spawnPortal = true;
         else if (arg == "--help") {
             printf("Usage: voxmine [--seed N] [--render-dist N] [--threads N] [--pos x,y,z]\n"
                    "  [--screenshot out.png] [--frames N] [--no-vsync] [--no-ui]\n"
@@ -226,6 +229,28 @@ int main(int argc, char** argv) {
             if (!a.posStr.empty()) {
                 float x = 0, y = 80, z = 0;
                 if (sscanf(a.posStr.c_str(), "%f,%f,%f", &x, &y, &z) >= 1) player.cam.pos = Vec3(x, y, z);
+                // 调试/演示：在玩家所在位置生成一个点火的竖直下界传送门。
+                if (a.spawnPortal) {
+                    int pxi = (int)std::floor(player.cam.pos.x);
+                    int pzi = (int)std::floor(player.cam.pos.z);
+                    int baseY = (int)std::floor(player.cam.pos.y - player.eyeHeight);
+                    if (baseY < 4) baseY = 4;
+                    // 门洞中心对准玩家所在的 x（portal 覆盖 pxi..pxi+1，玩家站立即可触发）
+                    int fx0 = pxi - 1;
+                    for (int x = fx0; x <= fx0 + 3; x++) {
+                        world->forceGenerateChunk(blockToChunkCoord(x), blockToChunkCoord(pzi));
+                        world->setBlock(x, baseY - 1, pzi, B_OBSIDIAN);
+                        world->setBlock(x, baseY + 3, pzi, B_OBSIDIAN);
+                    }
+                    for (int y = baseY - 1; y <= baseY + 3; y++) {
+                        world->setBlock(fx0, y, pzi, B_OBSIDIAN);
+                        world->setBlock(fx0 + 3, y, pzi, B_OBSIDIAN);
+                    }
+                    for (int x = fx0 + 1; x <= fx0 + 2; x++)
+                        for (int y = baseY; y <= baseY + 2; y++)
+                            world->setBlock(x, y, pzi, B_NETHER_PORTAL);
+                    fprintf(stderr, "[main] spawned demo nether portal at (%d, %d)\n", pxi, pzi);
+                }
             } else {
                 auto hasHeadroom = [&](int x, int z, int surfaceY, int needed) {
                     for (int y = surfaceY + 1; y <= surfaceY + needed; y++) {
@@ -319,6 +344,53 @@ int main(int argc, char** argv) {
         }
     };
 
+    // 维度间传送：切 player.dim + world 当前维度 + 设玩家位置。
+    // nether_portal: 主世界<->下界，坐标按 teleportationScale（下界 8.0）缩放。
+    // end_portal: 主世界<->末地（末地回程回出生点）。
+    float portalCooldown = 0.0f; // 防止 portal 入口/出口来回横跳
+    auto performTeleport = [&](DimensionId toDim) {
+        DimensionId fromDim = player.dim;
+        float scale = getDimensionType(toDim).coordinateScale;
+        float inv = 1.0f / scale;
+        float px = player.cam.pos.x, py = player.cam.pos.y, pz = player.cam.pos.z;
+        if (toDim == DIM_NETHER) { px *= inv; pz *= inv; }
+        else if (toDim == DIM_OVERWORLD && fromDim == DIM_NETHER) { px *= scale; pz *= scale; }
+        player.dim = toDim;
+        world->setDimension(toDim);
+        player.cam.pos = Vec3(px, py, pz);
+        player.cam.markDirty();
+        player.vel = Vec3(0, 0, 0);
+        portalCooldown = 1.5f;
+    };
+
+    // 每帧传送检测：玩家脚部所在方块若是 portal -> 切维度。供主循环 & 截图分支调用。
+    auto checkTeleport = [&]() {
+        if (portalCooldown > 0.0f) { portalCooldown -= 1.0f / 60.0f; return; }
+        float feetY = player.cam.pos.y - player.eyeHeight;
+        bool foundPortal = false;
+        for (int sy = 0; sy < 2 && !foundPortal; sy++) {
+            int bx = (int)std::floor(player.cam.pos.x);
+            int by = (int)std::floor(feetY + sy);
+            int bz = (int)std::floor(player.cam.pos.z);
+            uint8_t pb = world->getBlock(bx, by, bz);
+            if (portal::isPortalBlock(pb)) {
+                DimensionId curDim = world->getDimension();
+                DimensionId toDim = curDim;
+                if (pb == B_NETHER_PORTAL) {
+                    // 下界传送门：主世界<->下界 双向。
+                    toDim = (curDim == DIM_NETHER) ? DIM_OVERWORLD : DIM_NETHER;
+                } else if (pb == B_END_PORTAL) {
+                    // 末地传送门：主世界<->末地 双向（末地回程回主世界）。
+                    toDim = (curDim == DIM_END) ? DIM_OVERWORLD : DIM_END;
+                }
+                if (toDim != curDim) {
+                    performTeleport(toDim);
+                }
+                foundPortal = true;
+            }
+        }
+    };
+
     if (gs == GS::Play) {
         enterWorld(a.seed, "world", std::string());
         
@@ -347,6 +419,7 @@ int main(int argc, char** argv) {
                 if (a.drive) { in.keys['W'] = true; player.cam.pitch = -0.1f; player.cam.markDirty(); }
                 player.update(in, *world, 1.0f / 60.0f);
                 world->tickEntities(1.0f / 60.0f);
+                checkTeleport();
                 renderer.render(ctx, player.cam, player, in, 1.0f / 60.0f, (float)renderDist, !a.noUI);
                 win.endFrame();
             }
@@ -439,6 +512,10 @@ int main(int argc, char** argv) {
                 
                 player.update(in, *world, dt);
                 world->tickEntities(dt);
+
+                // ---- 传送检测：玩家脚部所在方块若是 portal -> 切维度 ----
+                checkTeleport();
+
                 RayHit hit = raycastWorld(*world, player.cam.pos, player.cam.forward(), 6.0f);
                 if (in.mouse[0] && !in_prevL) {
                     // 先测试实体命中（龙/水晶），再测试方块命中
@@ -452,7 +529,21 @@ int main(int argc, char** argv) {
                     }
                 }
                 if (in.mouse[1] && !in_prevR) {
-                    if (hit.hit) {
+                    uint16_t held = renderer.heldMiscItem();
+                    if (held == I_FLINT_AND_STEEL) {
+                        // 打火石：在黑曜石框内部空位点火生成下界传送门。
+                        int tx = hit.hit ? hit.px : (int)std::floor(player.cam.pos.x);
+                        int ty = hit.hit ? hit.py : ((int)std::floor(player.cam.pos.y) - 1);
+                        int tz = hit.hit ? hit.pz : (int)std::floor(player.cam.pos.z);
+                        portal::tryLightNetherPortal(*world, tx, ty, tz);
+                    } else if (held == I_EYE_OF_ENDER && hit.hit) {
+                        // 末影之眼：点在末地传送门框架上。
+                        uint8_t bt = world->getBlock(hit.x, hit.y, hit.z);
+                        if (bt == B_END_PORTAL_FRAME)
+                            portal::tryPlaceEyeOfEnder(*world, hit.x, hit.y, hit.z);
+                        else if (bt == B_AIR)
+                            portal::tryPlaceEyeOfEnder(*world, hit.x, hit.y, hit.z);
+                    } else if (hit.hit) {
                         int px = hit.px, py = hit.py, pz = hit.pz;
                         uint8_t b = renderer.selectedBlock();
                         float feet = player.cam.pos.y - player.eyeHeight;

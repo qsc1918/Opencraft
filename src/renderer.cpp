@@ -700,12 +700,19 @@ void Renderer::gpuSync(VkCtx&) {
 const uint8_t Renderer::kInvBlocks[] = {
     B_GRASS, B_STONE, B_COBBLE, B_PLANKS, B_LOG, B_DIRT, B_SAND, B_GRAVEL,
     B_GLASS, B_LEAVES, B_SNOW, B_COAL, B_IRON, B_GOLD, B_DIAMOND, B_REDSTONE,
-    B_BEDROCK,
+    B_BEDROCK, B_OBSIDIAN, B_END_PORTAL_FRAME, B_NETHERRACK, B_END_STONE,
 };
 const int Renderer::kInvCount = (int)(sizeof(kInvBlocks) / sizeof(kInvBlocks[0]));
 
 uint8_t Renderer::selectedBlock() const {
     return placementBlock_;
+}
+
+uint16_t Renderer::heldMiscItem() const {
+    // 只在物品页选中的是杂项物品时返回（打火石/末影之眼），否则 I_NONE。
+    if (invPage_ != 1) return I_NONE;
+    return selectedItem_ == I_FLINT_AND_STEEL || selectedItem_ == I_EYE_OF_ENDER
+        ? selectedItem_ : I_NONE;
 }
 
 void Renderer::setInventoryOpen(bool open) {

@@ -24,6 +24,7 @@ add_executable(voxmine
   src/world.cpp
   src/mesher.cpp
   src/raycast.cpp
+  src/portal.cpp
   src/camera.cpp
   src/player.cpp
   src/renderer.cpp

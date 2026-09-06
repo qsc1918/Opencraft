@@ -14,7 +14,7 @@ static const char* kTileFiles[T_COUNT] = {
     "netherrack.png",      "soul_sand.png",        "glowstone.png",     "nether_brick.png",
     "obsidian.png",        "lava_still.png",       "nether_portal.png",
     "end_stone.png",       "end_portal_frame.png", nullptr,            nullptr,
-    "dragon_egg.png",
+    "dragon_egg.png",      "end_portal_frame_eye.png",
 };
 
 // 物品图标贴图（assets/item/），tile 序号 = T_ITEM_BASE + 数组下标，顺序与
@@ -75,6 +75,7 @@ const Tint kTileTint[T_COUNT] = {
     {0.3f, 0.2f, 0.5f},    // end_portal -> dark purple
     {0.4f, 0.3f, 0.6f},    // end_gateway -> dark purple-grey
     {0.55f, 0.45f, 0.65f}, // dragon_egg -> dark speckled purple
+    {0.8f, 1.0f, 0.3f},    // end_portal_frame_eye -> bright green eye
 };
 
 // ---------------------------------------------------------------------------
