@@ -13,7 +13,7 @@ static const char* kTileFiles[T_COUNT] = {
     nullptr, // T_END_CRYSTAL — 程序化
     "netherrack.png",      "soul_sand.png",        "glowstone.png",     "nether_brick.png",
     "obsidian.png",        "lava_still.png",       "nether_portal.png",
-    "end_stone.png",       "end_portal_frame.png", "end_portal.png",    "end_gateway.png",
+    "end_stone.png",       "end_portal_frame.png", nullptr,            nullptr,
     "dragon_egg.png",
 };
 
@@ -29,7 +29,7 @@ static const char* kItemFiles[] = {
     "iron_helmet.png",      "iron_chestplate.png",    "iron_leggings.png",    "iron_boots.png",
     "golden_helmet.png",    "golden_chestplate.png",  "golden_leggings.png",  "golden_boots.png",
     "diamond_helmet.png",   "diamond_chestplate.png", "diamond_leggings.png", "diamond_boots.png",
-    "flint_and_steel.png", "ender_pearl.png",  "eye_of_ender.png",
+    "flint_and_steel.png", "ender_pearl.png",  "ender_eye.png",
 };
 
 const char* itemIconFile(uint8_t iconTile) {

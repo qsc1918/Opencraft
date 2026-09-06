@@ -48,17 +48,18 @@ static const AssetEntry kAssets[] = {
     {"assets/minecraft/textures/block/glass.png",                  "block/glass.png"},
     {"assets/minecraft/textures/block/white_concrete.png",         "block/white_concrete.png"},
     // nether + end block textures (B4/B5)
+    // 1.21.4 里部分贴图改了名：nether_brick->nether_bricks,
+    // end_portal_frame->end_portal_frame_top/side/eye.
+    // end_portal / end_gateway 在 1.21.4 里是 entity 贴图，我们用程序化纹理兜底。
     {"assets/minecraft/textures/block/netherrack.png",             "block/netherrack.png"},
     {"assets/minecraft/textures/block/soul_sand.png",              "block/soul_sand.png"},
     {"assets/minecraft/textures/block/glowstone.png",              "block/glowstone.png"},
-    {"assets/minecraft/textures/block/nether_brick.png",           "block/nether_brick.png"},
+    {"assets/minecraft/textures/block/nether_bricks.png",          "block/nether_brick.png"},
     {"assets/minecraft/textures/block/obsidian.png",               "block/obsidian.png"},
     {"assets/minecraft/textures/block/lava_still.png",             "block/lava_still.png"},
     {"assets/minecraft/textures/block/nether_portal.png",          "block/nether_portal.png"},
     {"assets/minecraft/textures/block/end_stone.png",              "block/end_stone.png"},
-    {"assets/minecraft/textures/block/end_portal_frame.png",       "block/end_portal_frame.png"},
-    {"assets/minecraft/textures/block/end_portal.png",             "block/end_portal.png"},
-    {"assets/minecraft/textures/block/end_gateway.png",            "block/end_gateway.png"},
+    {"assets/minecraft/textures/block/end_portal_frame_top.png",   "block/end_portal_frame.png"},
     {"assets/minecraft/textures/block/dragon_egg.png",             "block/dragon_egg.png"},
     // GUI textures (assets/gui)
     {"assets/minecraft/textures/gui/sprites/widget/button.png",               "gui/button.png"},
@@ -105,7 +106,7 @@ static void appendItemEntries(std::vector<AssetEntry>& out) {
     static const char* kToolKinds[] = {"pickaxe", "axe", "shovel", "sword"};
     static const char* kArmorMats[] = {"leather", "iron", "golden", "diamond"};
     static const char* kArmorParts[] = {"helmet", "chestplate", "leggings", "boots"};
-    static const char* kMisc[] = {"flint_and_steel", "ender_pearl", "eye_of_ender"};
+    static const char* kMisc[] = {"flint_and_steel", "ender_pearl", "ender_eye"};
     char buf[128];
     for (const char* tier : kToolTiers)
         for (const char* kind : kToolKinds) {

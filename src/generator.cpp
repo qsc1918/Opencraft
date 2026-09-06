@@ -244,30 +244,31 @@ void gen::generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
         }
     }
 
-    // 出口传送门：5×5 基岩平台 y=63
+    // 出口传送门：5×5 基岩平台 y=63（只在 chunk(0,0) 生成，否则每个 chunk 都会有一个）
     // MC: 底部 5×5 基岩框架, 中心 3×3 end_portal, 顶部基岩柱到 y=67
-    for (int dx = -2; dx <= 2; dx++) {
-        for (int dz = -2; dz <= 2; dz++) {
-            int bx = dx + 8, bz = dz + 8; // 放在区块中心附近 (8,8)
-            if (bx >= 0 && bx < CHUNK_SIZE && bz >= 0 && bz < CHUNK_SIZE) {
-                // 基岩平台 y=63
-                ref(out, bx, 63, bz) = B_BEDROCK;
-                // 3×3 end_portal (y=64, 中心)
-                if (std::abs(dx) <= 1 && std::abs(dz) <= 1) {
-                    if (64 < WORLD_HEIGHT)
-                        ref(out, bx, 64, bz) = B_END_PORTAL;
+    if (cx == 0 && cz == 0) {
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                int bx = dx + 8, bz = dz + 8; // 放在区块中心附近 (8,8)
+                if (bx >= 0 && bx < CHUNK_SIZE && bz >= 0 && bz < CHUNK_SIZE) {
+                    // 基岩平台 y=63
+                    ref(out, bx, 63, bz) = B_BEDROCK;
+                    // 3×3 end_portal (y=64, 中心)
+                    if (std::abs(dx) <= 1 && std::abs(dz) <= 1) {
+                        if (64 < WORLD_HEIGHT)
+                            ref(out, bx, 64, bz) = B_END_PORTAL;
+                    }
                 }
             }
         }
-    }
-    // 中心基岩柱 y=65..67
-    for (int y = 65; y <= 67 && y < WORLD_HEIGHT; y++) {
-        if (8 >= 0 && 8 < CHUNK_SIZE) {
-            ref(out, 8, y, 8) = B_BEDROCK;
+        // 中心基岩柱 y=65..67
+        for (int y = 65; y <= 67 && y < WORLD_HEIGHT; y++) {
+            if (8 >= 0 && 8 < CHUNK_SIZE) {
+                ref(out, 8, y, 8) = B_BEDROCK;
+            }
         }
+        // 龙蛋放在 y=68（出口柱顶端）- 由主循环在杀死龙后放置
     }
-
-    // 龙蛋放在 y=68（出口柱顶端）- 由主循环在杀死龙后放置
 }
 
 void gen::generateForDim(DimensionId dim, uint32_t seed, int cx, int cz, uint8_t* out) {

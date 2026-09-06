@@ -298,7 +298,7 @@ int main(int argc, char** argv) {
                                            (float)spawnZ + 0.5f);
             }
         }
-        renderer.setInventoryOpen(false);
+        if (!a.invStart) renderer.setInventoryOpen(false);
         win.setCapture(true);
         ShowCursor(FALSE);
         gs = GS::Play;
