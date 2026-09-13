@@ -49,7 +49,7 @@ void Player::update(Input& in, World& world, float dt) {
     if (ml > 1e-5f) { mv.x /= ml; mv.z /= ml; }
 
     const float walkSpeed = 4.5f;
-    const float flySpeed = 14.0f;
+    const float flySpeed = 20.0f;
 
     if (flying) {
         float speed = flySpeed * (in.keys[VK_SHIFT] ? 0.35f : 1.0f);
