@@ -27,8 +27,8 @@ void World::stopWorkers() {
     workers_.clear();
 }
 
-// 坐标换算统一使用 specs.hpp 的 floorDiv / blockToChunkCoord / blockToChunkLocal
-//（区块坐标 = floor(方块坐标/16)，负坐标向下取整 —— MC 规范语义）。
+// 坐标换算统一用 specs.hpp 的 floorDiv / blockToChunkCoord / blockToChunkLocal：
+// 区块坐标 = floor(方块坐标/16)，负坐标向下取整，符合 MC 语义。
 
 std::shared_ptr<Chunk> World::chunkAt(int cx, int cz) const {
     uint64_t key = chunkKey(cx, cz);
@@ -140,9 +140,8 @@ bool World::setBlock(int x, int y, int z, uint8_t id) {
         c->blocks[chunkIndex(lx, y, lz)] = id;
     }
     editLog_.push_back({x, y, z, (int)id});
-    // The owning chunk AND its edge neighbours must be re-meshed: a block edit on a
-    // chunk boundary changes the neighbour's boundary face culling/AO, and failing to
-    // rebuild it leaves stale faces that z-fight (flicker / see-through seams).
+    // 所在区块与四个边邻都要重建：边界改动会影响邻居的剔除与 AO，
+    // 漏建会残留旧面，造成 z-fighting（闪烁、透缝）。
     markDirty(cx, cz);
     markDirty(cx + 1, cz);
     markDirty(cx - 1, cz);
@@ -299,9 +298,9 @@ void World::meshChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chu
     MeshView view;
     view.blocks.fill(B_AIR);
 
-    // Collect all neighbor chunks under a single mapLock_ acquisition.
-    std::shared_ptr<Chunk> neighbors[4]; // +x, -x, +z, -z
-    std::shared_ptr<Chunk> corners[4];   // ++, -+, +-, --
+    // 一次持 mapLock_ 取齐全部邻居，避免反复加锁。
+    std::shared_ptr<Chunk> neighbors[4]; // 四邻：+x, -x, +z, -z
+    std::shared_ptr<Chunk> corners[4];   // 四角：++, -+, +-, --
     {
         std::lock_guard<std::mutex> mlk(mapLock_);
         auto get = [&](int ncx, int ncz) -> std::shared_ptr<Chunk> {
@@ -321,41 +320,41 @@ void World::meshChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chu
     {
         std::shared_lock<std::shared_mutex> lk(blocksMutex_);
 
-        // self
+        // 自身
         for (int y = 0; y < WORLD_HEIGHT; y++)
             for (int z = 0; z < 16; z++)
                 for (int x = 0; x < 16; x++)
                     view.set(x, y, z, c->blocks[chunkIndex(x, y, z)]);
 
-        // +x neighbor
+        // +x 邻
         if (neighbors[0]) {
             auto& nc = neighbors[0];
             for (int y = 0; y < WORLD_HEIGHT; y++)
                 for (int z = 0; z < 16; z++)
                     view.set(16, y, z, nc->blocks[chunkIndex(0, y, z)]);
         }
-        // -x neighbor
+        // -x 邻
         if (neighbors[1]) {
             auto& nc = neighbors[1];
             for (int y = 0; y < WORLD_HEIGHT; y++)
                 for (int z = 0; z < 16; z++)
                     view.set(-1, y, z, nc->blocks[chunkIndex(15, y, z)]);
         }
-        // +z neighbor
+        // +z 邻
         if (neighbors[2]) {
             auto& nc = neighbors[2];
             for (int y = 0; y < WORLD_HEIGHT; y++)
                 for (int x = 0; x < 16; x++)
                     view.set(x, y, 16, nc->blocks[chunkIndex(x, y, 0)]);
         }
-        // -z neighbor
+        // -z 邻
         if (neighbors[3]) {
             auto& nc = neighbors[3];
             for (int y = 0; y < WORLD_HEIGHT; y++)
                 for (int x = 0; x < 16; x++)
                     view.set(x, y, -1, nc->blocks[chunkIndex(x, y, 15)]);
         }
-        // corners
+        // 四角
         auto copyCorner = [&](const std::shared_ptr<Chunk>& nc, int vx, int vz) {
             if (!nc) return;
             int nx = vx == 16 ? 0 : 15;
@@ -410,7 +409,7 @@ void World::tickEntities(float dt) {
                     entities_.end());
 }
 
-// 射线 vs 实体 AABB（slab 法）；实体碰撞箱: 宽 type->width，高 type->height，
+// 射线与实体 AABB 求交（slab 法）；碰撞箱宽 type->width、高 type->height，
 // 底面在 pos.y（脚部中心语义）。
 static bool rayAABB(Vec3 o, Vec3 d, Vec3 mn, Vec3 mx, float maxDist, float* outT) {
     float t0 = 0.0f, t1 = maxDist;
@@ -459,20 +458,18 @@ void World::update(float px, float pz, int renderDist) {
     int ccx = blockToChunkCoord((int)std::floor(px));
     int ccz = blockToChunkCoord((int)std::floor(pz));
 
-    // Skip the expensive ensure+queue loop when the player has not moved to a
-    // new chunk since the last call and no chunks are stuck in state 0 (meaning
-    // all previously queued generations have been picked up).
+    // 玩家未换区块、也没有卡在 state 0 的区块时，
+    // 说明先前入队的生成任务已被取走，可跳过昂贵的创建+入队扫描。
     bool posChanged = (ccx != dim.lastCCX || ccz != dim.lastCCZ || renderDist != dim.lastRenderDist);
     dim.lastCCX = ccx;
     dim.lastCCZ = ccz;
     dim.lastRenderDist = renderDist;
 
-    // Ensure chunks exist + queue generation.
-    // Skip the expensive scan when the player has not moved to a new chunk — all
-    // previously created chunks were already queued and will be picked up by workers.
+    // 确保区块存在并入队生成：未换区块时可跳过扫描，
+    // 先前创建的区块都已入队，worker 会取走。
     if (posChanged) {
-        // Step 1: collect chunks needing generation under a single mapLock_ hold
-        // (previously acquired/released per chunk — 289 lock ops per frame).
+        // 步骤 1：一次持 mapLock_ 收集待生成区块，
+        // 原先每区块加解锁一次，每帧 289 次锁操作。
         struct NeedGen { int cx, cz; uint64_t prio; };
         std::vector<NeedGen> toGen;
         {
@@ -500,7 +497,7 @@ void World::update(float px, float pz, int renderDist) {
                 }
             }
         }
-        // Step 2: enqueue generation (acquires queueLock_ separately, no nesting)
+        // 步骤 2：入队生成（单独持 queueLock_，避免锁嵌套）
         for (auto& g : toGen) {
             uint64_t key = chunkKey(g.cx, g.cz);
             {
@@ -511,8 +508,8 @@ void World::update(float px, float pz, int renderDist) {
         }
     }
 
-    // unload far chunks — throttle to once every 15 frames to avoid iterating
-    // the entire chunk map + acquiring queueLock per candidate every frame.
+    // 卸载远处区块：限流为每 15 帧一次，
+    // 否则每帧都要遍历整张区块表并反复加 queueLock_。
     if (++dim.unloadCounter >= 15) {
     dim.unloadCounter = 0;
     std::vector<uint64_t> toErase;
@@ -541,5 +538,5 @@ void World::update(float px, float pz, int renderDist) {
             }
         }
     }
-    } // unload throttle
+    } // 卸载限流
 }

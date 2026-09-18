@@ -17,8 +17,8 @@ static const char* kTileFiles[T_COUNT] = {
     "dragon_egg.png",      "end_portal_frame_eye.png",
 };
 
-// 物品图标贴图（assets/item/），tile 序号 = T_ITEM_BASE + 数组下标，顺序与
-// items.hpp ITEM_DEFS 中 T_ITEM_BASE+n 的分配一致。
+// 物品图标贴图（assets/item/），tile = T_ITEM_BASE + 下标，
+// 顺序须与 items.hpp ITEM_DEFS 中 T_ITEM_BASE+n 的分配一致。
 static const char* kItemFiles[] = {
     "wooden_pickaxe.png",  "wooden_axe.png",   "wooden_shovel.png",  "wooden_sword.png",
     "stone_pickaxe.png",   "stone_axe.png",    "stone_shovel.png",   "stone_sword.png",
@@ -38,52 +38,51 @@ const char* itemIconFile(uint8_t iconTile) {
     return kItemFiles[i];
 }
 
-// Modern Minecraft uses grayscale tintable textures for these; we bake a tint in.
+// 原版这些贴图是可着色的灰度图，这里把色调直接烘焙进图集。
 struct Tint { float r, g, b; };
 const Tint kTileTint[T_COUNT] = {
-    {0.62f, 1.02f, 0.40f}, // grass top  -> green
-    {1, 1, 1},              // grass side
-    {1, 1, 1},              // dirt
-    {1, 1, 1},              // stone
-    {1, 1, 1},              // bedrock
-    {1, 1, 1},              // cobble
-    {1, 1, 1},              // planks
-    {1, 1, 1},              // log side
-    {1, 1, 1},              // log top
-    {0.34f, 0.76f, 0.26f}, // leaves -> foliage green
-    {1, 1, 1},              // sand
-    {1, 1, 1},              // gravel
-    {1, 1, 1},              // coal ore
-    {1, 1, 1},              // iron ore
-    {1, 1, 1},              // gold ore
-    {1, 1, 1},              // diamond ore
-    {1, 1, 1},              // redstone ore
-    {0.40f, 0.62f, 1.10f}, // water -> blue
-    {1, 1, 1},              // snow
-    {1, 1, 1},              // glass
-    {1, 1, 1},              // white
-    {1, 1, 1},              // T_END_CRYSTAL (procedural)
-    {1, 1, 1},              // netherrack
-    {0.85f, 0.75f, 0.55f}, // soul_sand -> brown tint
-    {1.2f, 1.15f, 0.7f},   // glowstone -> warm bright
-    {0.7f, 0.5f, 0.45f},   // nether_brick -> dark red-brown
-    {0.75f, 0.65f, 0.9f},  // obsidian -> purple-black tint
-    {1.1f, 0.7f, 0.2f},    // lava -> orange-hot
-    {0.8f, 0.5f, 1.0f},    // nether_portal -> purple
-    {1.1f, 1.05f, 0.7f},   // end_stone -> pale yellow tint
-    {0.6f, 0.8f, 0.5f},    // end_portal_frame -> greenish
-    {0.3f, 0.2f, 0.5f},    // end_portal -> dark purple
-    {0.4f, 0.3f, 0.6f},    // end_gateway -> dark purple-grey
-    {0.55f, 0.45f, 0.65f}, // dragon_egg -> dark speckled purple
-    {0.8f, 1.0f, 0.3f},    // end_portal_frame_eye -> bright green eye
+    {0.62f, 1.02f, 0.40f}, // 草顶 → 绿色
+    {1, 1, 1},              // 草侧面
+    {1, 1, 1},              // 泥土
+    {1, 1, 1},              // 石头
+    {1, 1, 1},              // 基岩
+    {1, 1, 1},              // 圆石
+    {1, 1, 1},              // 木板
+    {1, 1, 1},              // 原木侧面
+    {1, 1, 1},              // 原木顶面
+    {0.34f, 0.76f, 0.26f}, // 树叶 → 绿色
+    {1, 1, 1},              // 沙子
+    {1, 1, 1},              // 沙砾
+    {1, 1, 1},              // 煤矿
+    {1, 1, 1},              // 铁矿
+    {1, 1, 1},              // 金矿
+    {1, 1, 1},              // 钻石矿
+    {1, 1, 1},              // 红石矿
+    {0.40f, 0.62f, 1.10f}, // 水 → 蓝色
+    {1, 1, 1},              // 雪
+    {1, 1, 1},              // 玻璃
+    {1, 1, 1},              // 白色
+    {1, 1, 1},              // T_END_CRYSTAL（程序化）
+    {1, 1, 1},              // 下界岩
+    {0.85f, 0.75f, 0.55f}, // 灵魂沙 → 棕色调
+    {1.2f, 1.15f, 0.7f},   // 萤石 → 暖亮色
+    {0.7f, 0.5f, 0.45f},   // 下界砖 → 暗红棕
+    {0.75f, 0.65f, 0.9f},  // 黑曜石 → 紫黑色
+    {1.1f, 0.7f, 0.2f},    // 岩浆 → 橙红色
+    {0.8f, 0.5f, 1.0f},    // 下界传送门 → 紫色
+    {1.1f, 1.05f, 0.7f},   // 末地石 → 淡黄色
+    {0.6f, 0.8f, 0.5f},    // 末地传送门框架 → 偏绿
+    {0.3f, 0.2f, 0.5f},    // 末地传送门 → 暗紫
+    {0.4f, 0.3f, 0.6f},    // 折跃门 → 暗紫灰
+    {0.55f, 0.45f, 0.65f}, // 龙蛋 → 暗紫斑点
+    {0.8f, 1.0f, 0.3f},    // 末地传送门框架眼 → 亮绿
 };
 
 // ---------------------------------------------------------------------------
-// 程序化 tile：给没有 png 的 tile 生成 16x16 纹理（代码生成，非 MC 素材）。
-// 玩家用 extract_assets 提取的贴图若存在则覆盖同路径 png —— 目前这些 tile
-// 没有对应 png，永远走程序化。
+// 程序化 tile：为没有 png 的 tile 代码生成 16x16 纹理（非 MC 素材）。
+// extract_assets 提取的同名 png 会覆盖它；这些 tile 目前没有 png，始终走程序化。
 // ---------------------------------------------------------------------------
-#include "util.hpp" // hash32
+#include "util.hpp" // 需要 hash32
 static void fillProceduralTile(int t, Atlas& a) {
     auto put = [&](int tile, int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t al) {
         int tx = tile % a.tilesX, ty = tile / a.tilesX;
@@ -92,7 +91,7 @@ static void fillProceduralTile(int t, Atlas& a) {
         a.rgba[dst + 0] = r; a.rgba[dst + 1] = g;
         a.rgba[dst + 2] = b; a.rgba[dst + 3] = al;
     };
-    // helper: deterministic hash → [0..255]
+    // 辅助：确定性哈希映射到 [0..255]
     auto hval = [](int x, int y, int salt) -> uint8_t {
         uint32_t h = hash32((uint32_t)((uint32_t)x * 374761393u + (uint32_t)y * 668265263u + (uint32_t)salt * 2654435761u));
         return (uint8_t)(h & 255);
@@ -127,7 +126,7 @@ static void fillProceduralTile(int t, Atlas& a) {
         break;
     }
     case T_SOUL_SAND: {
-        // 棕色沙 + 暗面纹（MC 灵魂沙有脸纹，这里简化为随机纹理）
+        // 棕色沙 + 暗面纹（原版脸纹简化为随机纹理）
         for (int y = 0; y < 16; y++)
             for (int x = 0; x < 16; x++) {
                 uint8_t n = hval(x, y, 0x200);
@@ -193,7 +192,7 @@ static void fillProceduralTile(int t, Atlas& a) {
         break;
     }
     case T_LAVA: {
-        // 岩浆：橙红底 + 暗红纹（静态帧；MC lava 帧动画此处简化）
+        // 岩浆：橙红底 + 暗红纹（静态帧，省略原版帧动画）
         for (int y = 0; y < 16; y++)
             for (int x = 0; x < 16; x++) {
                 uint8_t n = hval(x, y, 0x600);

@@ -6,7 +6,7 @@
 
 namespace {
 void comCheck(HRESULT hr) {
-    // no-op on failure for now (callers rely on false return of the load)
+    // 暂不处理失败：调用方靠加载返回 false 判断
 }
 } // namespace
 

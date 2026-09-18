@@ -9,6 +9,7 @@
 #include "vk.hpp"
 #include "window.hpp"
 #include "world.hpp"
+#include "version.hpp"
 #include <windows.h>
 #include <chrono>
 #include <cstdio>
@@ -39,8 +40,9 @@ struct Args {
     std::string crystalPos;
     std::string dimArg;
     std::string menuShot;
-    int menuScreen = 1; // Menuscreen::MainMenu
-    bool spawnPortal = false; // 调试/演示：在出生点生成一个点火的传送门
+    int menuScreen = 1; // 默认主菜单（Menuscreen::MainMenu）
+    bool spawnPortal = false; // 调试：在出生点生成已点燃的下界门
+    bool showVersion = false; // --version：打印版本号后退出
 };
 
 static Args parseArgs(int argc, char** argv) {
@@ -71,10 +73,12 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--menu-shot") a.menuShot = next();
         else if (arg == "--menu-screen") a.menuScreen = std::stoi(next());
         else if (arg == "--spawn-portal") a.spawnPortal = true;
+        else if (arg == "--version") a.showVersion = true;
         else if (arg == "--help") {
-            printf("Usage: voxmine [--seed N] [--render-dist N] [--threads N] [--pos x,y,z]\n"
+            printf("Usage: opencraft [--seed N] [--render-dist N] [--threads N] [--pos x,y,z]\n"
                    "  [--screenshot out.png] [--frames N] [--no-vsync] [--no-ui]\n"
-                   "  [--time f] [--drive] [--break x,y,z] [--inventory] [--gpu-index N]\n");
+                   "  [--time f] [--drive] [--break x,y,z] [--inventory] [--gpu-index N]\n"
+                   "  [--version] 打印版本号后退出\n");
         }
     }
     return a;
@@ -88,10 +92,10 @@ static std::string exeDir() {
     return pos == std::string::npos ? "." : p.substr(0, pos);
 }
 
-// Persistent settings (options.txt next to the executable, Minecraft-style).
+// 持久化设置：保存到 exe 同目录的 options.txt。
 struct Options {
-    bool vsync = false;       // default: vertical sync OFF
-    int renderDist = 8;       // default render distance in chunks
+    bool vsync = false;       // 默认关闭垂直同步
+    int renderDist = 8;       // 默认渲染距离（区块）
 };
 
 static std::string optionsPath() { return exeDir() + "\\options.txt"; }
@@ -122,11 +126,17 @@ int main(int argc, char** argv) {
     Args a = parseArgs(argc, argv);
     SetProcessDPIAware();
 
-    // Load persistent settings before the Vulkan context (vsync affects swapchain).
+    if (a.showVersion) {
+        printf("Opencraft %s\n", version::full().c_str());
+        return 0;
+    }
+
+    // 先读设置再建 Vulkan 上下文：vsync 会影响交换链。
     Options opts = loadOptions();
 
     Window win;
-    if (!win.init(1280, 720, "VoxMine - Vulkan")) { return 1; }
+    std::string title = "Opencraft " + version::full();
+    if (!win.init(1280, 720, title.c_str())) { return 1; }
 
     VkCtx ctx;
     ctx.vsync = a.noVsync ? false : opts.vsync;
@@ -140,7 +150,7 @@ int main(int argc, char** argv) {
     if (!menu.init(ctx, win, exeDir() + "\\assets")) { printf("Menu init failed\n"); return 1; }
     
 
-    // ---- game state ----
+    // ---- 游戏状态 ----
     enum class GS { MainMenu, SaveSelect, NewWorld, Options, Video, Pause, Play };
     const bool startDirect = !a.screenshot.empty() || a.drive || !a.breakBlock.empty()
                              || a.frames > 0 || !a.posStr.empty() || a.invStart;
@@ -154,7 +164,7 @@ int main(int argc, char** argv) {
     Menuscreen optionsReturnTo = Menuscreen::MainMenu;
     int frame = 0;
     int lastW = 0, lastH = 0;
-    int renderDist = (a.renderDistSet ? a.renderDist : opts.renderDist); // runtime-adjustable via Video settings
+    int renderDist = (a.renderDistSet ? a.renderDist : opts.renderDist); // 视频设置里可运行时调整
     bool escPrev = false, ePrev = false, in_prevL = false, in_prevR = false;
     auto last = std::chrono::steady_clock::now();
 
@@ -177,7 +187,7 @@ int main(int argc, char** argv) {
     };
     applyFirst();
 
-    // Enter a world. `loadFrom` is a save name (or empty for a fresh world).
+    // 进入世界。loadFrom 是存档名，空表示新建世界。
     auto enterWorld = [&](uint32_t seed, const std::string& name, const std::string& loadFrom) {
         world = std::make_unique<World>(seed);
         world->startWorkers(a.threads);
@@ -191,16 +201,14 @@ int main(int argc, char** argv) {
         player.cam.markDirty();
 
         if (!loadFrom.empty()) {
-            // Load saved chunks from disk (binary format: all generated chunks).
+            // 从磁盘载入已保存区块（二进制格式：全部已生成区块）。
             float savedSpawnX = 8.5f, savedSpawnY = 80.0f, savedSpawnZ = 8.5f;
             float savedYaw = 0.0f, savedPitch = -0.1f;
             bool savedFlying = false;
             loadWorld(*world, seed, savedSpawnX, savedSpawnY, savedSpawnZ,
                       savedYaw, savedPitch, savedFlying, loadFrom, savesDir());
-            // Re-mesh EVERY loaded chunk so boundary faces (and neighbour data
-            // read by the mesher) are rebuilt consistently after loading. Mesh
-            // data is not persisted — only block data is — so stale meshes must
-            // never survive a load.
+            // 网格不持久化（只存方块数据），载入后必须重建全部已载入区块，
+            // 否则残留网格与邻块边界面会不一致。
             std::vector<std::pair<int,int>> loadedChunks;
             world->forEachChunk([&](std::shared_ptr<Chunk>& c, int cx, int cz) {
                 if (c->state.load() >= 1) loadedChunks.push_back({cx, cz});
@@ -218,24 +226,23 @@ int main(int argc, char** argv) {
             } else {
                 player.cam.pos = Vec3(savedSpawnX, savedSpawnY, savedSpawnZ);
             }
-            // Restore the saved player view/fly state so a reloaded player does
-            // not look down at a default angle or fall from mid-air.
+            // 恢复存档的视角与飞行状态，避免读档后朝向默认或从空中坠落。
             player.cam.yaw = savedYaw;
             player.cam.pitch = savedPitch;
             player.cam.markDirty();
             player.flying = savedFlying;
         } else {
-            // Fresh world: generate chunks around spawn.
+            // 新世界：围绕出生点生成区块。
             if (!a.posStr.empty()) {
                 float x = 0, y = 80, z = 0;
                 if (sscanf(a.posStr.c_str(), "%f,%f,%f", &x, &y, &z) >= 1) player.cam.pos = Vec3(x, y, z);
-                // 调试/演示：在玩家所在位置生成一个点火的竖直下界传送门。
+                // 调试：在玩家位置生成点燃的竖直下界门。
                 if (a.spawnPortal) {
                     int pxi = (int)std::floor(player.cam.pos.x);
                     int pzi = (int)std::floor(player.cam.pos.z);
                     int baseY = (int)std::floor(player.cam.pos.y - player.eyeHeight);
                     if (baseY < 4) baseY = 4;
-                    // 门洞中心对准玩家所在的 x（portal 覆盖 pxi..pxi+1，玩家站立即可触发）
+                    // 门洞对准玩家 x：覆盖 pxi..pxi+1，站立即触发
                     int fx0 = pxi - 1;
                     for (int x = fx0; x <= fx0 + 3; x++) {
                         world->forceGenerateChunk(blockToChunkCoord(x), blockToChunkCoord(pzi));
@@ -261,7 +268,7 @@ int main(int argc, char** argv) {
                     return true;
                 };
                 // 区块坐标换算统一走 specs.hpp（floor 语义，负坐标正确）。
-                // 出生点锚: 区块 (0,0) 中心方块（MC 出生搜索也以世界原点附近为锚）。
+                // 出生锚点：区块 (0,0) 中心方块，与 MC 出生搜索一致。
                 const int anchor = CHUNK_SIZE / 2;
                 int spawnX = anchor, spawnZ = anchor, spawnTopY = 0;
                 bool found = false;
@@ -329,7 +336,7 @@ int main(int argc, char** argv) {
         gs = GS::Play;
     };
 
-    // settle chunks around the player (for a smooth start)
+    // 等玩家周围区块就绪，保证开局流畅
     auto settle = [&]() {
         auto t0 = std::chrono::steady_clock::now();
         while (true) {
@@ -344,10 +351,10 @@ int main(int argc, char** argv) {
         }
     };
 
-    // 维度间传送：切 player.dim + world 当前维度 + 设玩家位置。
-    // nether_portal: 主世界<->下界，坐标按 teleportationScale（下界 8.0）缩放。
-    // end_portal: 主世界<->末地（末地回程回出生点）。
-    float portalCooldown = 0.0f; // 防止 portal 入口/出口来回横跳
+    // 维度传送：切 player.dim 与 world 维度，再设玩家位置。
+    // 下界门：主世界与下界互传，坐标按下界缩放系数 8.0 换算。
+    // 末地门：主世界与末地互传（回程回主世界）。
+    float portalCooldown = 0.0f; // 防止出入口来回反复传送
     auto performTeleport = [&](DimensionId toDim) {
         DimensionId fromDim = player.dim;
         float scale = getDimensionType(toDim).coordinateScale;
@@ -363,7 +370,7 @@ int main(int argc, char** argv) {
         portalCooldown = 1.5f;
     };
 
-    // 每帧传送检测：玩家脚部所在方块若是 portal -> 切维度。供主循环 & 截图分支调用。
+    // 每帧检测：脚下方块是传送门就切维度。主循环与截图分支共用。
     auto checkTeleport = [&]() {
         if (portalCooldown > 0.0f) { portalCooldown -= 1.0f / 60.0f; return; }
         float feetY = player.cam.pos.y - player.eyeHeight;
@@ -377,10 +384,10 @@ int main(int argc, char** argv) {
                 DimensionId curDim = world->getDimension();
                 DimensionId toDim = curDim;
                 if (pb == B_NETHER_PORTAL) {
-                    // 下界传送门：主世界<->下界 双向。
+                    // 下界门：主世界与下界双向。
                     toDim = (curDim == DIM_NETHER) ? DIM_OVERWORLD : DIM_NETHER;
                 } else if (pb == B_END_PORTAL) {
-                    // 末地传送门：主世界<->末地 双向（末地回程回主世界）。
+                    // 末地门：主世界与末地双向。
                     toDim = (curDim == DIM_END) ? DIM_OVERWORLD : DIM_END;
                 }
                 if (toDim != curDim) {
@@ -432,7 +439,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // seed input helper
+    // 种子输入解析
     auto seedFromText = [&]() -> uint32_t {
         if (seedText.empty()) return (uint32_t)std::chrono::steady_clock::now().time_since_epoch().count();
         try {
@@ -440,13 +447,13 @@ int main(int argc, char** argv) {
             unsigned long long v = std::stoull(seedText, &pos);
             if (pos == seedText.size()) return (uint32_t)v;
         } catch (...) {}
-        // non-numeric: hash to a seed
+        // 非纯数字：哈希成种子
         uint32_t h = 2166136261u;
         for (char ch : seedText) { h ^= (uint8_t)ch; h *= 16777619u; }
         return h;
     };
 
-    // unique world name
+    // 生成不重名的世界名
     int saveSeq = 0;
     auto newWorldName = [&]() -> std::string {
         std::string n = "世界" + std::to_string(++saveSeq);
@@ -513,12 +520,12 @@ int main(int argc, char** argv) {
                 player.update(in, *world, dt);
                 world->tickEntities(dt);
 
-                // ---- 传送检测：玩家脚部所在方块若是 portal -> 切维度 ----
+                // ---- 传送检测：脚下方块是传送门就切维度 ----
                 checkTeleport();
 
                 RayHit hit = raycastWorld(*world, player.cam.pos, player.cam.forward(), 6.0f);
                 if (in.mouse[0] && !in_prevL) {
-                    // 先测试实体命中（龙/水晶），再测试方块命中
+                    // 先测实体（龙/水晶），再测方块
                     Vec3 entityHit;
                     Entity* entHit = world->raycastEntity(player.cam.pos, player.cam.forward(), 6.0f, &entityHit);
                     if (entHit) {
@@ -531,13 +538,13 @@ int main(int argc, char** argv) {
                 if (in.mouse[1] && !in_prevR) {
                     uint16_t held = renderer.heldMiscItem();
                     if (held == I_FLINT_AND_STEEL) {
-                        // 打火石：在黑曜石框内部空位点火生成下界传送门。
+                        // 打火石：在黑曜石框内空位点火生成下界门。
                         int tx = hit.hit ? hit.px : (int)std::floor(player.cam.pos.x);
                         int ty = hit.hit ? hit.py : ((int)std::floor(player.cam.pos.y) - 1);
                         int tz = hit.hit ? hit.pz : (int)std::floor(player.cam.pos.z);
                         portal::tryLightNetherPortal(*world, tx, ty, tz);
                     } else if (held == I_EYE_OF_ENDER && hit.hit) {
-                        // 末影之眼：点在末地传送门框架上。
+                        // 末影之眼：用在末地传送门框架上。
                         uint8_t bt = world->getBlock(hit.x, hit.y, hit.z);
                         if (bt == B_END_PORTAL_FRAME)
                             portal::tryPlaceEyeOfEnder(*world, hit.x, hit.y, hit.z);
@@ -563,7 +570,7 @@ int main(int argc, char** argv) {
             world->update(player.cam.pos.x, player.cam.pos.z, renderDist);
             renderer.render(ctx, player.cam, player, in, dt, (float)renderDist, !a.noUI);
         } else {
-            // ---- menu screens ----
+            // ---- 菜单界面 ----
             if (escEdge) {
                 switch (gs) {
                     case GS::SaveSelect: gs = GS::MainMenu; break;
@@ -575,7 +582,7 @@ int main(int argc, char** argv) {
                 }
             }
 
-            // seed input (edge-triggered: one character per key press)
+            // 种子输入：边沿触发，一次按键输入一个字符
             if (gs == GS::NewWorld) {
                 for (UINT k : {0x30u,0x31u,0x32u,0x33u,0x34u,0x35u,0x36u,0x37u,0x38u,0x39u,
                                (UINT)'A',(UINT)'B',(UINT)'C',(UINT)'D',(UINT)'E',(UINT)'F'})
@@ -613,7 +620,7 @@ int main(int argc, char** argv) {
                     std::string name = newWorldName();
                     enterWorld(seed, name, std::string());
                     settle();
-                    saveWorld(*world, player, name, savesDir()); // create the save entry
+                    saveWorld(*world, player, name, savesDir()); // 写入存档条目
                     break;
                 }
                 case MENU_CANCEL: gs = GS::SaveSelect; break;
@@ -629,11 +636,11 @@ int main(int argc, char** argv) {
                     saveOptions(Options{ctx.vsync, renderDist});
                     break;
                 case MENU_RENDERDIST:
-                    // The slider already wrote the new value into `renderDist`.
+                    // 滑块已把新值写入 renderDist，这里只需保存。
                     saveOptions(Options{ctx.vsync, renderDist});
                     break;
                 default:
-                    // save-list buttons
+                    // 存档列表按钮
                     if (clicked >= MENU_SAVE_FIRST && clicked < MENU_SAVE_FIRST + (int)saves.size() && gs == GS::SaveSelect) {
                         int i = clicked - MENU_SAVE_FIRST;
                         enterWorld(saves[i].seed, saves[i].name, saves[i].name);
@@ -647,7 +654,7 @@ int main(int argc, char** argv) {
             const wchar_t* mode = (gs == GS::Play) ? L"Game" : L"Menu";
             wchar_t title[128];
             int ifps = (int)(renderer.fps() + 0.5f);
-            swprintf(title, 128, L"VoxMine - %s - FPS: %d", mode, ifps);
+            swprintf(title, 128, L"Opencraft - %s - FPS: %d", mode, ifps);
             SetWindowTextW((HWND)win.hwnd(), title);
         }
         win.endFrame();

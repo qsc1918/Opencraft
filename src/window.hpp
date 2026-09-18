@@ -1,11 +1,11 @@
 #pragma once
 #include <cstdint>
 
-// Per-frame input snapshot. Key indices are virtual-key codes (see window.cpp).
+// 每帧输入快照；数组下标为虚拟键码（见 window.cpp）。
 struct Input {
-    bool keys[256] = {false};    // held (level) state, set by WM_KEYDOWN/UP
-    bool pressed[256] = {false}; // rising edge: true only on the frame a key went down
-    bool mouse[3] = {false};     // 0 lmb, 1 rmb, 2 mmb
+    bool keys[256] = {false};    // 持续按住状态
+    bool pressed[256] = {false}; // 上升沿：仅按下当帧为 true
+    bool mouse[3] = {false};     // 0 左键 1 右键 2 中键
     bool wheelUp = false;
     bool wheelDown = false;
     float scrollAccum = 0.0f;
@@ -21,10 +21,10 @@ public:
     bool init(int w, int h, const char* title);
     void shutdown();
 
-    // Returns false if the window requested to close.
+    // 窗口请求关闭时返回 false。
     bool pump();
 
-    // Call once per frame to clear transient input state.
+    // 每帧调用一次，清除瞬时输入状态。
     void endFrame();
 
     void* hwnd() const { return hwnd_; }
@@ -35,9 +35,9 @@ public:
 
     void setCapture(bool on) { capture_ = on; }
     bool captured() const { return capture_; }
-    // Returns mouse dx,dy since last call (only meaningful while captured).
+    // 返回相对上次调用的鼠标位移（仅捕获时有效）。
     void pollMouse(float& dx, float& dy);
-    // Current cursor position in client coordinates (top-left origin).
+    // 客户端坐标下的当前光标位置（原点在左上）。
     void cursorPos(float& x, float& y);
 
 private:

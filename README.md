@@ -1,99 +1,59 @@
-# VoxMine — 原生多线程的类 Minecraft 像素沙盒游戏（Vulkan）
+# Opencraft
 
-一个用 C++20 编写、使用手写 Vulkan 渲染器与原生工作线程的沙盒类 Minecraft 游戏。
-内容参考早期 Minecraft（Beta ~1.8 时代）：草方块、泥土、石头、基岩、经典矿石
-（煤/铁/金/红石/钻石）、橡树、沙子、砾石、雪地生物群系与海洋。
+Opencraft 是一个用 C++20 写的类 Minecraft 体素沙盒游戏，自带手写 Vulkan 渲染器和多线程
+区块生成/网格化。内容参考早期 Minecraft：草方块与矿石、橡树、海洋，以及下界和末地维度、
+传送门、末影水晶等。
 
 ## 编译
 
-依赖：Vulkan SDK（任意较新的 1.x）、CMake >= 3.20、Ninja、C++20 编译器
-（MinGW GCC 12+ 或 MSVC）。
+依赖：Vulkan SDK、CMake ≥ 3.20、Ninja、MinGW GCC 12+ 或 MSVC。
 
 ```sh
 cmake -G Ninja -S . -B build
 cmake --build build
 ```
 
-构建会复制 `assets/`（方块纹理）与编译好的着色器到可执行文件旁边。
+产物是 `build/opencraft.exe`；构建时会把 `assets/`、`shaders/*.spv`、`version.txt`
+复制到它旁边。
 
-> 说明：`assets/` 中的纹理是从 Minecraft 官方 jar 中提取的，按 Mojang EULA
-> 不允许随仓库分发，因此该目录已被加入 `.gitignore`。请使用仓库中的
-> `tools/extract_assets` 工具从你自己的 Minecraft 安装中提取。
+> `assets/` 里的贴图从 Minecraft 官方 jar 提取，按 Mojang EULA 不随仓库分发。
+> 请用 `tools/extract_assets` 从你自己的 Minecraft 安装中提取。
 
 ## 运行
 
 ```sh
-build/voxmine.exe
+build/opencraft.exe
 ```
 
-## 操作
+## 版本号
 
-启动后进入主菜单。菜单中的导航：鼠标点击按钮；各菜单的“返回”按钮可退回上一级。
+`version.txt` 的 `[current]` 行是版本名（可手动改），编译时自动追加编译时间戳，
+完整版本号形如 `0.4.0-snapshot-1-20260214-153012`，显示在主菜单右下角；
+用 `opencraft.exe --version` 也可以直接打印。
+
+## 操作
 
 | 按键 | 说明 |
 |------|------|
 | W / A / S / D | 移动 |
 | 鼠标 | 视角 |
-| 空格 | 跳跃（飞行时上升） |
-| 空格（双击） | 切换飞行（创造模式，同原版） |
+| 空格 | 跳跃（飞行时上升）；双击切换飞行 |
 | Shift | 飞行时下降 |
-| E | 打开/关闭物品栏（点击选择方块） |
-| 左键 | 挖掘方块（水不可挖；基岩可挖） |
-| 右键 | 放置方块 |
-| 1..9 / 滚轮 | 选择快捷栏格子 |
-| T | 时间快进（昼夜加速） |
-| Esc | 游戏中：暂停菜单（或关闭物品栏）；菜单中：返回上一级 |
+| E | 打开/关闭物品栏 |
+| 左键 / 右键 | 挖掘 / 放置方块 |
+| 1..9 / 滚轮 | 切换快捷栏 |
+| T | 时间快进 |
+| Esc | 暂停菜单；菜单中返回上一级 |
 
-主菜单：单人游戏 / 选项 / 退出游戏。
-- 单人游戏 → 存档选择（可新建世界，世界大小无限）。新建世界时输入“世界种子”（留空=随机）。
-- 选项 → 视频设置（垂直同步开关）。
-- 游戏内按 Esc 打开暂停菜单：保存并返回标题屏幕 / 选项。
+## 目录
 
-## 存档
+- `src/` 源码：世界与区块、地形生成、网格化、Vulkan 渲染、菜单、存档
+- `shaders/` GLSL 着色器，构建时由 glslc 编译
+- `tools/` 资源提取工具与自解压安装包脚本
+- `docs/` 项目说明
 
-游戏保存到可执行文件旁的 `saves/` 目录（最简单的文本格式：种子、出生点、方块改动）。
-载入时会按种子重新生成地形并重新应用方块改动。
+## 开发约定
 
-## 命令行参数
-
-```
---seed N          世界种子（默认 1337）
---render-dist N   区块渲染距离（默认 8）
---threads N       工作线程数（默认 = CPU 核数）
---pos x,y,z       出生位置
---yaw F --pitch F 相机朝向（弧度）
---time F          起始时间，0..1（0.25=早晨，0.5=夜晚）
---screenshot out.png   渲染数帧后保存截图并退出
---frames N        运行 N 帧后退出
---no-ui           隐藏准星/快捷栏/方块高亮
---no-vsync        关闭垂直同步（解锁帧率）
---inventory       （调试）启动时打开物品栏
---drive           （调试）自动向前行走
---break x,y,z     （调试）渲染前挖掉一个方块
-```
-
-## 架构
-
-- `src/world.*` 地形生成、区块存储、工作线程池（`World`）、网格化。
-  地形由原生 `std::thread` 线程池生成与网格化：按距离优先调度生成，区块及其
-  邻居就绪后进行网格化。方块编辑由共享互斥锁保护；网格化器在读锁下复制
-  5 区块的边框数据。
-- `src/renderer.cpp` Vulkan 管线（不透明地形、半透明水、天空渐变、方块高亮、
-  屏幕空间 UI）、带 mipmap 的方块纹理图集、每区块顶点/索引缓冲
-  （host-visible，map+memcpy 上传）。
-- `src/vk.cpp` 通过 volk 动态加载进行设备/交换链/渲染通道设置（无需静态链接
-  vulkan lib）。
-- `shaders/` GLSL，构建时由 glslc 编译。
-
-现代 Minecraft 的部分纹理是可染色（灰度）纹理（草顶、树叶、水），这些在
-图集构建时被着色。
-
-## 资源提取工具
-
-`tools/extract_assets.cpp`：一个小程序，让用户选择一个 Minecraft 官方 `.jar`
-文件，自动提取游戏所需的所有方块纹理到 `assets/block/`。用以下方式编译运行：
-
-```sh
-g++ tools/extract_assets.cpp -o extract_assets.exe -lgdi32 -lcomdlg32
-extract_assets.exe
-```
+- 注释一律用**简短的中文**，一两句话说清即可，不要长篇大论。
+- 不要写英文或其他语言的注释。
+- 其它约定见 `AGENTS.md`。

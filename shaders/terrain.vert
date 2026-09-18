@@ -1,7 +1,7 @@
 #version 450
 
 layout(location = 0) in ivec4 inPos;
-layout(location = 1) in uvec4 inMeta; // u, v, tex, shade
+layout(location = 1) in uvec4 inMeta; // 依次为 u、v、贴图索引、明暗
 
 layout(location = 0) out vec2 vUV;
 layout(location = 1) out float vShade;
@@ -14,9 +14,9 @@ layout(push_constant) uniform Pc {
 layout(set = 0, binding = 0) uniform Ubo {
     mat4 viewProj;
     vec4 camPos;
-    vec4 fogParams; // x start, y end, z skyR, w skyG
-    vec4 misc;      // x skyB, y atlasPx, z tilesX, w tilePx
-    vec4 day;       // x daylight 0..1, yzw sun dir
+    vec4 fogParams; // x 雾起, y 雾止, z 天红, w 天绿
+    vec4 misc;      // x 天蓝, y 图集边长, z 横向格数, w 单元像素
+    vec4 day;       // x 日照 0..1, yzw 太阳方向
 } ubo;
 
 void main() {
@@ -26,7 +26,7 @@ void main() {
 
     int tex = int(inMeta.z);
     vec2 tileUV = vec2(float(inMeta.x), float(inMeta.y));
-    // 图集为 32px cell 布局: cell 原点 = tileIdx * cellPx, 贴图在 cell 内偏移 8px（边缘扩展边框）
+    // 图集按 32 像素单元排布：在单元内偏移 8 像素，留边框防采样渗色
     vec2 tileIdx = vec2(float(tex % int(ubo.misc.z)), float(tex / int(ubo.misc.z)));
     vec2 px = tileIdx * ubo.misc.w + vec2(ubo.misc.w * 0.25) + tileUV + 0.5;
     vUV = px / ubo.misc.y;

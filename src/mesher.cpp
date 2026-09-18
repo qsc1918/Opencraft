@@ -5,15 +5,15 @@
 
 namespace {
 
-// precomputed face tables. Index order MUST match the Face enum:
+// 预计算面表，下标顺序必须与 Face 枚举一致：
 // F_PX=0, F_NX=1, F_PY=2, F_NY=3, F_PZ=4, F_NZ=5
 const int kC[6][4][3] = {
-    {{1,0,1},{1,0,0},{1,1,0},{1,1,1}}, // +X
-    {{0,0,0},{0,0,1},{0,1,1},{0,1,0}}, // -X
-    {{0,1,1},{1,1,1},{1,1,0},{0,1,0}}, // +Y
-    {{1,0,1},{0,0,1},{0,0,0},{1,0,0}}, // -Y  (winding reversed so it renders from below)
-    {{0,0,1},{1,0,1},{1,1,1},{0,1,1}}, // +Z
-    {{1,0,0},{0,0,0},{0,1,0},{1,1,0}}, // -Z
+    {{1,0,1},{1,0,0},{1,1,0},{1,1,1}}, // +X 面
+    {{0,0,0},{0,0,1},{0,1,1},{0,1,0}}, // -X 面
+    {{0,1,1},{1,1,1},{1,1,0},{0,1,0}}, // +Y 面
+    {{1,0,1},{0,0,1},{0,0,0},{1,0,0}}, // -Y 面（绕序反转，否则从下方看被剔除）
+    {{0,0,1},{1,0,1},{1,1,1},{0,1,1}}, // +Z 面
+    {{1,0,0},{0,0,0},{0,1,0},{1,1,0}}, // -Z 面
 };
 const int kU[6][4] = {
     {15,0,0,15}, {0,15,15,0}, {0,15,15,0}, {15,0,0,15}, {0,15,15,0}, {15,0,0,15},
@@ -27,7 +27,7 @@ const int kNormal[6][3] = {
     {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1},
 };
 
-// whether a face of block `me` facing neighbor `nb` should be culled
+// me 朝 nb 的面是否需要剔除（同类玻璃/树叶之间也剔除）。
 inline bool cullFace(uint8_t me, uint8_t nb) {
     if (me == B_GLASS && nb == B_GLASS) return true;
     if (me == B_LEAVES && nb == B_LEAVES) return true;
@@ -43,7 +43,7 @@ const float kAoBright[4] = {0.42f, 0.64f, 0.82f, 1.0f};
 const float kFaceBright[6] = {0.80f, 0.80f, 1.0f, 0.55f, 0.80f, 0.80f};
 const Vec3 kSun(0.42f, 0.82f, 0.32f);
 
-// Precomputed shade lookup table: kShade[face][ao][water]
+// 预计算亮度查表：kShade[面][AO][是否水面]
 uint8_t kShade[6][4][2];
 struct ShadeInit { ShadeInit() {
     for (int f = 0; f < 6; f++) {
@@ -62,7 +62,7 @@ inline uint8_t bakeShade(int face, int ao, bool water) {
     return kShade[face][ao][water ? 1 : 0];
 }
 
-} // namespace
+} // 匿名命名空间
 
 ChunkMeshData buildChunkMesh(const MeshView& view) {
     ChunkMeshData m;
@@ -75,7 +75,7 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
     wv.reserve(512);
     wi.reserve(768);
 
-    // Find the highest non-air block to skip the guaranteed-air region above.
+    // 先找最高非空气方块，跳过其上必定为空的区域。
     int maxY = 0;
     for (int z = 0; z < CHUNK_SIZE; z++)
         for (int x = 0; x < CHUNK_SIZE; x++)
@@ -89,8 +89,8 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                 if (id == B_AIR) continue;
 
                 if (id == B_WATER || id == B_LAVA) {
-                    // only emit top face — side/bottom faces are invisible
-                    // through the semi-transparent surface and cause dark artifacts
+                    // 只出顶面：侧面/底面透过半透明水面看不见，
+                    // 还会产生发暗的瑕疵。
                     if (id == B_WATER && waterCull(view.at(x, y + 1, z))) continue;
                     if (id == B_LAVA && waterCull(view.at(x, y + 1, z))) continue;
                     {
@@ -119,7 +119,7 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
 
                 if (!blockIsRenderable(id)) continue;
 
-                // quick reject: fully surrounded
+                // 快速剔除：六面全被遮挡
                 bool anyExposed = false;
                 for (int f = 0; f < 6 && !anyExposed; f++) {
                     int dx = kNormal[f][0], dy = kNormal[f][1], dz = kNormal[f][2];
@@ -143,9 +143,8 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                         vt.u = (uint8_t)kU[f][c];
                         vt.v = (uint8_t)kV[f][c];
                         vt.tex = fTile;
-                        // AO: neighbors are checked at the corner level (on the face),
-                        // not at the block origin. For the top face this means checking
-                        // y+1, so flat ground does not self-occlude.
+                        // AO 取样在面的角点层，而非方块原点；顶面即查 y+1，
+                        // 这样平地不会自遮挡。
                         int a1 = kA1[f], a2 = kA2[f];
                         int cx = x + kC[f][c][0], cy = y + kC[f][c][1], cz = z + kC[f][c][2];
                         int o1 = kC[f][c][a1] == 1 ? 1 : -1;

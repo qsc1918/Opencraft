@@ -11,8 +11,8 @@ struct Camera;
 struct Player;
 
 struct UIVertex {
-    float x, y;     // NDC
-    float u, v;     // atlas uv
+    float x, y;     // NDC 坐标
+    float u, v;     // 图集 uv
     float r, g, b, a;
 };
 
@@ -32,20 +32,18 @@ public:
               const std::string& shaderDir);
     void shutdown(VkCtx& ctx);
 
-    // Acquires image, records and submits one frame. Returns false if swapchain was recreated.
+    // 获取图像并录制提交一帧；交换链被重建时返回 false。
     bool render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, float dt,
                 float renderDist, bool drawUI);
 
-    // Bind the world to render (may change when entering a new world).
+    // 绑定待渲染的世界（进入新世界时会变）。
     void setWorld(World& w);
 
-    // GPU-side chunk mesh management (main thread only)
+    // 区块网格的 GPU 管理（仅主线程调用）
     void destroyChunkBuffers(VkCtx& ctx, Chunk& c);
 
-    // Wait until the previously-submitted frame's GPU work is finished. This MUST
-    // be called before the CPU destroys or rewrites any chunk vertex/index buffer
-    // (world update / upload), otherwise the GPU may still be reading those buffers
-    // from the frame in flight, producing corruption (flicker/seams during motion).
+    // 等待上一帧的 GPU 工作结束。CPU 销毁或改写区块顶点/索引缓冲前必须调用，
+    // 否则在飞帧可能仍在读这些缓冲，画面会闪烁/出现接缝。
     void gpuSync(VkCtx& ctx);
 
     void requestScreenshot(const std::string& path) { pendingShot_ = path; }
@@ -53,12 +51,12 @@ public:
 
     int selectedSlot() const { return selectedSlot_; }
     uint8_t selectedBlock() const;
-    // 当前手持的杂项物品 id（快捷栏选中格是打火石/末影之眼时返回对应 ItemId；否则 I_NONE）。
+    // 手持杂项物品 id：选中格是打火石/末影之眼时返回对应 ItemId，否则 I_NONE。
     uint16_t heldMiscItem() const;
     float fps() const { return fps_; }
     int debugDraws() const { return debugDraws_; }
 
-    // Inventory (E) screen
+    // 物品栏（E）界面
     void setInventoryOpen(bool open);
     bool inventoryOpen() const { return invOpen_; }
     void setInventoryPage(int page) { invPage_ = page; }  // 0=方块 1=物品
@@ -84,8 +82,8 @@ private:
     Atlas atlas_;
 
     VkDescriptorSetLayout terrainDSL_ = VK_NULL_HANDLE;
-    VkDescriptorSetLayout uiDSL_ = VK_NULL_HANDLE;   // sampler only
-    VkDescriptorSetLayout skyDSL_ = VK_NULL_HANDLE;  // ubo only
+    VkDescriptorSetLayout uiDSL_ = VK_NULL_HANDLE;   // 仅采样器
+    VkDescriptorSetLayout skyDSL_ = VK_NULL_HANDLE;  // 仅 UBO
     VkDescriptorPool pool_ = VK_NULL_HANDLE;
 
     VkPipelineLayout terrainLayout_ = VK_NULL_HANDLE;
@@ -96,7 +94,7 @@ private:
     VkPipeline waterPipe_ = VK_NULL_HANDLE;
     VkPipeline skyPipe_ = VK_NULL_HANDLE;
     VkPipeline uiPipe_ = VK_NULL_HANDLE;
-    VkPipeline entityPipe_ = VK_NULL_HANDLE;  // 实体盒模型管线（无面剔除，深度写入）
+    VkPipeline entityPipe_ = VK_NULL_HANDLE;  // 实体盒模型管线（不剔面，写深度）
 
     VkImage atlasImage_ = VK_NULL_HANDLE;
     VkDeviceMemory atlasMem_ = VK_NULL_HANDLE;
@@ -115,20 +113,18 @@ private:
     void* uiMap_[VkCtx::MAX_FRAMES_IN_FLIGHT] = {};
     VkDescriptorSet uiSet_[VkCtx::MAX_FRAMES_IN_FLIGHT] = {};
 
-    // 实体动态缓冲区（每帧 CPU 构建盒模型，主线程绘制）
+    // 实体动态缓冲：每帧 CPU 构建盒模型，仅主线程绘制
     Buffer2 entityVB_[VkCtx::MAX_FRAMES_IN_FLIGHT];
     void* entityMap_[VkCtx::MAX_FRAMES_IN_FLIGHT] = {};
 
-    // Chunk GPU buffers that are no longer referenced but cannot be freed while a
-    // frame in flight may still read them. Freed once enough frames have elapsed.
+    // 已无引用的区块缓冲：在飞帧可能还在读，需等若干帧后才可释放。
     struct RetiredBuf { VkBuffer b; VkDeviceMemory m; uint64_t frame; VkDeviceSize size; void* mapPtr; };
     std::vector<RetiredBuf> retired_;
-    // Once a retired buffer is safe (its frames completed) it is moved here and
-    // reused for future chunk uploads, avoiding vkCreateBuffer/vkAllocateMemory
-    // churn while streaming. Bounded to avoid unbounded memory growth.
+    // 退役缓冲安全后移入此池，供后续区块上传复用，避免流式加载时
+    // 反复 vkCreateBuffer/vkAllocateMemory；池设上限以限制内存增长。
     std::vector<RetiredBuf> freePool_;
 
-    int curFrame_ = 0;   // frame slot (0..MAX_FRAMES_IN_FLIGHT-1) being recorded now
+    int curFrame_ = 0;   // 当前录制的帧槽（0..MAX_FRAMES_IN_FLIGHT-1）
 
     VkBuffer shotBuf_ = VK_NULL_HANDLE;
     VkDeviceMemory shotMem_ = VK_NULL_HANDLE;
@@ -148,25 +144,25 @@ private:
     int shotW_ = 0, shotH_ = 0;
     int debugDraws_ = 0;
     Mat4 cachedVP_;
-    float fogEndWorld_ = 0.0f;   // world-space distance at which fog fully obscures a chunk
+    float fogEndWorld_ = 0.0f;   // 雾完全遮蔽区块的世界空间距离
     float timeOfDay_ = 0.25f;
-    float timeScale_ = 1.0f / 1200.0f; // full day/night cycle in 20 minutes
+    float timeScale_ = 1.0f / 1200.0f; // 20 分钟走完一个昼夜循环
 
     bool invOpen_ = false;
     int invPage_ = 0;              // 0=方块页 1=物品页
     float cursorX_ = 0.0f, cursorY_ = 0.0f;
     bool prevMouse0_ = false;
-    // 快捷栏：每格是一个"手持资源"。约定：< kItemTag 是方块 id（blockTile/放置），
-    // >= kItemTag 是物品（kItemTag + ItemId，用 itemDef().iconTile 渲染、右键使用）。
+    // 快捷栏每格是一个"手持资源"：< kItemTag 为方块 id（blockTile/放置），
+    // >= kItemTag 为物品（kItemTag + ItemId，按 iconTile 渲染、右键使用）。
     static constexpr int kItemTag = 0x100;
     int hotbar_[9] = {B_GRASS, B_STONE, B_COBBLE, B_PLANKS, B_LOG,
                       B_DIRT, B_SAND, B_GRAVEL, B_GLASS};
-    // inventory contents (all placeable blocks)
+    // 物品栏内容（全部可放置方块）
     static const uint8_t kInvBlocks[];
     static const int kInvCount;
     static const int kInvCols = 8;
 
-    // Reusable raw-pointer snapshot of world chunks (avoids shared_ptr per frame).
+    // 世界区块的裸指针快照，复用以避免每帧拷贝 shared_ptr。
     std::vector<World::ChunkInfo> snapshot_;
     std::vector<TerrainVertex> entityVerts_;  // 每帧构建的实体盒模型顶点
 };

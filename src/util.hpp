@@ -3,9 +3,7 @@
 #include <cstdint>
 #include <cstring>
 
-// ---------------------------------------------------------------------------
-// Small math library (column-major matrices, GLSL compatible)
-// ---------------------------------------------------------------------------
+// 小型数学库（列主序矩阵，与 GLSL 一致）
 struct Vec3 {
     float x = 0, y = 0, z = 0;
     Vec3() = default;
@@ -39,7 +37,7 @@ struct Mat4 {
         Mat4 r;
         float f = 1.0f / std::tan(fovy * 0.5f);
         r.m[0] = f / aspect;
-        r.m[5] = -f; // Vulkan NDC has +y pointing down; flip so world +y is screen-up
+        r.m[5] = -f; // Vulkan NDC 的 +y 朝下，翻转后世界 +y 才对应屏幕上方
         r.m[10] = (zf + zn) / (zn - zf);
         r.m[11] = -1.0f;
         r.m[14] = (2.0f * zf * zn) / (zn - zf);
@@ -79,26 +77,25 @@ struct Mat4 {
 struct Frustum {
     float planes[6][4];
     void extract(const Mat4& vp) {
-        // Correct Gribb-Hartmann extraction for a column-major matrix.
-        // For point p=(x,y,z,1): cx = m[0]x+m[4]y+m[8]z+m[12], etc.
-        // Visible when: -cw<=cx<=cw, -cw<=cy<=cw, 0<=cz<=cw.
+        // Gribb-Hartmann 平面提取，按列主序写。
+        // 点 p=(x,y,z,1) 满足 -cw<=cx<=cw、-cw<=cy<=cw、0<=cz<=cw 时可见。
         const float* m = vp.m;
-        // left:  cx + cw >= 0
+        // 左:  cx + cw >= 0
         planes[0][0] = m[0] + m[3];  planes[0][1] = m[4] + m[7];
         planes[0][2] = m[8] + m[11]; planes[0][3] = m[12] + m[15];
-        // right: cw - cx >= 0
+        // 右: cw - cx >= 0
         planes[1][0] = m[3] - m[0];  planes[1][1] = m[7] - m[4];
         planes[1][2] = m[11] - m[8]; planes[1][3] = m[15] - m[12];
-        // bottom: cy + cw >= 0
+        // 下: cy + cw >= 0
         planes[2][0] = m[1] + m[3];  planes[2][1] = m[5] + m[7];
         planes[2][2] = m[9] + m[11]; planes[2][3] = m[13] + m[15];
-        // top: cw - cy >= 0
+        // 上: cw - cy >= 0
         planes[3][0] = m[3] - m[1];  planes[3][1] = m[7] - m[5];
         planes[3][2] = m[11] - m[9]; planes[3][3] = m[15] - m[13];
-        // near: cz >= 0
+        // 近: cz >= 0
         planes[4][0] = m[2]; planes[4][1] = m[6];
         planes[4][2] = m[10]; planes[4][3] = m[14];
-        // far: cw - cz >= 0
+        // 远: cw - cz >= 0
         planes[5][0] = m[3] - m[2];  planes[5][1] = m[7] - m[6];
         planes[5][2] = m[11] - m[10]; planes[5][3] = m[15] - m[14];
     }
@@ -114,9 +111,7 @@ struct Frustum {
     }
 };
 
-// ---------------------------------------------------------------------------
-// Fast deterministic random
-// ---------------------------------------------------------------------------
+// 快速确定性随机
 inline uint32_t hash32(uint32_t x) {
     x ^= x >> 16; x *= 0x7feb352dU;
     x ^= x >> 15; x *= 0x846ca68bU;

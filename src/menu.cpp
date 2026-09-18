@@ -1,6 +1,7 @@
 #include "menu.hpp"
 #include "window.hpp"
 #include "png.hpp"
+#include "version.hpp"
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
@@ -9,7 +10,7 @@
 #include <algorithm>
 
 namespace {
-const int BTN_BORDER = 3; // 9-slice border on the 200x20 MC button sprite
+const int BTN_BORDER = 3; // 200x20 按钮贴图的九宫格边框宽
 
 std::wstring utf8ToWide(const std::string& s) {
     int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
@@ -18,7 +19,7 @@ std::wstring utf8ToWide(const std::string& s) {
     return w;
 }
 
-// Creates a top-down 32bpp DIB from an RGBA buffer and selects it into a memory DC.
+// 用 RGBA 缓冲创建自上而下的 32bpp DIB，并选入内存 DC。
 void makeDib(const uint8_t* rgba, int w, int h, HBITMAP& bmp, HDC& dc, uint8_t** bits) {
     dc = CreateCompatibleDC(nullptr);
     BITMAPINFO bmi = {};
@@ -42,7 +43,7 @@ void makeDib(const uint8_t* rgba, int w, int h, HBITMAP& bmp, HDC& dc, uint8_t**
     if (bits) *bits = pbits;
     SelectObject(dc, bmp);
 }
-} // namespace
+} // 匿名命名空间
 
 bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
     if (!loadTextures(assetDir)) return false;
@@ -50,7 +51,7 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
                         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                         DEFAULT_PITCH | FF_DONTCARE, "Microsoft YaHei");
 
-    // drawable texture DIBs for buttons / text field (height = sprite height)
+    // 按钮与输入框的绘制用贴图 DIB（高度与贴图一致）
     makeDib(dirtRGBA_.data(), dirtW_, dirtH_, dirtBmp_, dirtDC_, nullptr);
     makeDib(btnRGBA_.data(), btnW_, btnH_, btnBmp_, btnDC_, nullptr);
     makeDib(btnHiRGBA_.data(), btnW_, btnH_, btnHiBmp_, btnHiDC_, nullptr);
@@ -61,7 +62,7 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
     ensureDIB(win.width(), win.height());
     createMenuTexture(ctx);
 
-    // ---- pipeline ----
+    // ---- 管线 ----
     VkDescriptorSetLayoutBinding b0 = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
                                        VK_SHADER_STAGE_FRAGMENT_BIT};
     VkDescriptorSetLayoutCreateInfo li = {};
@@ -166,7 +167,7 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
     vkDestroyShaderModule(ctx.device, vs, nullptr);
     vkDestroyShaderModule(ctx.device, fs, nullptr);
 
-    // descriptor set (menu texture)
+    // 描述符集（菜单贴图）
     VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
     VkDescriptorPoolCreateInfo poolCI = {};
     poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -192,9 +193,8 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
     vkUpdateDescriptorSets(ctx.device, 1, &wr, 0, nullptr);
     mpool_ = pool;
 
-    // fullscreen quad (2 triangles, NDC -1..1). Vulkan NDC (-1,-1) is the TOP-left of
-    // the framebuffer, and image row 0 (v=0) is the top of the uploaded menu, so
-    // v must increase downward on screen.
+    // 全屏四边形。Vulkan 的 NDC (-1,-1) 在帧缓冲左上角，贴图第 0 行也在顶部，
+    // 故 v 必须随屏幕向下递增，否则画面上下颠倒。
     struct QV { float x, y, u, v, r, g, b, a; };
     QV quad[6] = {
         {-1,-1,0,0,1,1,1,1},{1,-1,1,0,1,1,1,1},{1,1,1,1,1,1,1,1},
@@ -226,16 +226,16 @@ bool Menu::loadTextures(const std::string& assetDir) {
     auto load = [&](const std::string& rel, std::vector<uint8_t>& out, int& w, int& h) {
         return loadPNG((assetDir + "/" + rel).c_str(), out, w, h);
     };
-    // dirt (background)
+    // 泥土背景
     load("block/dirt.png", dirtRGBA_, dirtW_, dirtH_);
-    // dirties loaded as top-down; loadPNG gives top-down RGBA, good.
+    // loadPNG 输出的就是自上而下 RGBA，与 DIB 一致，无需翻转。
     if (!load("gui/button.png", btnRGBA_, btnW_, btnH_)) { fprintf(stderr, "[menu] button.png load failed\n"); return false; }
     if (!load("gui/button_highlighted.png", btnHiRGBA_, btnW_, btnH_)) return false;
     if (!load("gui/text_field.png", fieldRGBA_, btnW_, btnH_)) return false;
     if (!load("gui/slider.png", sliderRGBA_, sliderW_, sliderH_)) return false;
     if (!load("gui/slider_handle.png", handleRGBA_, handleW_, handleH_)) return false;
     if (!load("gui/slider_handle_highlighted.png", handleHiRGBA_, handleW_, handleH_)) return false;
-    // The button sprite is 200x20; give DIBs a small vertical margin to avoid clamping.
+    // 按钮贴图固定 200x20，DIB 需留少量余量，避免边缘被钳制。
     return true;
 }
 
@@ -327,20 +327,20 @@ void Menu::ensureDIB(int w, int h) {
 
 void Menu::onResize(VkCtx& ctx, int w, int h) {
     destroyMenuTexture(ctx);
-    ensureDIB(w, h);            // sets diw_/dih_ first
-    createMenuTexture(ctx);     // then (re)create the texture at the real size
+    ensureDIB(w, h);            // 先刷新 diw_/dih_
+    createMenuTexture(ctx);     // 再按真实尺寸重建贴图
 }
 
-// 9-slice draw a button sprite from `src` into the screen DIB.
+// 把按钮贴图按九宫格绘制到屏幕 DIB。
 static void slice9(HDC dst, HDC src, int tw, int th, int border,
                    float dx, float dy, float dw, float dh) {
     int b = border;
-    // corners
+    // 四角
     BitBlt(dst, (int)dx, (int)dy, b, b, src, 0, 0, SRCCOPY);
     BitBlt(dst, (int)(dx + dw - b), (int)dy, b, b, src, tw - b, 0, SRCCOPY);
     BitBlt(dst, (int)dx, (int)(dy + dh - b), b, b, src, 0, th - b, SRCCOPY);
     BitBlt(dst, (int)(dx + dw - b), (int)(dy + dh - b), b, b, src, tw - b, th - b, SRCCOPY);
-    // edges
+    // 四边
     StretchBlt(dst, (int)(dx + b), (int)dy, (int)(dw - 2 * b), b,
                src, b, 0, tw - 2 * b, b, SRCCOPY);
     StretchBlt(dst, (int)(dx + b), (int)(dy + dh - b), (int)(dw - 2 * b), b,
@@ -349,16 +349,16 @@ static void slice9(HDC dst, HDC src, int tw, int th, int border,
                src, 0, b, b, th - 2 * b, SRCCOPY);
     StretchBlt(dst, (int)(dx + dw - b), (int)(dy + b), b, (int)(dh - 2 * b),
                src, tw - b, b, b, th - 2 * b, SRCCOPY);
-    // center
+    // 中心
     StretchBlt(dst, (int)(dx + b), (int)(dy + b), (int)(dw - 2 * b), (int)(dh - 2 * b),
                src, b, b, tw - 2 * b, th - 2 * b, SRCCOPY);
 }
 
 void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float cy) {
     HDC dc = dibDC_;
-    // dirt background tiled, scaled up 4x
+    // 泥土背景平铺，放大约 4 倍
     {
-        int ts = dirtW_ * 4; // tile screen size
+        int ts = dirtW_ * 4; // 单个平铺块边长
         for (int y = 0; y < dih_; y += ts)
             for (int x = 0; x < diw_; x += ts)
                 StretchBlt(dc, x, y, ts, ts, dirtDC_, 0, 0, dirtW_, dirtH_, SRCCOPY);
@@ -380,12 +380,12 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         btns_.push_back({id, x, y, bw, bh});
     };
 
-    // Minecraft-style horizontal slider (track + knob) for numeric options.
+    // MC 风格数值滑块（轨道 + 手柄）
     auto addSlider = [&](float x, float y, float bw, float bh, int minV, int maxV, int val) {
         sliderActive_ = true;
         sliderMinX_ = x; sliderMaxX_ = x + bw; sliderY_ = y; sliderGH_ = bh;
         sliderMinV_ = minV; sliderMaxV_ = maxV;
-        // track (9-slice, rounded ends preserved)
+        // 轨道：九宫格拉伸，保留圆角
         slice9(dc, sliderDC_, sliderW_, sliderH_, BTN_BORDER, x, y, bw, bh);
         float frac = (float)(val - minV) / (float)(maxV - minV);
         frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
@@ -395,7 +395,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
                            cyr >= handleY && cyr <= handleY + handleH_;
         StretchBlt(dc, (int)handleX, (int)handleY, (int)handleW_, (int)handleH_,
                    handleHover ? handleHiDC_ : handleDC_, 0, 0, handleW_, handleH_, SRCCOPY);
-        // value label beneath the track
+        // 轨道下方的数值标签
         std::string vl = "渲染距离：" + std::to_string(val);
         RECT vr = {(int)x, (int)(y + bh + 4), (int)(x + bw), (int)(y + bh + 26)};
         SetTextColor(dc, RGB(255, 255, 255));
@@ -413,6 +413,16 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         float bx2 = (w - 2 * bw2 - 20) / 2;
         addBtn(MENU_OPTIONS, bx2, 280, bw2, bh, "选项");
         addBtn(MENU_QUIT, bx2 + bw2 + 20, 280, bw2, bh, "退出游戏");
+
+        // 主界面右下角显示版本号（版本名-编译时间戳）
+        std::string ver = "Opencraft " + version::full();
+        RECT vr = {0, h - 28, w - 8, h - 6};
+        SetTextColor(dc, RGB(210, 210, 210));
+        SetBkMode(dc, TRANSPARENT);
+        SetTextAlign(dc, TA_RIGHT);
+        SelectObject(dc, font_);
+        DrawTextW(dc, utf8ToWide(ver).c_str(), -1, &vr,
+                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     } else if (screen == Menuscreen::SaveSelect) {
         float bw = 400, bh = 36;
         float bx = (w - bw) / 2;
@@ -426,7 +436,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
     } else if (screen == Menuscreen::NewWorld) {
         float bw = 400, bh = 40;
         float bx = (w - bw) / 2;
-        // title
+        // 标题
         RECT r = {(int)bx, 90, (int)(bx + bw), 150};
         SetTextColor(dc, RGB(255, 255, 255));
         SetBkMode(dc, TRANSPARENT);
@@ -434,7 +444,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         SelectObject(dc, font_);
         DrawTextW(dc, utf8ToWide(data.titleText).c_str(), -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        // seed label + field
+        // 种子标签与输入框
         RECT lr = {(int)bx, 180, (int)(bx + 120), 220};
         SetTextAlign(dc, TA_LEFT);
         DrawTextW(dc, utf8ToWide("世界种子").c_str(), -1, &lr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -477,7 +487,7 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
     ensureDIB(ctx.extent.width, ctx.extent.height);
     renderToDIB(screen, data, cx, cy);
 
-    // upload DIB (BGRA) -> staging (RGBA), swap R and B channels
+    // 上传 DIB(BGRA) 到 staging(RGBA)：交换 R/B 通道
     {
         void* p;
         if (vkMapMemory(ctx.device, stagingMem_, 0, VK_WHOLE_SIZE, 0, &p) == VK_SUCCESS) {
@@ -492,13 +502,12 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
         }
     }
 
-    // frame
+    // 本帧
     uint32_t imageIndex;
     uint32_t slot = (uint32_t)(frameIdx_ % (uint64_t)VkCtx::MAX_FRAMES_IN_FLIGHT);
     VkCtx::Frame& f = ctx.frames[slot];
-    // The menu shares a single staging/quad texture buffer across frames. Wait for
-    // the previous submission before rewriting it so a frame in flight never reads
-    // resources we are about to overwrite.
+    // 菜单只有一份 staging 缓冲，跨帧复用：重写前必须等上一帧提交完成，
+    // 否则在途帧会读到即将被覆盖的资源。
     if (frameIdx_ > 0) {
         uint32_t pslot = (uint32_t)((frameIdx_ - 1) % (uint64_t)VkCtx::MAX_FRAMES_IN_FLIGHT);
         vkWaitForFences(ctx.device, 1, &ctx.frames[pslot].fence, VK_TRUE, UINT64_MAX);
@@ -515,7 +524,7 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cb, &bi);
 
-    // transition + upload
+    // 布局转换 + 上传
     VkImageMemoryBarrier bar = {};
     bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -561,7 +570,7 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
     vkEndCommandBuffer(cb);
     if (!ctx.presentImage(imageIndex, f, cb)) { ctx.recreateSwapchain(diw_, dih_); return MENU_NONE; }
 
-    // ---- render-distance slider interaction (drag) ----
+    // ---- 渲染距离滑块拖拽交互 ----
     if (sliderActive_) {
         bool overSlider = cx >= sliderMinX_ && cx <= sliderMaxX_ &&
                           cy >= sliderY_ && cy <= sliderY_ + sliderGH_;
@@ -580,9 +589,8 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
     sliderDragging_ = false;
 
     if (mouseDown && !prevMouseDown_) {
-        // Latch the press so the same held click cannot immediately fire a button
-        // on the *next* screen (which would trigger a button that happens to sit
-        // under the still-held cursor after a fast menu transition).
+        // 锁存按下状态：否则同一次按住会在切换后的新界面上
+        // 误触发恰好位于光标下的按钮。
         prevMouseDown_ = true;
         return hitTest(cx, cy);
     }

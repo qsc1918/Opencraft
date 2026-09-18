@@ -1,5 +1,6 @@
 #include "vk.hpp"
 #include "window.hpp"
+#include "version.hpp"
 #include <windows.h>
 #include <algorithm>
 #include <cstdio>
@@ -15,7 +16,7 @@ static const char* kDeviceExts[] = {
 };
 
 // ---------------------------------------------------------------------------
-// GPU / driver info (printed to the console at startup)
+// GPU 与驱动信息（启动时打印到控制台）
 // ---------------------------------------------------------------------------
 static const char* deviceTypeName(VkPhysicalDeviceType t) {
     switch (t) {
@@ -41,7 +42,7 @@ static const char* vendorName(uint32_t vid) {
 }
 
 static void printDriverVersion(uint32_t vendorID, uint32_t dv) {
-    if (vendorID == 0x10DE) { // NVIDIA encodes its real driver version
+    if (vendorID == 0x10DE) { // NVIDIA 的驱动版本自行编码
         printf("        Driver version: %u.%u.%u  (raw 0x%08X)\n",
                (dv >> 22) & 0x1FFu, (dv >> 14) & 0xFFu, dv & 0x3FFFu, dv);
     } else {
@@ -58,7 +59,7 @@ static void printDeviceInfo(int index, VkPhysicalDevice d, bool usable) {
     VkPhysicalDeviceFeatures ft;
     vkGetPhysicalDeviceFeatures(d, &ft);
 
-    VkDeviceSize deviceLocal = 0;   // sum of device-local heaps (dedicated VRAM)
+    VkDeviceSize deviceLocal = 0;   // 各设备本地堆之和（独显显存）
     for (uint32_t i = 0; i < mp.memoryHeapCount; i++)
         if (mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
             deviceLocal += mp.memoryHeaps[i].size;
@@ -96,7 +97,7 @@ bool VkCtx::init(Window& win, int w, int h) {
         return false;
     }
 
-    // ---- instance ----
+    // ---- 实例 ----
     uint32_t instExtCount = 0;
     vkEnumerateInstanceExtensionProperties(nullptr, &instExtCount, nullptr);
     std::vector<VkExtensionProperties> instExts(instExtCount);
@@ -118,9 +119,9 @@ bool VkCtx::init(Window& win, int w, int h) {
 
     VkApplicationInfo app = {};
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    app.pApplicationName = "VoxMine";
+    app.pApplicationName = "Opencraft";
     app.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    app.pEngineName = "VoxMine";
+    app.pEngineName = "Opencraft";
     app.apiVersion = VK_API_VERSION_1_1;
 
     hasValidation = hasValidation && (getenv("VULKAN_VALIDATION") != nullptr);
@@ -143,7 +144,7 @@ bool VkCtx::init(Window& win, int w, int h) {
     }
     volkLoadInstance(instance);
 
-    // ---- surface ----
+    // ---- 窗口表面 ----
     VkWin32SurfaceCreateInfoKHR sci = {};
     sci.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
     sci.hwnd = (HWND)win.hwnd();
@@ -153,7 +154,7 @@ bool VkCtx::init(Window& win, int w, int h) {
         return false;
     }
 
-    // ---- physical device ----
+    // ---- 物理设备 ----
     uint32_t devCount = 0;
     vkEnumeratePhysicalDevices(instance, &devCount, nullptr);
     if (devCount == 0) {
@@ -165,7 +166,7 @@ bool VkCtx::init(Window& win, int w, int h) {
 
     printf("\n");
     printf("======================================================================\n");
-    printf(" VoxMine - Graphics / GPU information\n");
+    printf(" Opencraft %s - Graphics / GPU information\n", version::full().c_str());
     printf("======================================================================\n");
     printf(" Vulkan instance API      : %u.%u.%u\n",
            VK_VERSION_MAJOR(app.apiVersion), VK_VERSION_MINOR(app.apiVersion), VK_VERSION_PATCH(app.apiVersion));
@@ -202,7 +203,7 @@ bool VkCtx::init(Window& win, int w, int h) {
         printDeviceInfo((int)di, d, hasGfx && hasSwap);
         bool usable = hasGfx && hasSwap;
         if (desiredGpuIndex >= 0) {
-            // Force a specific device (by enumeration index).
+            // 按枚举序号强制指定设备。
             if ((int)di == desiredGpuIndex) {
                 if (usable) { phys = d; bestGfxFamily = gfxFamily; bestIndex = (int)di; bestScore = score; }
             }
@@ -217,7 +218,7 @@ bool VkCtx::init(Window& win, int w, int h) {
         lastError = desiredGpuIndex >= 0 ? "requested GPU index not usable" : "no suitable device";
         return false;
     }
-    graphicsFamily = bestGfxFamily;   // family of the device actually selected
+    graphicsFamily = bestGfxFamily;   // 实际选中设备的队列族
     vkGetPhysicalDeviceProperties(phys, &props);
     printf("\n -> Using GPU [%d]: %s (%s)\n", bestIndex, props.deviceName,
            deviceTypeName(props.deviceType));
@@ -235,7 +236,7 @@ bool VkCtx::init(Window& win, int w, int h) {
     printf("======================================================================\n\n");
     fflush(stdout);
 
-    // ---- device ----
+    // ---- 逻辑设备 ----
     uint32_t qfCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, nullptr);
     std::vector<VkQueueFamilyProperties> qfs(qfCount);
@@ -270,7 +271,7 @@ bool VkCtx::init(Window& win, int w, int h) {
     depthFormat = pickDepthFormat();
     selectSwapFormat();
 
-    // ---- render pass (created once; format is stable, so it is never recreated) ----
+    // ---- 渲染通道（只建一次：格式稳定，不随缩放重建）----
     VkAttachmentDescription color = {};
     color.format = swapFormat;
     color.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -340,8 +341,8 @@ bool VkCtx::init(Window& win, int w, int h) {
         return false;
     }
 
-    // Sync primitives: one per frame in flight (independent of the swapchain image
-    // count, which changes on resize). Each fence starts signalled.
+    // 同步原语按在飞帧分配，与交换链图像数无关（后者随缩放变化）。
+    // 每道栅栏初始即为已发出状态。
     frames.resize(MAX_FRAMES_IN_FLIGHT);
     for (Frame& fr : frames) {
         VkSemaphoreCreateInfo sci = {};

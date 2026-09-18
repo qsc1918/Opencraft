@@ -3,8 +3,8 @@
 
 struct Camera {
     Vec3 pos{0, 70, 0};
-    float yaw = 0.0f;    // radians
-    float pitch = 0.0f;  // radians
+    float yaw = 0.0f;    // 弧度
+    float pitch = 0.0f;  // 弧度
 
     Vec3 forward() const;
     Vec3 right() const;

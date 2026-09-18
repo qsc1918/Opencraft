@@ -22,18 +22,17 @@
 #include <unordered_set>
 #include <vector>
 
-// 区块/世界常量（CHUNK_SIZE、WORLD_HEIGHT、SEA_LEVEL、SECTION_*、光照/刻/
-// 世界边界/坐标换算函数）已收编到 specs.hpp —— 它们是世界结构规范的一部分，
-// 不要在本文件重新定义。见 docs/standards.md。
+// 世界常量与坐标换算函数都在 specs.hpp，属世界结构规范，别在本文件重定义。
+// 见 docs/standards.md。
 inline int chunkIndex(int x, int y, int z) { return x + (z << 4) + (y << 8); }
 
-// 8-byte packed vertex for terrain/water meshes.
+// 地形/水面网格共用的 8 字节紧凑顶点。
 struct TerrainVertex {
     int8_t  x, y, z;
     uint8_t pad;
-    uint8_t u, v;     // 0..15 within tile
-    uint8_t tex;      // atlas tile index
-    uint8_t shade;    // 0..255 baked brightness (face light * AO)
+    uint8_t u, v;     // 图块内 0..15
+    uint8_t tex;      // 图集图块下标
+    uint8_t shade;    // 0..255 预烘焙亮度（面光 * AO）
 };
 static_assert(sizeof(TerrainVertex) == 8, "vertex must be 8 bytes");
 
@@ -50,23 +49,23 @@ struct ChunkMeshData {
 
 struct Chunk {
     std::array<uint8_t, CHUNK_VOL> blocks{};
-    std::atomic<int> state{0};        // 0 empty, 1 generated, 2 meshed
+    std::atomic<int> state{0};        // 0=空 1=已生成 2=已构网格
     std::atomic<bool> dirty{false};
     std::atomic<bool> needsUpload{false};
     std::mutex meshLock;
     ChunkMeshData mesh;
 
-    uint64_t opaqueBuf = 0;   // VkBuffer handles stored as raw
+    uint64_t opaqueBuf = 0;   // 存原始 VkBuffer 句柄，避免头文件依赖 Vulkan
     uint64_t opaqueMem = 0;
     uint64_t waterBuf = 0;
     uint64_t waterMem = 0;
-    uint32_t opaqueCount = 0; // index count
+    uint32_t opaqueCount = 0; // 索引数量
     uint32_t waterCount = 0;
-    uint64_t opaqueAlloc = 0; // bytes allocated
+    uint64_t opaqueAlloc = 0; // 已分配字节数
     uint64_t waterAlloc = 0;
-    uint64_t opaqueVertBytes = 0; // vertex data byte size (index buffer offset)
+    uint64_t opaqueVertBytes = 0; // 顶点数据字节数（索引缓冲区偏移）
     uint64_t waterVertBytes = 0;
-    void*    opaqueMap = nullptr; // persistent vkMapMemory pointer (HOST_COHERENT)
+    void*    opaqueMap = nullptr; // 常驻映射指针（HOST_COHERENT，无需手动刷新）
     void*    waterMap = nullptr;
 };
 
@@ -87,10 +86,9 @@ inline bool worldTaskLess(const WorldTask& a, const WorldTask& b) {
     return a.cx != b.cx ? a.cx > b.cx : a.cz > b.cz;
 }
 
-// Stores a local 18x18x128 copy of a chunk plus its 4 neighbors for meshing.
-// Indexed by LOCAL block coordinates x,z in [-1,16] and y in [0,WORLD_HEIGHT).
-// The array is 18 wide per axis; index = (x+1) + (z+1)*18 + y*18*18 so the
-// -1..16 local range maps cleanly onto 0..17 without out-of-bounds access.
+// 构网格用的本地副本：本区块 + 四邻，18x18x128。
+// 本地坐标 x,z ∈ [-1,16]、y ∈ [0,WORLD_HEIGHT)，索引用 (x+1)+(z+1)*18+y*18*18，
+// 使 -1..16 恰好映射到 0..17，无需越界判断。
 struct MeshView {
     std::array<uint8_t, 18 * 18 * WORLD_HEIGHT> blocks{};
     inline uint8_t at(int x, int y, int z) const {
@@ -126,24 +124,24 @@ public:
     void setDimension(DimensionId dim) { currentDim_ = dim; }
     DimensionId getDimension() const { return currentDim_; }
 
-    // Main-thread scheduling: ensure chunks around (px,pz) exist & are queued.
+    // 主线程调度：确保 (px,pz) 周围区块已创建并入队。
     void update(float px, float pz, int renderDist);
 
-    // Block read (main thread, current dimension). Returns air for ungenerated.
+    // 读方块（主线程，当前维度）；未生成的区块按空气处理。
     uint8_t getBlock(int x, int y, int z) const;
-    // Player edit (current dimension). Returns true if changed.
+    // 玩家改方块（当前维度）；真正改变才返回 true。
     bool setBlock(int x, int y, int z, uint8_t id);
 
-    // 跨维度方块读写（传送门查找出口/放置出口传送门时用；不改变 currentDim_）。
+    // 跨维度读写方块（传送门用；不改 currentDim_）。
     uint8_t getBlockInDim(DimensionId dim, int x, int y, int z) const;
     bool setBlockInDim(DimensionId dim, int x, int y, int z, uint8_t id);
 
     std::shared_ptr<Chunk> chunkAt(int cx, int cz) const;
 
-    // Iterate all chunks (main thread, current dimension).
+    // 遍历全部区块（主线程，当前维度）。
     void forEachChunk(const std::function<void(std::shared_ptr<Chunk>&, int, int)>& fn);
 
-    // Raw-pointer snapshot (current dimension).
+    // 裸指针快照（当前维度），免得渲染侧持有 shared_ptr。
     struct ChunkInfo { Chunk* c; int cx; int cz; };
     void snapshotChunks(std::vector<ChunkInfo>& out);
 
@@ -185,7 +183,7 @@ private:
     DimStorage& dc() { return dims_[currentDim_]; }
     const DimStorage& dc() const { return dims_[currentDim_]; }
 
-    // 指定维度的 chunk 查找（跨维度传送门查找时用）。
+    // 指定维度查区块（跨维度传送门用）。
     std::shared_ptr<Chunk> chunkAtInDim(DimensionId dim, int cx, int cz) const;
 
     mutable std::mutex mapLock_;

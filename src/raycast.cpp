@@ -27,13 +27,12 @@ RayHit raycastWorld(const World& w, Vec3 origin, Vec3 dir, float maxDist) {
     float t = 0;
     while (t <= maxDist) {
         uint8_t id = w.getBlock(x, y, z);
-        // Skip water: underwater the crosshair should pass through the water and
-        // target the actual solid block behind it, so mining/placing works.
+        // 跳过水：水下准星应穿过水打中后面实体方块，才能挖掘/放置。
         if (id != B_AIR && id != B_WATER) {
             out.hit = true;
             out.x = x; out.y = y; out.z = z;
             out.px = lastX; out.py = lastY; out.pz = lastZ;
-            // determine face
+            // 判定命中面
             if (tMaxX < tMaxY && tMaxX < tMaxZ) out.face = dx > 0 ? F_NX : F_PX;
             else if (tMaxY < tMaxZ) out.face = dy > 0 ? F_NY : F_PY;
             else out.face = dz > 0 ? F_NZ : F_PZ;

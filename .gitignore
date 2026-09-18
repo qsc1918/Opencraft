@@ -1,16 +1,16 @@
-# Build output
+# 构建输出
 /build/
 
-# Game assets (extracted from Minecraft, not redistributed per Mojang EULA)
+# 游戏资源（从 Minecraft 提取，按 Mojang EULA 不随仓库分发）
 /assets/
 
-# Root-level test screenshots
+# 根目录的测试截图
 /*.png
 
-# External SFX tool (7-Zip drop-in), not part of the source tree
+# 外部 SFX 工具（7-Zip 运行库），不属于源码
 /7-Zip/
 
-# Compiled objects / libraries / executables
+# 编译产物
 *.o
 *.obj
 *.exe
@@ -18,7 +18,7 @@
 *.lib
 *.dll
 
-# IDE / editor configs
+# 编辑器 / IDE 配置
 .vscode/
 .idea/
 .vs/
@@ -29,17 +29,17 @@
 *.vcxproj
 *.vcxproj.filters
 
-# CMake user presets
+# CMake 用户配置
 CMakeUserPresets.json
 
-# OS junk
+# 系统垃圾文件
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Logs
+# 日志
 *.log
 
-# Local release artifacts (not redistributable builds)
+# 本地打包产物
 /releases/
 /perf_artifacts/

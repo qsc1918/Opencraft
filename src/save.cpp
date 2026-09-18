@@ -29,10 +29,10 @@ static fs::path levelPath(const std::string& name, const std::string& dir) {
     return u8(dir) / u8(name) / "level.dat";
 }
 
-// ---- Binary format ----
-// Header: magic(4) version(4) seed(4) spawnX(4) spawnY(4) spawnZ(4)
-//         yaw(4) pitch(4) flying(4) numChunks(4) = 44 bytes
-// Per chunk: cx(4) cz(4) blocks[65536] = 65544 bytes
+// ---- 二进制格式 ----
+// 文件头: magic(4) version(4) seed(4) spawnX(4) spawnY(4) spawnZ(4)
+//         yaw(4) pitch(4) flying(4) numChunks(4) = 44 字节
+// 每区块: cx(4) cz(4) blocks[65536] = 65544 字节
 static constexpr uint32_t SAVE_MAGIC = 0x564D5356; // "VMSV"
 static constexpr uint32_t SAVE_VERSION = 2;
 
@@ -73,7 +73,7 @@ bool saveWorld(World& world, const Player& player, const std::string& name,
         std::ofstream f(levelPath(name, dir), std::ios::binary | std::ios::trunc);
         if (!f) return false;
 
-        // header
+        // 文件头
         uint32_t magic = SAVE_MAGIC;
         uint32_t version = SAVE_VERSION;
         uint32_t seed = world.seed;
@@ -90,7 +90,7 @@ bool saveWorld(World& world, const Player& player, const std::string& name,
         f.write((char*)&pitch, 4);
         f.write((char*)&flying, 4);
 
-        // collect all chunks
+        // 收集所有区块
         struct ChunkEntry { int32_t cx, cz; const uint8_t* data; };
         std::vector<ChunkEntry> entries;
         world.forEachChunk([&](std::shared_ptr<Chunk>& c, int cx, int cz) {
@@ -127,7 +127,7 @@ bool loadWorld(World& world, uint32_t& seed, float& spawnX, float& spawnY, float
     f.read((char*)&spawnY, 4);
     f.read((char*)&spawnZ, 4);
 
-    // v2 added player view/fly state. Old v1 saves omit the 12 bytes.
+    // v2 起才写玩家视角/飞行状态；v1 存档没有这 12 字节。
     yaw = 0.0f;
     pitch = -0.1f;
     flying = false;

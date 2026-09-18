@@ -23,7 +23,7 @@ static const float EPS = 1e-4f;
 void Player::update(Input& in, World& world, float dt) {
     if (dt > 0.05f) dt = 0.05f;
 
-    // toggle fly: double-tap space (creative, like vanilla)
+    // 切换飞行：双击空格（创造模式，同原版）
     bool space = in.keys[VK_SPACE];
     spaceTapTimer_ += dt;
     if (space && !spaceHeld_) {
@@ -73,26 +73,26 @@ void Player::update(Input& in, World& world, float dt) {
         }
     }
 
-    // integrate with collision (cam.pos is the eye position; feet = eye - eyeHeight)
+    // 带碰撞推进（cam.pos 是眼位；脚部 = 眼位 - 眼高）
     Vec3 p = cam.pos;
     float hw = halfWidth, hh = height;
     float feetY = p.y - eyeHeight;
 
-    // X axis
+    // X 轴
     p.x += vel.x * dt;
     if (collides(world, p.x - hw, feetY, p.z - hw, p.x + hw, feetY + hh, p.z + hw)) {
         if (vel.x > 0) p.x = std::floor(p.x + hw) - hw - EPS;
         else if (vel.x < 0) p.x = std::ceil(p.x - hw) + hw + EPS;
         vel.x = 0;
     }
-    // Z axis
+    // Z 轴
     p.z += vel.z * dt;
     if (collides(world, p.x - hw, feetY, p.z - hw, p.x + hw, feetY + hh, p.z + hw)) {
         if (vel.z > 0) p.z = std::floor(p.z + hw) - hw - EPS;
         else if (vel.z < 0) p.z = std::ceil(p.z - hw) + hw + EPS;
         vel.z = 0;
     }
-    // Y axis
+    // Y 轴
     p.y += vel.y * dt;
     feetY = p.y - eyeHeight;
     bool grounded = false;
@@ -107,7 +107,7 @@ void Player::update(Input& in, World& world, float dt) {
     }
     onGround = grounded;
 
-    // clamp to world（Y=0 即世界底；MC 1.18+ 主世界底为 Y=-64，见 docs/standards.md）
+    // 限制在世界内（Y=0 是世界底；MC 1.18+ 主世界底为 Y=-64，见 docs/standards.md）
     if (p.y - eyeHeight < WORLD_MIN_Y) { p.y = eyeHeight + WORLD_MIN_Y; vel.y = 0; }
 
     cam.pos = p;
@@ -115,7 +115,7 @@ void Player::update(Input& in, World& world, float dt) {
 }
 
 void Player::syncEntity() {
-    ent.id = 1;                    // 玩家固定 ID（非 World 管理）
+    ent.id = 1;                    // 玩家 ID 固定（不由 World 管理）
     ent.kind = EntityKind::Generic;
     ent.type = &ENTITY_PLAYER;
     ent.pos = Vec3(cam.pos.x, cam.pos.y - eyeHeight, cam.pos.z); // 眼睛 → 脚部中心

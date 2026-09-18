@@ -1,13 +1,7 @@
-// extract_assets.cpp
-// Small utility: pick a Minecraft .jar and extract the block + GUI textures this game
-// needs into assets/ next to the executable.
-//
-// Build:
-//   g++ tools/extract_assets.cpp -o extract_assets.exe -lcomdlg32
-// Run:
-//   extract_assets.exe [path/to/minecraft.jar]
-//
-// Extracted files are Minecraft assets and must NOT be redistributed (Mojang EULA).
+// extract_assets.cpp — 从官方 minecraft.jar 提取方块/GUI/物品贴图到 exe 旁的 assets/
+// 编译: g++ tools/extract_assets.cpp -o extract_assets.exe -lcomdlg32
+// 用法: extract_assets.exe [minecraft.jar 路径]
+// 注意: 贴图属于 Minecraft 资源，不得再分发（遵守 Mojang EULA）
 
 #include <windows.h>
 #include <cstdio>
@@ -18,14 +12,14 @@
 
 namespace fs = std::filesystem;
 
-// (path inside the jar, destination relative path under assets/)
+// jar 内路径 → assets/ 下的相对路径
 struct AssetEntry {
     const char* src;
     const char* dst;
 };
 
 static const AssetEntry kAssets[] = {
-    // block textures (assets/block)
+    // 方块贴图（assets/block）
     {"assets/minecraft/textures/block/grass_block_top.png",       "block/grass_block_top.png"},
     {"assets/minecraft/textures/block/grass_block_side.png",       "block/grass_block_side.png"},
     {"assets/minecraft/textures/block/dirt.png",                   "block/dirt.png"},
@@ -47,10 +41,8 @@ static const AssetEntry kAssets[] = {
     {"assets/minecraft/textures/block/snow.png",                   "block/snow.png"},
     {"assets/minecraft/textures/block/glass.png",                  "block/glass.png"},
     {"assets/minecraft/textures/block/white_concrete.png",         "block/white_concrete.png"},
-    // nether + end block textures (B4/B5)
-    // 1.21.4 里部分贴图改了名：nether_brick->nether_bricks,
-    // end_portal_frame->end_portal_frame_top/side/eye.
-    // end_portal / end_gateway 在 1.21.4 里是 entity 贴图，我们用程序化纹理兜底。
+    // 下界/末地方块贴图；1.21.4 起部分贴图改名（nether_bricks、
+    // end_portal_frame_top/eye）；end_portal / end_gateway 是 entity 贴图，用程序化纹理兜底
     {"assets/minecraft/textures/block/netherrack.png",             "block/netherrack.png"},
     {"assets/minecraft/textures/block/soul_sand.png",              "block/soul_sand.png"},
     {"assets/minecraft/textures/block/glowstone.png",              "block/glowstone.png"},
@@ -61,7 +53,7 @@ static const AssetEntry kAssets[] = {
     {"assets/minecraft/textures/block/end_stone.png",              "block/end_stone.png"},
     {"assets/minecraft/textures/block/end_portal_frame_top.png",   "block/end_portal_frame.png"},
     {"assets/minecraft/textures/block/dragon_egg.png",             "block/dragon_egg.png"},
-    // GUI textures (assets/gui)
+    // GUI 贴图（assets/gui）
     {"assets/minecraft/textures/gui/sprites/widget/button.png",               "gui/button.png"},
     {"assets/minecraft/textures/gui/sprites/widget/button_highlighted.png",   "gui/button_highlighted.png"},
     {"assets/minecraft/textures/gui/sprites/widget/text_field.png",           "gui/text_field.png"},
@@ -85,7 +77,7 @@ static std::string pickJarFile() {
 }
 
 static std::string outputRoot() {
-    // write assets/ next to this executable (place extract_assets.exe in the project root)
+    // 输出到 exe 所在目录的 assets/（把 extract_assets.exe 放在项目根目录）
     char buf[MAX_PATH];
     GetModuleFileNameA(nullptr, buf, MAX_PATH);
     std::string p(buf);
@@ -100,7 +92,7 @@ static bool runTar(const std::string& jar, const std::string& outDir) {
     return system(cmd.c_str()) == 0;
 }
 
-// 物品贴图（1.0 时代装备体系）: assets/minecraft/textures/item/*.png -> assets/item/
+// 物品贴图：assets/minecraft/textures/item/*.png → assets/item/
 static void appendItemEntries(std::vector<AssetEntry>& out) {
     static const char* kToolTiers[] = {"wooden", "stone", "iron", "golden", "diamond"};
     static const char* kToolKinds[] = {"pickaxe", "axe", "shovel", "sword"};
@@ -143,13 +135,13 @@ int main(int argc, char** argv) {
 
     bool haveOldTextField = false;
     {
-        // check which text_field path exists in this jar
+        // 检查该 jar 用的是哪个 text_field 路径
         std::string chk = "tar -tf \"" + jar + "\" 2>nul | findstr /C:\"textures/gui/sprites/widget/text_field.png\" >nul";
         haveOldTextField = system(chk.c_str()) == 0;
         (void)haveOldTextField;
     }
 
-    fs::path tmp = fs::temp_directory_path() / "voxmine_assets";
+    fs::path tmp = fs::temp_directory_path() / "opencraft_assets";
     fs::remove_all(tmp);
     fs::create_directories(tmp);
 
@@ -169,7 +161,7 @@ int main(int argc, char** argv) {
         fs::path dst = dstRoot / e.dst;
         fs::create_directories(dst.parent_path());
         if (!fs::exists(src)) {
-            // fallback: the dark text field path
+            // 旧版 text_field 路径兜底
             fs::path alt = tmp / "assets/minecraft/textures/gui/sprites/widget/text_field.png";
             if (std::string(e.src).find("text_field") != std::string::npos && fs::exists(alt)) {
                 src = alt;

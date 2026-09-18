@@ -1,8 +1,8 @@
 ;!@Install@!UTF-8!
-Title="VoxMine Installer"
-BeginPrompt="VoxMine will be extracted to a VoxMine folder next to this file."
-RunProgram="VoxMine\extract_assets.exe"
+Title="Opencraft Installer"
+BeginPrompt="Opencraft 将解压到本文件旁边的 Opencraft 文件夹。"
+RunProgram="Opencraft\extract_assets.exe"
 GUIMode="2"
 InstallPath=""
-ExtractDialogText="Extracting VoxMine..."
+ExtractDialogText="Extracting Opencraft..."
 ;!@InstallEnd@!

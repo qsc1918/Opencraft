@@ -26,10 +26,10 @@ const Ore kOres[] = {
 inline uint8_t& ref(uint8_t* b, int x, int y, int z) { return b[x + (z << 4) + (y << 8)]; }
 
 struct SurfaceInfo {
-    int height;      // topmost terrain block y
-    bool ocean;      // height < SEA_LEVEL
-    bool desert;     // hot
-    bool cold;       // snowy
+    int height;      // 地表最高方块 y
+    bool ocean;      // 条件：height < SEA_LEVEL
+    bool desert;     // 炎热
+    bool cold;       // 寒冷
 };
 
 SurfaceInfo surfaceFor(const Noise& temp, const Noise& moist, int wx, int wz, int height) {
@@ -46,14 +46,14 @@ void placeTree(uint8_t* b, int wx, int wz, int rootY, Rng& rng) {
     int cxBase = (wx & 15);
     int czBase = (wz & 15);
     int trunk = 4 + rng.irange(0, 2);
-    // trunk first (so leaves never replace it)
+    // 先放树干，避免之后被树叶覆盖
     for (int i = 0; i < trunk; i++) {
         int y = rootY + 1 + i;
         if (y < 2 || y >= WORLD_HEIGHT) continue;
         uint8_t& t = ref(b, cxBase, y, czBase);
         if (t == B_AIR || t == B_WATER) t = B_LOG;
     }
-    // leaves
+    // 树叶
     for (int dy = -2; dy <= 1; dy++) {
         int ly = rootY + trunk + dy;
         if (ly < 2 || ly >= WORLD_HEIGHT) continue;
@@ -62,7 +62,7 @@ void placeTree(uint8_t* b, int wx, int wz, int rootY, Rng& rng) {
             for (int dz = -r; dz <= r; dz++) {
                 int x = cxBase + dx, z = czBase + dz;
                 if (x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE) continue;
-                if (dx == 0 && dz == 0 && dy <= 0) continue; // trunk space (dy=1 caps the trunk top)
+                if (dx == 0 && dz == 0 && dy <= 0) continue; // 留出树干位置（dy=1 封顶）
                 if (dx * dx + dz * dz > r * r + 1) continue;
                 uint8_t cur = ref(b, x, ly, z);
                 if (cur == B_AIR || cur == B_WATER) ref(b, x, ly, z) = B_LEAVES;
@@ -71,15 +71,15 @@ void placeTree(uint8_t* b, int wx, int wz, int rootY, Rng& rng) {
     }
 }
 
-} // namespace
+} // 匿名命名空间
 
 // ===========================================================================
-// Nether generator (旧版设计: Alpha/Beta 风格，无要塞)
-// - 3D 噪声洞穴：netherrack 实心 + 噪声挖空
-// - 基岩地板 y=0 + 基岩天花板 y=127
+// 下界生成（旧版设计：Alpha/Beta 风格，无要塞）
+// - 3D 噪声：netherrack 实心 + 噪声挖空
+// - 基岩地板 y=0、天花板 y=127
 // - 岩浆海 y≤31
 // - 萤石簇挂在天花板下方
-// - 灵魂沙小块区域
+// - 小块灵魂沙
 // ===========================================================================
 void gen::generateNether(uint32_t seed, int cx, int cz, uint8_t* out) {
     std::fill(out, out + CHUNK_VOL, (uint8_t)B_AIR);
@@ -109,7 +109,7 @@ void gen::generateNether(uint32_t seed, int cx, int cz, uint8_t* out) {
                 float n = nethN.fbm3(wxn, wyn, wzn, 4, 2.0f, 0.5f);
                 float cave = caveN.fbm3(wx * 0.05f, y * 0.08f, wz * 0.05f, 3, 2.0f, 0.5f);
 
-                // 密实区域：中心层 (y=40..80) 最密，向两侧递减
+                // 中心层 (y=40..80) 最密，向两侧递减
                 float density = 0.45f;
                 if (y < 40) density -= (40 - y) * 0.008f;
                 if (y > 80) density -= (y - 80) * 0.01f;
@@ -152,17 +152,17 @@ void gen::generateNether(uint32_t seed, int cx, int cz, uint8_t* out) {
 }
 
 // ===========================================================================
-// End generator (最新机制)
-// - 主岛: end_stone 圆形岛屿 (半径 ~100, Perlin 噪声起伏)
-// - 10 根黑曜石柱 (半径 43 范围内, 高度 76-103, 2 根有铁笼)
-// - 出口传送门: 5×5 基岩平台 y=63 + 中心柱到 y=67
-// - 折跃门: 环绕岛屿 (max 20, 简化为静态生成)
+// 末地生成（最新机制）
+// - 主岛：end_stone 圆形岛屿（半径 ~100，Perlin 起伏）
+// - 10 根黑曜石柱（半径 43 内，高 76-103，2 根带铁笼）
+// - 出口传送门：5×5 基岩平台 y=63，中心柱到 y=67
+// - 折跃门：环绕岛屿（最多 20，简化为静态生成）
 // ===========================================================================
 
-// 末地柱子参数：固定位置 (半径 ~43, 角度分布)
+// 末地柱参数：固定半径 ~43，按角度分布
 struct EndPillar {
     float angle;   // 弧度
-    int height;    // 总高度（从 y=0 到 y=height）
+    int height;    // 总高度（y=0 到 y=height）
     bool caged;    // 是否有铁笼保护水晶
 };
 
@@ -185,7 +185,7 @@ void gen::generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
 
     int baseWX = cx * CHUNK_SIZE, baseWZ = cz * CHUNK_SIZE;
 
-    // 主岛中心在 (0,0)，半径 ~100，Perlin 噪声起伏
+    // 主岛中心 (0,0)，半径 ~100，Perlin 起伏
     float islandRadius = 100.0f;
 
     for (int lx = 0; lx < CHUNK_SIZE; lx++) {
@@ -215,19 +215,19 @@ void gen::generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
         }
     }
 
-    // 放置 10 根黑曜石柱（世界坐标固定，只在对应区块放置）
+    // 10 根黑曜石柱坐标固定，只在所属区块内放置
     for (const auto& p : kPillars) {
         int worldPx = (int)(cosf(p.angle) * 43.0f);
         int worldPz = (int)(sinf(p.angle) * 43.0f);
-        // 柱子的世界坐标 (worldPx, worldPz)，检查是否落在当前区块内
+        // 判断柱子的世界坐标是否落在本区块
         int localPx = worldPx - baseWX;
         int localPz = worldPz - baseWZ;
         if (localPx < 0 || localPx >= CHUNK_SIZE || localPz < 0 || localPz >= CHUNK_SIZE) continue;
-        // 柱子从 y=1 到 y=height，直径 1 (单方块柱)
+        // 单方块柱：y=1 到 y=height
         for (int y = 1; y <= p.height && y < WORLD_HEIGHT; y++) {
             ref(out, localPx, y, localPz) = B_OBSIDIAN;
         }
-        // 铁笼：如果 caged，在柱顶周围放铁块
+        // caged 时在柱顶周围放铁块
         if (p.caged) {
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dz = -1; dz <= 1; dz++) {
@@ -244,8 +244,8 @@ void gen::generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
         }
     }
 
-    // 出口传送门：5×5 基岩平台 y=63（只在 chunk(0,0) 生成，否则每个 chunk 都会有一个）
-    // MC: 底部 5×5 基岩框架, 中心 3×3 end_portal, 顶部基岩柱到 y=67
+    // 出口传送门：5×5 基岩平台 y=63（只在 chunk(0,0) 生成，否则每块都有）
+    // 原版结构：底部 5×5 基岩框架，中心 3×3 end_portal，顶部基岩柱到 y=67
     if (cx == 0 && cz == 0) {
         for (int dx = -2; dx <= 2; dx++) {
             for (int dz = -2; dz <= 2; dz++) {
@@ -267,7 +267,7 @@ void gen::generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
                 ref(out, 8, y, 8) = B_BEDROCK;
             }
         }
-        // 龙蛋放在 y=68（出口柱顶端）- 由主循环在杀死龙后放置
+        // 龙蛋在 y=68（出口柱顶端），由主循环杀死龙后放置
     }
 }
 
@@ -291,17 +291,16 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
 
     int baseWX = cx * CHUNK_SIZE, baseWZ = cz * CHUNK_SIZE;
 
-    // Precompute per-column surface height for the cave pass (avoids a
-    // 16×16×128 full scan later). At this point the topmost non-air block per
-    // column is exactly `height` (≥5) or bedrock at y=4 for very low terrain (height<5).
+    // 预计算每列地表高度供洞穴阶段使用，省掉之后 16×16×128 全扫描。
+    // 此时每列最高非空气块就是 height（≥5）；地形极低时 (height<5) 为 y=4 基岩。
     int localTop[CHUNK_SIZE][CHUNK_SIZE];
 
     for (int lx = 0; lx < CHUNK_SIZE; lx++) {
         for (int lz = 0; lz < CHUNK_SIZE; lz++) {
             int wx = baseWX + lx, wz = baseWZ + lz;
 
-            // layered heightmap. Use a smooth value-noise pyramid so adjacent
-            // columns step by at most 1-2 blocks each (no terraced canyons).
+            // 分层高度图：用平滑噪声金字塔，使相邻列落差最多 1-2 格，
+            // 避免出现阶梯状峡谷。
             float continents = n1.fbm2(wx * 0.004f, wz * 0.004f, 3, 2.0f, 0.5f);
             float hills = n2.fbm2(wx * 0.012f, wz * 0.012f, 4, 2.0f, 0.5f);
             float detail = n3.fbm2(wx * 0.045f, wz * 0.045f, 2, 2.0f, 0.5f);
@@ -313,21 +312,21 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
 
             SurfaceInfo si = surfaceFor(tempN, moistN, wx, wz, height);
 
-            // bedrock
+            // 基岩层
             ref(out, lx, 0, lz) = B_BEDROCK;
             for (int y = 1; y <= 4; y++) {
                 float chance = 0.9f - y * 0.18f;
-                // deterministic per block
+                // 逐方块确定性随机
                 uint32_t hsh = hash32((uint32_t)wx * 0x9e3779b9U ^ (uint32_t)wz ^ (uint32_t)(y * 97)) * 0x85ebca6bU;
                 float r = (hsh & 0xFFFF) * (1.0f / 65535.0f);
                 ref(out, lx, y, lz) = r < chance ? B_BEDROCK : B_STONE;
             }
 
-            // base fill
+            // 基础填充
             for (int y = 5; y <= height; y++)
                 ref(out, lx, y, lz) = B_STONE;
 
-            // surface materials
+            // 地表材质
             if (si.ocean) {
                 int floorY = height;
                 uint8_t mat = si.cold ? B_GRAVEL : B_SAND;
@@ -347,7 +346,7 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
         }
     }
 
-    // caves (3D) — localTop already computed from height during the column fill.
+    // 洞穴 (3D)：localTop 已在填列阶段算好
     for (int y = 3; y < 90; y++) {
         for (int lx = 0; lx < CHUNK_SIZE; lx++) {
             for (int lz = 0; lz < CHUNK_SIZE; lz++) {
@@ -367,7 +366,7 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
         }
     }
 
-    // ores
+    // 矿石
     Rng rng((uint64_t)seed * 0x100000001ULL ^ ((uint64_t)(uint32_t)cx << 32) ^ (uint32_t)cz ^ 0x6a09e667ULL);
     for (const Ore& ore : kOres) {
         for (int t = 0; t < ore.tries; t++) {
@@ -383,7 +382,7 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
         }
     }
 
-    // trees
+    // 树木
     for (int lx = 0; lx < CHUNK_SIZE; lx++) {
         for (int lz = 0; lz < CHUNK_SIZE; lz++) {
             int wx = baseWX + lx, wz = baseWZ + lz;
@@ -394,7 +393,7 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
             if (height < SEA_LEVEL) continue;
             uint8_t top = ref(out, lx, height, lz);
             if (top != B_GRASS && top != B_SNOW) continue;
-            // avoid chunk borders so trees never cross into neighbors
+            // 避开区块边界，防止树跨到邻块
             if (lx < 2 || lx >= CHUNK_SIZE - 2 || lz < 2 || lz >= CHUNK_SIZE - 2) continue;
             SurfaceInfo si = surfaceFor(tempN, moistN, wx, wz, height);
             if (si.desert) continue;
@@ -409,15 +408,13 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
         }
     }
 
-    // water fill. Ocean/lake columns (terrain surface below sea level) flood fully;
-    // on land columns the air below sea level is carved cave air, which we flood
-    // only ~20% of the time (low-frequency noise -> wet cave patches, most caves dry)
-    // so the underground isn't a giant lake like vanilla aquifers.
+    // 注水：海/湖列（地表低于海平面）整列灌满；陆地上低于海平面的空气
+    // 多是洞穴，只按低频噪声约 20% 注水，避免地下变成原版含水层那样的大湖。
     Noise waterN(seed ^ 0xb5297a4dU);
     for (int lx = 0; lx < CHUNK_SIZE; lx++) {
         for (int lz = 0; lz < CHUNK_SIZE; lz++) {
             int wx = baseWX + lx, wz = baseWZ + lz;
-            // topmost naturally-solid block = terrain surface (caves are air below it)
+            // 最高自然实心块即地表（其下洞穴已是空气）
             int top = WORLD_HEIGHT - 1;
             while (top >= 0) {
                 uint8_t b = ref(out, lx, top, lz);
@@ -438,4 +435,4 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
     }
 }
 
-} // namespace gen
+} // 命名空间 gen

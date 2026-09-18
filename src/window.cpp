@@ -21,8 +21,8 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         case WM_KEYDOWN:
             if (g_input && wParam < 256) {
-                // lParam bit 30 is set on auto-repeat. Suppress repeats so text
-                // entry advances one character per physical key press.
+                // lParam 第 30 位表示自动重复；必须过滤，否则文本输入
+                // 一次物理按键会输入多个字符。
                 bool autorepeat = (lParam & (1L << 30)) != 0;
                 if (!autorepeat) g_input->pressed[wParam] = true;
                 g_input->keys[wParam] = true;
@@ -52,20 +52,20 @@ bool Window::init(int w, int h, const char* title) {
     wc.lpfnWndProc = wndProc;
     wc.hInstance = inst;
     wc.hCursor = LoadCursorA(nullptr, (LPCSTR)IDC_ARROW);
-    wc.lpszClassName = L"VoxMineWnd";
+    wc.lpszClassName = L"OpencraftWnd";
     RegisterClassW(&wc);
     g_input = &in_;
     g_window = this;
 
     RECT rc = {0, 0, w, h};
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-    HWND hwnd = CreateWindowExW(0, L"VoxMineWnd", L"VoxMine", WS_OVERLAPPEDWINDOW,
+    HWND hwnd = CreateWindowExW(0, L"OpencraftWnd", L"Opencraft", WS_OVERLAPPEDWINDOW,
                                 CW_USEDEFAULT, CW_USEDEFAULT,
                                 rc.right - rc.left, rc.bottom - rc.top,
                                 nullptr, nullptr, inst, nullptr);
     if (!hwnd) return false;
     hwnd_ = hwnd;
-    // Set initial title as wide string for proper Unicode display
+    // 标题需转宽字符，否则 Unicode 显示乱码
     int wlen = MultiByteToWideChar(CP_UTF8, 0, title, -1, nullptr, 0);
     if (wlen > 1) {
         std::wstring wtitle(wlen - 1, 0);

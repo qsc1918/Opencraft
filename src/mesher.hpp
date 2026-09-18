@@ -1,5 +1,5 @@
 #pragma once
 #include "world.hpp"
 
-// Builds opaque + water mesh data for a chunk from its local block view.
+// 用区块本地方块视图构建不透明层与水面网格数据。
 ChunkMeshData buildChunkMesh(const MeshView& view);

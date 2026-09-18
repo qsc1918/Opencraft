@@ -9,7 +9,7 @@
 
 struct Window;
 
-// Full Vulkan context: instance, device, swapchain, sync primitives.
+// 完整 Vulkan 上下文：实例、设备、交换链、同步原语。
 struct VkCtx {
     VkInstance instance = VK_NULL_HANDLE;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
@@ -31,9 +31,9 @@ struct VkCtx {
     std::vector<VkFramebuffer> framebuffers;
 
     VkCommandPool cmdPool = VK_NULL_HANDLE;
-    // One command buffer per frame in flight. The renderer and menu submit one
-    // frame per slot, so slot N is only reset after slot N's fence is signalled
-    // (see acquireNext), allowing CPU/GPU overlap.
+    // 每个在飞帧一个命令缓冲。渲染器与菜单每槽提交一帧，
+    // 槽 N 的栅栏发出后才重置该槽（见 acquireNext），
+    // 以此让 CPU 与 GPU 重叠。
     static const int MAX_FRAMES_IN_FLIGHT = 2;
     std::vector<VkCommandBuffer> cmds;
 
@@ -42,11 +42,11 @@ struct VkCtx {
         VkSemaphore done = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
     };
-    std::vector<Frame> frames; // size == MAX_FRAMES_IN_FLIGHT
+    std::vector<Frame> frames; // 大小 == MAX_FRAMES_IN_FLIGHT
 
     bool ok = false;
     bool vsync = true;
-    int desiredGpuIndex = -1; // >=0 forces that physical device index (--gpu-index)
+    int desiredGpuIndex = -1; // >=0 时强制用该物理设备序号（--gpu-index）
     std::string lastError;
 
     bool init(Window& win, int w, int h);
@@ -57,7 +57,7 @@ struct VkCtx {
     void createDepth();
     void destroyDepth();
 
-    // submits the recorded command buffer and presents; returns false if swapchain is stale.
+    // 提交已录制的命令缓冲并呈现；交换链过期时返回 false。
     bool presentImage(uint32_t imageIndex, Frame& f, VkCommandBuffer cmd);
     bool acquireNext(Frame& f, uint32_t& imageIndex);
 
