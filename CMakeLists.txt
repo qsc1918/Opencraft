@@ -92,3 +92,39 @@ add_custom_command(TARGET opencraft POST_BUILD
   # 编译结束后更新标记文件，使下次构建必然重编 version.cpp
   COMMAND ${CMAKE_COMMAND} -E touch ${VERSION_STAMP}
 )
+
+# ---- 附带的小工具（打包安装包要用）----
+# 资源提取工具：控制台程序，从玩家的 minecraft.jar 提取贴图
+add_executable(extract_assets tools/extract_assets.cpp)
+target_link_libraries(extract_assets PRIVATE comdlg32)
+
+# ---- 打包自解压安装包（7-Zip SFX）----
+# 需要仓库根目录有 7-Zip\（本地产物，不入库）；默认每次构建后自动打包
+option(OPENCRAFT_AUTO_PACKAGE "每次构建后自动打包安装包" ON)
+
+add_custom_target(package_7z
+  COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+          -File ${CMAKE_CURRENT_SOURCE_DIR}/tools/pack_7z.ps1
+          -BuildDir ${CMAKE_CURRENT_BINARY_DIR}
+          -OutDir ${CMAKE_CURRENT_SOURCE_DIR}/releases
+  COMMENT "打包自解压安装包（releases/Opencraft-Installer.exe）"
+  VERBATIM
+)
+add_dependencies(package_7z opencraft extract_assets)
+
+# 自动打包：没有 7-Zip 时只警告不报错（-Optional），不打断正常构建
+add_custom_target(package_7z_auto
+  COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+          -File ${CMAKE_CURRENT_SOURCE_DIR}/tools/pack_7z.ps1
+          -BuildDir ${CMAKE_CURRENT_BINARY_DIR}
+          -OutDir ${CMAKE_CURRENT_SOURCE_DIR}/releases
+          -Optional
+  COMMENT "自动打包安装包（没有 7-Zip 就跳过）"
+  VERBATIM
+)
+add_dependencies(package_7z_auto opencraft extract_assets)
+
+if(OPENCRAFT_AUTO_PACKAGE)
+  add_custom_target(package_auto ALL)
+  add_dependencies(package_auto package_7z_auto)
+endif()

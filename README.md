@@ -19,6 +19,28 @@ cmake --build build
 > `assets/` 里的贴图从 Minecraft 官方 jar 提取，按 Mojang EULA 不随仓库分发。
 > 请用 `tools/extract_assets` 从你自己的 Minecraft 安装中提取。
 
+## 打包自解压安装包
+
+用官方 7-Zip SFX 模块打包，需要仓库根目录有 `7-Zip\`（含 `7z.exe` 和 `7z.sfx`，
+本地产物、不入库）。默认每次 `cmake --build build` 之后自动生成
+`releases/Opencraft-Installer.exe`；没有 `7-Zip\` 时只警告并跳过，不影响构建。
+不想要自动打包就关掉：
+
+```sh
+cmake -S . -B build -DOPENCRAFT_AUTO_PACKAGE=OFF
+```
+
+按需/手动打包：
+
+```sh
+cmake --build build --target package_7z    # releases/Opencraft-Installer.exe
+powershell -File tools\pack_7z.ps1         # 也可以直接跑脚本，参数见脚本头部
+```
+
+安装包不含 `assets/`（遵守 Mojang EULA）；玩家首次运行时用包里的
+`extract_assets.exe` 选择自己的 jar 提取贴图（这个工具由 CMake 从
+`tools/extract_assets.cpp` 构建，产物在 `build/extract_assets.exe`）。
+
 ## 运行
 
 ```sh

@@ -1,5 +1,6 @@
 // extract_assets.cpp — 从官方 minecraft.jar 提取方块/GUI/物品贴图到 exe 旁的 assets/
-// 编译: g++ tools/extract_assets.cpp -o extract_assets.exe -lcomdlg32
+// 编译: 正常流程由 CMake 构建，产物 build/extract_assets.exe
+//       单独编译: g++ tools/extract_assets.cpp -o extract_assets.exe -lcomdlg32
 // 用法: extract_assets.exe [minecraft.jar 路径]
 // 注意: 贴图属于 Minecraft 资源，不得再分发（遵守 Mojang EULA）
 
