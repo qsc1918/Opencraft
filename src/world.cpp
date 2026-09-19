@@ -1,6 +1,7 @@
 #include "world.hpp"
 #include "generator.hpp"
 #include "mesher.hpp"
+#include <windows.h>
 #include <cmath>
 #include <algorithm>
 
@@ -297,6 +298,9 @@ void World::meshChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chu
     auto& d = dims_[dim];
     MeshView view;
     view.blocks.fill(B_AIR);
+    // 读数据前先清 dirty：如果快照/建网格期间又有方块改动，收尾时能发现并补建一次。
+    // 否则"边建网格边改方块"的更新会被丢掉（点燃传送门只显示一部分就是这个原因）。
+    c->dirty.store(false);
 
     // 一次持 mapLock_ 取齐全部邻居，避免反复加锁。
     std::shared_ptr<Chunk> neighbors[4]; // 四邻：+x, -x, +z, -z
@@ -373,16 +377,20 @@ void World::meshChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chu
         std::lock_guard<std::mutex> lk(c->meshLock);
         c->mesh = std::move(mesh);
         c->needsUpload.store(true);
-        c->dirty.store(false);
         c->state.store(2);
     }
     {
         std::lock_guard<std::mutex> lk(queueLock_);
         d.meshing.erase(chunkKey(cx, cz));
     }
+    // 快照之后又有改动：补排一次网格，保证更新不丢
+    if (c->dirty.load()) scheduleMesh(dim, cx, cz);
 }
 
 void World::workerLoop() {
+    // 生成/构网格是纯 CPU 重活：降到低优先级，避免和渲染主线程抢核
+    // （刚进入新维度时的卡顿/未响应主要就是这个）
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     WorldTask t;
     while (popTask(t)) {
         if (t.isMesh)

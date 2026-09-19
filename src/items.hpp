@@ -11,8 +11,8 @@
 // ===========================================================================
 #include <cstdint>
 
-// 图集分配: blocks.hpp 的 T_* 占 0..34，物品图标从此开始。
-inline constexpr uint8_t T_ITEM_BASE = 35;
+// 图集分配: blocks.hpp 的 T_* 占 0..36，物品图标从此开始。
+inline constexpr uint8_t T_ITEM_BASE = 37;
 
 // 工具类型（MC 1.0: 镐/斧/锹/剑）
 enum ToolType : uint8_t {

@@ -16,6 +16,8 @@ layout(set = 0, binding = 0) uniform Ubo {
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    // 图集单元内已有 8px 边缘扩展，配合线性 mip + 各向异性过滤，
+    // 大片平面斜看时不会拉出条纹。
     vec4 c = texture(atlas, vUV);
     if (c.a < 0.3) discard;
     vec3 col = c.rgb * vShade * ubo.day.x;

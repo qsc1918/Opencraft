@@ -74,12 +74,11 @@ void placeTree(uint8_t* b, int wx, int wz, int rootY, Rng& rng) {
 } // 匿名命名空间
 
 // ===========================================================================
-// 下界生成（旧版设计：Alpha/Beta 风格，无要塞）
-// - 3D 噪声：netherrack 实心 + 噪声挖空
-// - 基岩地板 y=0、天花板 y=127
-// - 岩浆海 y≤31
-// - 萤石簇挂在天花板下方
-// - 小块灵魂沙
+// 下界生成（对齐原版风格）
+// - 主体是连成一片的地狱岩，用 3D 噪声挖出大洞穴，而不是零散浮岛
+// - 基岩地板 y=0、天花板 y=127（y=1/126 各 50%）
+// - y≤31 的非实心处灌成岩浆海（顶面平在 y=31）
+// - 萤石簇挂在天花板下方，少量灵魂沙块
 // ===========================================================================
 void gen::generateNether(uint32_t seed, int cx, int cz, uint8_t* out) {
     std::fill(out, out + CHUNK_VOL, (uint8_t)B_AIR);
@@ -94,50 +93,50 @@ void gen::generateNether(uint32_t seed, int cx, int cz, uint8_t* out) {
         for (int lz = 0; lz < CHUNK_SIZE; lz++) {
             int wx = baseWX + lx, wz = baseWZ + lz;
 
-            // 基岩地板 (y=0) 和天花板 (y=127)
+            // 基岩地板 (y=0/1) 和天花板 (y=126/127)：整层实心。
+            // 不要留 50% 随机缺口——那样从下方斜看会露出上层基岩的侧面，
+            // 整片天花板会变成明暗条纹。
             ref(out, lx, 0, lz) = B_BEDROCK;
+            ref(out, lx, 1, lz) = B_BEDROCK;
+            ref(out, lx, 126, lz) = B_BEDROCK;
             ref(out, lx, 127, lz) = B_BEDROCK;
-            // y=1 和 y=126 有 50% 基岩概率（MC 规范）
-            uint32_t h1 = hash32((uint32_t)wx * 0x9e3779b9U ^ (uint32_t)wz ^ (uint32_t)1 * 97);
-            uint32_t h2 = hash32((uint32_t)wx * 0x9e3779b9U ^ (uint32_t)wz ^ (uint32_t)126 * 97);
-            if ((h1 & 1) == 0) ref(out, lx, 1, lz) = B_BEDROCK;
-            if ((h2 & 1) == 0) ref(out, lx, 126, lz) = B_BEDROCK;
 
-            // 3D 噪声确定 netherrack 密实度
+            // 主密度：阈值以下为地狱岩，噪声高处被挖成洞穴。
+            // 分三段：岩浆层最空、中部大洞穴、天花板附近最实。
             for (int y = 2; y <= 125; y++) {
-                float wxn = wx * 0.02f, wyn = y * 0.04f, wzn = wz * 0.02f;
-                float n = nethN.fbm3(wxn, wyn, wzn, 4, 2.0f, 0.5f);
-                float cave = caveN.fbm3(wx * 0.05f, y * 0.08f, wz * 0.05f, 3, 2.0f, 0.5f);
-
-                // 中心层 (y=40..80) 最密，向两侧递减
-                float density = 0.45f;
-                if (y < 40) density -= (40 - y) * 0.008f;
-                if (y > 80) density -= (y - 80) * 0.01f;
-
-                // 合并噪声
-                float val = n * 0.6f + cave * 0.4f;
-                if (val > density) {
+                float n = nethN.fbm3(wx * 0.02f, y * 0.045f, wz * 0.02f, 3, 2.0f, 0.5f);
+                float cave = caveN.fbm3(wx * 0.05f, y * 0.09f, wz * 0.05f, 2, 2.0f, 0.5f);
+                float density;
+                if (y <= 34) density = -0.15f;                       // 岩浆海：大部分是空的
+                else if (y < 44) density = -0.15f + (y - 34) * 0.022f; // 过渡到中部
+                else density = 0.07f;                                // 中部：大洞穴
+                if (y > 100) density += (y - 100) * 0.028f;           // 靠近天花板更实
+                if (n * 0.65f + cave * 0.35f < density) {
                     ref(out, lx, y, lz) = B_NETHERRACK;
-                }
-
-                // 灵魂沙小块区域
-                float sv = soulN.fbm3(wx * 0.03f, y * 0.05f, wz * 0.03f, 2, 2.0f, 0.5f);
-                if (sv > 0.65f && ref(out, lx, y, lz) == B_NETHERRACK) {
-                    ref(out, lx, y, lz) = B_SOUL_SAND;
                 }
             }
 
-            // 岩浆海 y≤31（填满空气区域）
+            // 岩浆海 y≤31：非实心处灌岩浆，表面平在 y=31
             for (int y = 2; y <= 31; y++) {
                 if (ref(out, lx, y, lz) == B_AIR) {
                     ref(out, lx, y, lz) = B_LAVA;
                 }
             }
 
+            // 灵魂沙：地狱岩表层成片的区域（对齐原版灵魂沙峡谷）
+            float sv = soulN.fbm3(wx * 0.02f, 48.0f, wz * 0.02f, 2, 2.0f, 0.5f);
+            if (sv > 0.35f) {
+                for (int y = 34; y <= 96; y++) {
+                    if (ref(out, lx, y, lz) != B_NETHERRACK) continue;
+                    if (ref(out, lx, y + 1, lz) != B_AIR) continue;
+                    for (int d = 0; d < 4 && y - d >= 34; d++)
+                        ref(out, lx, y - d, lz) = B_SOUL_SAND;
+                }
+            }
+
             // 萤石簇挂在天花板下方
             float gv = glowN.fbm3(wx * 0.04f, 120.0f, wz * 0.04f, 2, 2.0f, 0.5f);
-            if (gv > 0.6f) {
-                // 找到天花板最下方的实心块
+            if (gv > 0.45f) {
                 for (int y = 125; y >= 80; y--) {
                     if (ref(out, lx, y, lz) == B_NETHERRACK) {
                         if (y + 1 <= 126 && ref(out, lx, y + 1, lz) == B_AIR) {

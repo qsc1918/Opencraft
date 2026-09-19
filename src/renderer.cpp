@@ -460,15 +460,20 @@ void Renderer::createAtlasTexture(VkCtx& ctx) {
 
     VkSamplerCreateInfo sm = {};
     sm.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    sm.magFilter = VK_FILTER_NEAREST;            // 近处保持像素风锐利
-    sm.minFilter = VK_FILTER_NEAREST;            // 选定的 mip 层内用最近邻
-    sm.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST; // 不做 mip 混合，只吃缓存
+    sm.magFilter = VK_FILTER_NEAREST;               // 近处保持像素风
+    sm.minFilter = VK_FILTER_LINEAR;                // 缩小时走 mip，否则大片平面会出条纹走样
+    sm.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;  // mip 层间插值，消除硬边条纹
     sm.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sm.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sm.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sm.anisotropyEnable = VK_FALSE;              // 不模糊，省带宽
+    // 各向异性过滤：大片平面斜着看时，单纯的 mip 只能在两个方向里取一个，
+    // 另一方向会留下条纹状走样（下界的基岩天花板最明显）。
+    sm.anisotropyEnable = VK_TRUE;
+    sm.maxAnisotropy = 16.0f;
     sm.minLod = 0.0f;
-    sm.maxLod = (float)(mips - 1);
+    // 32px 单元里只有 16px 贴图 + 8px 边缘扩展：mip 4 时单元仅剩 2px，
+    // 再往下就会把邻格颜色混进来，所以 LOD 封顶。
+    sm.maxLod = (float)(mips > 5 ? 4 : (mips - 1));
     vkCreateSampler(ctx.device, &sm, nullptr, &atlasSampler_);
 }
 

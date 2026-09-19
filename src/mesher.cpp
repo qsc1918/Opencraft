@@ -39,6 +39,12 @@ inline bool waterCull(uint8_t nb) {
     return nb == B_WATER || blockIsOpaque(nb);
 }
 
+// 流体只保留最上面那一层的顶面：同种流体叠在一起时必须剔除，
+// 否则整片岩浆海每格都出一张共面顶面，会互相 z-fighting 出条纹。
+inline bool fluidCull(uint8_t nb) {
+    return nb == B_WATER || nb == B_LAVA || blockIsOpaque(nb);
+}
+
 const float kAoBright[4] = {0.42f, 0.64f, 0.82f, 1.0f};
 const float kFaceBright[6] = {0.80f, 0.80f, 1.0f, 0.55f, 0.80f, 0.80f};
 const Vec3 kSun(0.42f, 0.82f, 0.32f);
@@ -57,6 +63,11 @@ struct ShadeInit { ShadeInit() {
         }
     }
 } } shadeInit;
+
+// 自发光方块（岩浆/萤石/传送门/火等）不做面光衰减，直接满亮
+inline bool emissiveBlock(uint8_t id) {
+    return id < B_COUNT && BLOCK_DEFS[id].lightEmission >= 10;
+}
 
 inline uint8_t bakeShade(int face, int ao, bool water) {
     return kShade[face][ao][water ? 1 : 0];
@@ -91,8 +102,7 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                 if (id == B_WATER || id == B_LAVA) {
                     // 只出顶面：侧面/底面透过半透明水面看不见，
                     // 还会产生发暗的瑕疵。
-                    if (id == B_WATER && waterCull(view.at(x, y + 1, z))) continue;
-                    if (id == B_LAVA && waterCull(view.at(x, y + 1, z))) continue;
+                    if (fluidCull(view.at(x, y + 1, z))) continue;
                     {
                         int face = F_PY;
                         uint32_t base = (uint32_t)wv.size();
@@ -104,7 +114,7 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                             vt.u = (uint8_t)kU[face][c];
                             vt.v = (uint8_t)kV[face][c];
                             vt.tex = (id == B_LAVA) ? T_LAVA : T_WATER;
-                            vt.shade = bakeShade(face, 3, true);
+                            vt.shade = emissiveBlock(id) ? 255 : bakeShade(face, 3, true);
                             wv.push_back(vt);
                         }
                         wi.push_back(base);
@@ -129,6 +139,10 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
 
                 uint8_t tile = blockTile(id, 0);
                 for (int f = 0; f < 6; f++) {
+                    // 世界最高层的顶面顶点会算到 y=128，而顶点 y 是 int8_t，
+                    // 溢出成 -128 会生成跨越整个世界高度的巨型面（下界天花板
+                    // 全是基岩，就会变成满屏条纹）。顶层顶面本来也看不见。
+                    if (f == F_PY && y >= WORLD_HEIGHT - 1) continue;
                     int dx = kNormal[f][0], dy = kNormal[f][1], dz = kNormal[f][2];
                     uint8_t nb = view.at(x + dx, y + dy, z + dz);
                     if (cullFace(id, nb)) continue;
@@ -143,27 +157,33 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                         vt.u = (uint8_t)kU[f][c];
                         vt.v = (uint8_t)kV[f][c];
                         vt.tex = fTile;
-                        // AO 取样在面的角点层，而非方块原点；顶面即查 y+1，
-                        // 这样平地不会自遮挡。
+                        // AO：在面外侧那一层（法线方向偏移一格）取该角点的
+                        // 两条边邻居 + 对角邻居。旧实现取在本层且整体偏了一格，
+                        // 会让大片平面（如下界基岩天花板）出现条纹状明暗。
                         int a1 = kA1[f], a2 = kA2[f];
-                        int cx = x + kC[f][c][0], cy = y + kC[f][c][1], cz = z + kC[f][c][2];
                         int o1 = kC[f][c][a1] == 1 ? 1 : -1;
                         int o2 = kC[f][c][a2] == 1 ? 1 : -1;
-                        int co[3] = {0,0,0};
+                        int co[3] = {0, 0, 0};
                         co[a1] = o1;
-                        int side1x = cx + co[0], side1y = cy + co[1], side1z = cz + co[2];
+                        int s1x = x + kNormal[f][0] + co[0];
+                        int s1y = y + kNormal[f][1] + co[1];
+                        int s1z = z + kNormal[f][2] + co[2];
                         co[a1] = 0; co[a2] = o2;
-                        int side2x = cx + co[0], side2y = cy + co[1], side2z = cz + co[2];
+                        int s2x = x + kNormal[f][0] + co[0];
+                        int s2y = y + kNormal[f][1] + co[1];
+                        int s2z = z + kNormal[f][2] + co[2];
                         co[a1] = o1; co[a2] = o2;
-                        int diagx = cx + co[0], diagy = cy + co[1], diagz = cz + co[2];
+                        int dxx = x + kNormal[f][0] + co[0];
+                        int dyy = y + kNormal[f][1] + co[1];
+                        int dzz = z + kNormal[f][2] + co[2];
 
-                        bool s1 = blockIsOpaque(view.at(side1x, side1y, side1z));
-                        bool s2 = blockIsOpaque(view.at(side2x, side2y, side2z));
-                        bool dd = blockIsOpaque(view.at(diagx, diagy, diagz));
+                        bool s1 = blockIsOpaque(view.at(s1x, s1y, s1z));
+                        bool s2 = blockIsOpaque(view.at(s2x, s2y, s2z));
+                        bool dd = blockIsOpaque(view.at(dxx, dyy, dzz));
                         int ao;
                         if (s1 && s2) ao = 0;
                         else ao = 3 - ((s1 ? 1 : 0) + (s2 ? 1 : 0) + (dd ? 1 : 0));
-                        vt.shade = bakeShade(f, ao, false);
+                        vt.shade = emissiveBlock(id) ? 255 : bakeShade(f, ao, false);
                         ov.push_back(vt);
                     }
                     oi.push_back(base);

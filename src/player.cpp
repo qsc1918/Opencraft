@@ -20,6 +20,12 @@ bool Player::collides(const World& w, float x0, float y0, float z0, float x1, fl
 
 static const float EPS = 1e-4f;
 
+// 该位置是什么流体（水/岩浆），用于游泳与上浮
+static uint8_t fluidAt(const World& w, float fx, float fy, float fz) {
+    uint8_t b = w.getBlock((int)std::floor(fx), (int)std::floor(fy), (int)std::floor(fz));
+    return (b == B_WATER || b == B_LAVA) ? b : (uint8_t)B_AIR;
+}
+
 void Player::update(Input& in, World& world, float dt) {
     if (dt > 0.05f) dt = 0.05f;
 
@@ -37,6 +43,14 @@ void Player::update(Input& in, World& world, float dt) {
     }
     spaceHeld_ = space;
 
+    // 眼位与脚部所在流体：眼睛在水里才算"在水下"（原版同）
+    uint8_t eyeFluid = fluidAt(world, cam.pos.x, cam.pos.y, cam.pos.z);
+    uint8_t feetFluid = fluidAt(world, cam.pos.x, cam.pos.y - eyeHeight + 0.1f, cam.pos.z);
+    uint8_t fluid = eyeFluid ? eyeFluid : feetFluid;
+    bool inLava = fluid == B_LAVA;
+    bool inWater = fluid == B_WATER;
+    bool inFluid = inLava || inWater;
+
     Vec3 fwd = cam.forward();
     Vec3 rt = cam.right();
     Vec3 mv(0, 0, 0);
@@ -48,7 +62,8 @@ void Player::update(Input& in, World& world, float dt) {
     float ml = std::sqrt(mv.x * mv.x + mv.z * mv.z);
     if (ml > 1e-5f) { mv.x /= ml; mv.z /= ml; }
 
-    const float walkSpeed = 4.5f;
+    // 流体里横向移动变慢（岩浆最慢）
+    const float walkSpeed = inLava ? 1.6f : (inWater ? 2.7f : 4.5f);
     const float flySpeed = 20.0f;
 
     if (flying) {
@@ -65,10 +80,13 @@ void Player::update(Input& in, World& world, float dt) {
         float k = 1.0f - std::exp(-12.0f * dt);
         vel.x += (mv.x * walkSpeed - vel.x) * k;
         vel.z += (mv.z * walkSpeed - vel.z) * k;
-        vel.y -= 28.0f * dt;
-        if (vel.y < -40.0f) vel.y = -40.0f;
-        if (in.keys[VK_SPACE] && onGround) {
-            vel.y = 8.5f;
+        // 流体里重力小、下沉慢，按住空格可以上浮（岩浆里也能爬出来）
+        float gravity = inLava ? 4.5f : (inWater ? 9.0f : 28.0f);
+        float maxFall = inLava ? -1.2f : (inWater ? -2.5f : -40.0f);
+        vel.y -= gravity * dt;
+        if (vel.y < maxFall) vel.y = maxFall;
+        if (in.keys[VK_SPACE] && (onGround || inFluid)) {
+            vel.y = inFluid ? (inLava ? 3.2f : 4.0f) : 8.5f;
             onGround = false;
         }
     }

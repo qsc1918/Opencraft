@@ -15,6 +15,8 @@ static const char* kTileFiles[T_COUNT] = {
     "obsidian.png",        "lava_still.png",       "nether_portal.png",
     "end_stone.png",       "end_portal_frame.png", nullptr,            nullptr,
     "dragon_egg.png",      "end_portal_frame_eye.png",
+    "end_portal_frame_side.png",
+    nullptr, // T_FIRE — 程序化
 };
 
 // 物品图标贴图（assets/item/），tile = T_ITEM_BASE + 下标，
@@ -76,6 +78,8 @@ const Tint kTileTint[T_COUNT] = {
     {0.4f, 0.3f, 0.6f},    // 折跃门 → 暗紫灰
     {0.55f, 0.45f, 0.65f}, // 龙蛋 → 暗紫斑点
     {0.8f, 1.0f, 0.3f},    // 末地传送门框架眼 → 亮绿
+    {0.6f, 0.8f, 0.5f},    // 末地传送门框架侧面 → 偏绿
+    {1, 1, 1},             // 火（程序化，自带颜色）
 };
 
 // ---------------------------------------------------------------------------
@@ -280,6 +284,23 @@ static void fillProceduralTile(int t, Atlas& a) {
                 uint8_t b = (uint8_t)(v + 10);
                 // 亮斑点
                 if ((n & 7) == 0) { r += 40; b += 50; }
+                put(t, x, y, r, g, b, 255);
+            }
+        break;
+    }
+    case T_FIRE: {
+        // 火苗：下宽上窄，边缘透明（配合片元着色器的 alpha 剔除）
+        for (int y = 0; y < 16; y++)
+            for (int x = 0; x < 16; x++) {
+                uint8_t n = hval(x, y, 0xD00);
+                int tUp = 15 - y;               // 底部 15，顶部 0
+                int width = 2 + tUp / 4;
+                int dx = x > 7 ? x - 7 : 7 - x;
+                if (dx > width + (n & 3)) { put(t, x, y, 0, 0, 0, 0); continue; }
+                uint8_t r = (uint8_t)(215 + (n & 39));
+                uint8_t g = (uint8_t)(110 + (n & 63));
+                uint8_t b = (uint8_t)(15 + ((n >> 5) & 15));
+                if (dx <= 1) { g = (uint8_t)(g + 70); b = (uint8_t)(b + 50); } // 焰心更亮
                 put(t, x, y, r, g, b, 255);
             }
         break;

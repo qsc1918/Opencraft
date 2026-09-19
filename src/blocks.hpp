@@ -41,7 +41,8 @@ enum Block : uint8_t {
     B_END_GATEWAY      = 29,
     B_DRAGON_EGG       = 30,
     B_END_PORTAL_FRAME_EYE = 31,  // 放了末影之眼的末地传送门框架
-    B_COUNT = 32,
+    B_FIRE = 32,
+    B_COUNT = 33,
 };
 
 // 图集图块 id（建图集时分配）。
@@ -70,7 +71,9 @@ enum Tile : uint8_t {
     T_END_GATEWAY      = 32,
     T_DRAGON_EGG       = 33,
     T_END_PORTAL_FRAME_EYE = 34,  // 放了眼的有眼框架
-    T_COUNT = 35,
+    T_END_PORTAL_FRAME_SIDE = 35, // 末地传送门框架侧面
+    T_FIRE = 36,
+    T_COUNT = 37,
 };
 
 // 面索引（MC 语义: F_PY 顶面, F_NY 底面, ±X/±Z 四侧面）
@@ -130,11 +133,14 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
     /*B_NETHER_PORTAL*/ {"opencraft:nether_portal","传送门", false, false, 11, 0,  T_NETHER_PORTAL, T_NETHER_PORTAL, T_NETHER_PORTAL},
     // --- 末地 ---
     /*B_END_STONE */ {"opencraft:end_stone",     "末地石",   true,  true,  0, 15, T_END_STONE, T_END_STONE, T_END_STONE},
-    /*B_END_PORTAL_FRAME*/ {"opencraft:end_portal_frame","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME},
+    // 框架：顶面与侧面纹理不同，六面都要用对应面的纹理
+    /*B_END_PORTAL_FRAME*/ {"opencraft:end_portal_frame","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME_SIDE, T_END_PORTAL_FRAME_SIDE},
     /*B_END_PORTAL */ {"opencraft:end_portal",   "末地传送门", false, false, 15, 0, T_END_PORTAL, T_END_PORTAL, T_END_PORTAL},
     /*B_END_GATEWAY*/ {"opencraft:end_gateway",  "折跃门",   false, false, 15, 0,  T_END_GATEWAY, T_END_GATEWAY, T_END_GATEWAY},
     /*B_DRAGON_EGG*/ {"opencraft:dragon_egg",    "龙蛋",     true,  true,  1,  15, T_DRAGON_EGG, T_DRAGON_EGG, T_DRAGON_EGG},
-    /*B_END_PORTAL_FRAME_EYE*/ {"opencraft:end_portal_frame_eye","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_EYE},
+    /*B_END_PORTAL_FRAME_EYE*/ {"opencraft:end_portal_frame_eye","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_PORTAL_FRAME_SIDE},
+    // --- 火 ---
+    /*B_FIRE     */ {"opencraft:fire",           "火",       false, false, 15, 0,  T_FIRE,    T_FIRE,    T_FIRE   },
 };
 
 // 注册表访问；越界回落为空气（等价 MC 未知方块容错）。

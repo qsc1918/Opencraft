@@ -25,6 +25,7 @@ struct Args {
     std::string screenshot;
     std::string posStr;
     std::string breakBlock;
+    std::vector<std::string> placeBlocks; // --place x,y,z,id（调试，可多次）
     float yaw = 0.0f, pitch = -0.35f;
     float timeArg = -1.0f;
     int renderDist = 8;
@@ -47,8 +48,9 @@ struct Args {
 
 static Args parseArgs(int argc, char** argv) {
     Args a;
-    a.threads = (int)std::thread::hardware_concurrency();
-    if (a.threads < 1) a.threads = 4;
+    // 留一个核给主线程，否则生成/构网格会把渲染线程挤掉（进新维度时卡顿）
+    a.threads = (int)std::thread::hardware_concurrency() - 1;
+    if (a.threads < 1) a.threads = 1;
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string(); };
@@ -62,6 +64,7 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--frames") a.frames = std::stoi(next());
         else if (arg == "--no-ui") a.noUI = true;
         else if (arg == "--break") a.breakBlock = next();
+        else if (arg == "--place") a.placeBlocks.push_back(next());
         else if (arg == "--time") a.timeArg = std::stof(next());
         else if (arg == "--drive") a.drive = true;
         else if (arg == "--no-vsync") a.noVsync = true;
@@ -236,28 +239,6 @@ int main(int argc, char** argv) {
             if (!a.posStr.empty()) {
                 float x = 0, y = 80, z = 0;
                 if (sscanf(a.posStr.c_str(), "%f,%f,%f", &x, &y, &z) >= 1) player.cam.pos = Vec3(x, y, z);
-                // 调试：在玩家位置生成点燃的竖直下界门。
-                if (a.spawnPortal) {
-                    int pxi = (int)std::floor(player.cam.pos.x);
-                    int pzi = (int)std::floor(player.cam.pos.z);
-                    int baseY = (int)std::floor(player.cam.pos.y - player.eyeHeight);
-                    if (baseY < 4) baseY = 4;
-                    // 门洞对准玩家 x：覆盖 pxi..pxi+1，站立即触发
-                    int fx0 = pxi - 1;
-                    for (int x = fx0; x <= fx0 + 3; x++) {
-                        world->forceGenerateChunk(blockToChunkCoord(x), blockToChunkCoord(pzi));
-                        world->setBlock(x, baseY - 1, pzi, B_OBSIDIAN);
-                        world->setBlock(x, baseY + 3, pzi, B_OBSIDIAN);
-                    }
-                    for (int y = baseY - 1; y <= baseY + 3; y++) {
-                        world->setBlock(fx0, y, pzi, B_OBSIDIAN);
-                        world->setBlock(fx0 + 3, y, pzi, B_OBSIDIAN);
-                    }
-                    for (int x = fx0 + 1; x <= fx0 + 2; x++)
-                        for (int y = baseY; y <= baseY + 2; y++)
-                            world->setBlock(x, y, pzi, B_NETHER_PORTAL);
-                    fprintf(stderr, "[main] spawned demo nether portal at (%d, %d)\n", pxi, pzi);
-                }
             } else {
                 auto hasHeadroom = [&](int x, int z, int surfaceY, int needed) {
                     for (int y = surfaceY + 1; y <= surfaceY + needed; y++) {
@@ -330,6 +311,31 @@ int main(int argc, char** argv) {
                                            (float)spawnZ + 0.5f);
             }
         }
+        // 调试/演示：在玩家前方 3 格生成并点燃一个竖直下界门（两种出生路径都可用）
+        if (a.spawnPortal) {
+            int pxi = (int)std::floor(player.cam.pos.x);
+            int pzi = (int)std::floor(player.cam.pos.z) + 3;
+            int baseY = (int)std::floor(player.cam.pos.y - player.eyeHeight);
+            if (baseY < 4) baseY = 4;
+            // 门洞对准玩家 x：覆盖 pxi..pxi+1，往前走即可触发
+            int fx0 = pxi - 1;
+            for (int x = fx0; x <= fx0 + 3; x++) {
+                world->forceGenerateChunk(blockToChunkCoord(x), blockToChunkCoord(pzi));
+                world->setBlock(x, baseY - 1, pzi, B_OBSIDIAN);
+                world->setBlock(x, baseY + 3, pzi, B_OBSIDIAN);
+            }
+            for (int y = baseY - 1; y <= baseY + 3; y++) {
+                world->setBlock(fx0, y, pzi, B_OBSIDIAN);
+                world->setBlock(fx0 + 3, y, pzi, B_OBSIDIAN);
+            }
+            // 清空门洞（玩家实际建造时也是先挖空再点火）
+            for (int x = fx0 + 1; x <= fx0 + 2; x++)
+                for (int y = baseY; y <= baseY + 2; y++)
+                    world->setBlock(x, y, pzi, B_AIR);
+            // 用打火石那套逻辑点燃（顺便实测点燃逻辑）
+            bool lit = portal::tryLightNetherPortal(*world, fx0 + 1, baseY, pzi);
+            fprintf(stderr, "[main] demo nether portal at (%d,%d) lit=%d\n", pxi, pzi, (int)lit);
+        }
         if (!a.invStart) renderer.setInventoryOpen(false);
         win.setCapture(true);
         ShowCursor(FALSE);
@@ -362,8 +368,51 @@ int main(int argc, char** argv) {
         float px = player.cam.pos.x, py = player.cam.pos.y, pz = player.cam.pos.z;
         if (toDim == DIM_NETHER) { px *= inv; pz *= inv; }
         else if (toDim == DIM_OVERWORLD && fromDim == DIM_NETHER) { px *= scale; pz *= scale; }
+        // Y 按两边的世界高度映射，并把下界落点限制在洞穴带内：
+        // 直接沿用原 Y 会把玩家送到贴着基岩天花板的位置（整片天花板怼脸）。
+        {
+            const DimensionType& toT = getDimensionType(toDim);
+            const DimensionType& fromT = getDimensionType(fromDim);
+            float ratio = (py - fromT.minY) / (float)fromT.height;
+            if (ratio < 0.0f) ratio = 0.0f;
+            if (ratio > 1.0f) ratio = 1.0f;
+            py = toT.minY + ratio * toT.height;
+            if (toDim == DIM_NETHER) {
+                if (py < 32.0f) py = 32.0f;
+                if (py > 96.0f) py = 96.0f;
+            }
+        }
         player.dim = toDim;
         world->setDimension(toDim);
+        // 落点安全化：新维度地形可能是实心的，先把目标区块生成出来，
+        // 再向上找到有 2 格净空的位置，避免玩家直接卡在方块里。
+        world->forceGenerateChunk(blockToChunkCoord((int)std::floor(px)),
+                                  blockToChunkCoord((int)std::floor(pz)));
+        {
+            int bx = (int)std::floor(px), bz = (int)std::floor(pz);
+            auto open = [&](uint8_t b) {
+                return b == B_AIR || b == B_WATER || b == B_LAVA || b == B_NETHER_PORTAL;
+            };
+            // 可站立：脚与头两格净空，且下方有实心块
+            auto standable = [&](int y) {
+                if (y < 2 || y >= WORLD_HEIGHT - 1) return false;
+                if (!open(world->getBlock(bx, y, bz)) || !open(world->getBlock(bx, y + 1, bz)))
+                    return false;
+                uint8_t below = world->getBlock(bx, y - 1, bz);
+                return blockIsSolid(below) || below == B_NETHER_PORTAL;
+            };
+            // 从目标高度向上下找最近的可站立空位（先往下，避免贴在天花板上）
+            int sy = (int)std::floor(py);
+            if (sy < 2) sy = 2;
+            if (sy > WORLD_HEIGHT - 2) sy = WORLD_HEIGHT - 2;
+            int found = -1;
+            for (int d = 0; d < WORLD_HEIGHT; d++) {
+                int down = sy - d, up = sy + d;
+                if (down >= 2 && standable(down)) { found = down; break; }
+                if (up < WORLD_HEIGHT - 1 && standable(up)) { found = up; break; }
+            }
+            if (found > 0) py = (float)found;
+        }
         player.cam.pos = Vec3(px, py, pz);
         player.cam.markDirty();
         player.vel = Vec3(0, 0, 0);
@@ -407,7 +456,18 @@ int main(int argc, char** argv) {
             int bx = 0, by = 0, bz = 0;
             sscanf(a.breakBlock.c_str(), "%d,%d,%d", &bx, &by, &bz);
             fprintf(stderr, "[main] break (%d,%d,%d)\n", bx, by, bz);
+            uint8_t old = world->getBlock(bx, by, bz);
+            portal::onBlockRemoved(*world, bx, by, bz, old);
             world->setBlock(bx, by, bz, B_AIR);
+        }
+        // 调试：放置方块，格式 x,y,z,id（可多次）
+        for (const std::string& p : a.placeBlocks) {
+            int px = 0, py = 0, pz = 0, pid = 0;
+            if (sscanf(p.c_str(), "%d,%d,%d,%d", &px, &py, &pz, &pid) == 4) {
+                world->forceGenerateChunk(blockToChunkCoord(px), blockToChunkCoord(pz));
+                world->setBlock(px, py, pz, (uint8_t)pid);
+                fprintf(stderr, "[main] place (%d,%d,%d)=%d\n", px, py, pz, pid);
+            }
         }
         if (!a.crystalPos.empty()) {
             float x = 12.5f, y = 72.0f, z = 8.5f;
@@ -532,17 +592,25 @@ int main(int argc, char** argv) {
                         entHit->hurt(10.0f); // 攻击水晶造成伤害
                     } else if (hit.hit) {
                         uint8_t t = world->getBlock(hit.x, hit.y, hit.z);
-                        if (t != B_AIR && t != B_WATER) world->setBlock(hit.x, hit.y, hit.z, B_AIR);
+                        // 水与岩浆不可挖（原版流体不可破坏）
+                        if (t != B_AIR && t != B_WATER && t != B_LAVA) {
+                            // 先处理传送门破碎，再真正挖掉（否则门方块已被空气替换）
+                            portal::onBlockRemoved(*world, hit.x, hit.y, hit.z, t);
+                            world->setBlock(hit.x, hit.y, hit.z, B_AIR);
+                        }
                     }
                 }
                 if (in.mouse[1] && !in_prevR) {
                     uint16_t held = renderer.heldMiscItem();
                     if (held == I_FLINT_AND_STEEL) {
-                        // 打火石：在黑曜石框内空位点火生成下界门。
+                        // 打火石：先试着点燃下界门，点不着就在点击面的空位放火。
                         int tx = hit.hit ? hit.px : (int)std::floor(player.cam.pos.x);
                         int ty = hit.hit ? hit.py : ((int)std::floor(player.cam.pos.y) - 1);
                         int tz = hit.hit ? hit.pz : (int)std::floor(player.cam.pos.z);
-                        portal::tryLightNetherPortal(*world, tx, ty, tz);
+                        if (!portal::tryLightNetherPortal(*world, tx, ty, tz) && hit.hit) {
+                            if (world->getBlock(tx, ty, tz) == B_AIR)
+                                world->setBlock(tx, ty, tz, B_FIRE);
+                        }
                     } else if (held == I_EYE_OF_ENDER && hit.hit) {
                         // 末影之眼：用在末地传送门框架上。
                         uint8_t bt = world->getBlock(hit.x, hit.y, hit.z);

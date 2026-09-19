@@ -1,6 +1,8 @@
 #include "portal.hpp"
 #include "world.hpp"
+#include <array>
 #include <cmath>
+#include <vector>
 
 namespace portal {
 
@@ -102,6 +104,18 @@ bool tryLightNetherPortal(World& w, int fx, int fy, int fz) {
     }
     if (bestScore < 0) return false;
 
+    // 先把门洞覆盖到的区块生成出来：跨区块的门若目标区块还没生成，
+    // setBlock 会直接失败，导致只填上一部分格子。
+    {
+        int adx = best.axis == 0 ? 1 : 0;
+        int adz = best.axis == 0 ? 0 : 1;
+        int minX = best.x0, maxX = best.x0 + adx * (best.w - 1);
+        int minZ = best.z0, maxZ = best.z0 + adz * (best.w - 1);
+        for (int cx = blockToChunkCoord(minX); cx <= blockToChunkCoord(maxX); cx++)
+            for (int cz = blockToChunkCoord(minZ); cz <= blockToChunkCoord(maxZ); cz++)
+                w.forceGenerateChunk(cx, cz);
+    }
+
     // 填充 nether_portal 方块
     int dx = best.axis == 0 ? 1 : 0;
     int dz = best.axis == 0 ? 0 : 1;
@@ -171,6 +185,48 @@ bool tryPlaceEyeOfEnder(World& w, int fx, int fy, int fz) {
         }
     }
     return false;
+}
+
+// 洪水填充：清掉与起点相连的全部下界传送门方块（原版里门是整体破碎的）
+void breakNetherPortal(World& w, int x, int y, int z) {
+    static const int d[6][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+    if (w.getBlock(x, y, z) != B_NETHER_PORTAL) return;
+    std::vector<std::array<int, 3>> stack;
+    stack.push_back({x, y, z});
+    w.setBlock(x, y, z, B_AIR);
+    while (!stack.empty()) {
+        std::array<int, 3> p = stack.back();
+        stack.pop_back();
+        for (const auto& dd : d) {
+            int nx = p[0] + dd[0], ny = p[1] + dd[1], nz = p[2] + dd[2];
+            if (w.getBlock(nx, ny, nz) == B_NETHER_PORTAL) {
+                w.setBlock(nx, ny, nz, B_AIR);
+                stack.push_back({nx, ny, nz});
+            }
+        }
+    }
+}
+
+void onBlockRemoved(World& w, int x, int y, int z, uint8_t oldId) {
+    static const int d[6][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+    if (oldId == B_NETHER_PORTAL) {
+        // 起点可能已经被挖成空气了，所以连自己和六个邻格一起试着扩散
+        if (w.getBlock(x, y, z) == B_NETHER_PORTAL) breakNetherPortal(w, x, y, z);
+        for (const auto& dd : d) {
+            int nx = x + dd[0], ny = y + dd[1], nz = z + dd[2];
+            if (w.getBlock(nx, ny, nz) == B_NETHER_PORTAL) breakNetherPortal(w, nx, ny, nz);
+        }
+        return;
+    }
+    if (oldId != B_OBSIDIAN) return;
+    // 破坏框架方块：贴着它的整扇门一起消失
+    for (const auto& dd : d) {
+        int nx = x + dd[0], ny = y + dd[1], nz = z + dd[2];
+        if (w.getBlock(nx, ny, nz) == B_NETHER_PORTAL) {
+            breakNetherPortal(w, nx, ny, nz);
+            return;
+        }
+    }
 }
 
 } // namespace portal
