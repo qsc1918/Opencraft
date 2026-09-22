@@ -45,6 +45,17 @@ inline bool fluidCull(uint8_t nb) {
     return nb == B_WATER || nb == B_LAVA || blockIsOpaque(nb);
 }
 
+// 每个实体面在贴图里的 UV（0..16 像素，按未旋转纹理布局），
+// 顺序与 kC 的顶点顺序一致。
+const int kFaceUV[6][4][2] = {
+    {{0,15},{0,0},{15,0},{15,15}},   // +X
+    {{15,15},{15,0},{0,0},{0,15}},   // -X
+    {{0,0},{15,0},{15,15},{0,15}},   // +Y
+    {{0,0},{15,0},{15,15},{0,15}},   // -Y
+    {{0,0},{15,0},{15,15},{0,15}},   // +Z
+    {{15,0},{0,0},{0,15},{15,15}},   // -Z
+};
+
 const float kAoBright[4] = {0.42f, 0.64f, 0.82f, 1.0f};
 const float kFaceBright[6] = {0.80f, 0.80f, 1.0f, 0.55f, 0.80f, 0.80f};
 const Vec3 kSun(0.42f, 0.82f, 0.32f);
@@ -69,10 +80,30 @@ inline bool emissiveBlock(uint8_t id) {
     return id < B_COUNT && BLOCK_DEFS[id].lightEmission >= 10;
 }
 
-// 部分高度方块的渲染高度（1/16 格）。原版末地传送门框架只有 13/16 高，
-// 侧面贴图第 0..2 行是透明的，所以高度和侧面 UV 都得跟着缩。
-inline int blockHeight16(uint8_t id) {
-    return (id == B_END_PORTAL_FRAME || id == B_END_PORTAL_FRAME_EYE) ? 13 : 16;
+// 一个方块可以由多个长方体拼成（原版模型 element 语义）。
+// 坐标是 1/16 格、以方块原点为基准，取值范围 0..16。
+struct Box { int x0, y0, z0, x1, y1, z1; };
+
+// 末地传送门框架是 13/16 高；带眼时再叠一个 8×8×8 的眼块（13..16 高），
+// 眼块贴向朝向那一侧、与框架两侧各留 4 像素，这就是原版
+// end_portal_frame_filled 模型的两个 element。
+inline int buildParts(uint8_t id, Box* out) {
+    if (blockIsPortalFrame(id)) {
+        out[0] = {0, 0, 0, 16, 13, 16};
+        if (!blockFrameHasEye(id)) return 1;
+        int dx, dz;
+        frameFacingDir(blockFrameFacing(id), dx, dz);
+        int ex0 = 4, ez0 = 4, ex1 = 12, ez1 = 12;
+        // 眼块整体贴着朝向那一侧的边缘：留 4 像素缝（朝向面在 12，反面在 4）
+        if (dx < 0)      { ex0 = 0;  ex1 = 8;  }
+        else if (dx > 0) { ex0 = 8;  ex1 = 16; }
+        if (dz < 0)      { ez0 = 0;  ez1 = 8;  }
+        else if (dz > 0) { ez0 = 8;  ez1 = 16; }
+        out[1] = {ex0, 13, ez0, ex1, 16, ez1};
+        return 2;
+    }
+    out[0] = {0, 0, 0, 16, 16, 16};
+    return 1;
 }
 
 inline uint8_t bakeShade(int face, int ao, bool water) {
@@ -144,70 +175,71 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                 }
                 if (!anyExposed) continue;
 
-                uint8_t tile = blockTile(id, 0);
-                for (int f = 0; f < 6; f++) {
-                    // 世界最高层的顶面顶点会算到 y=128，而顶点 y 是 int8_t，
-                    // 溢出成 -128 会生成跨越整个世界高度的巨型面（下界天花板
-                    // 全是基岩，就会变成满屏条纹）。顶层顶面本来也看不见。
-                    if (f == F_PY && y >= WORLD_HEIGHT - 1) continue;
-                    int dx = kNormal[f][0], dy = kNormal[f][1], dz = kNormal[f][2];
-                    uint8_t nb = view.at(x + dx, y + dy, z + dz);
-                    if (cullFace(id, nb)) continue;
+                Box parts[2];
+                const int partCount = buildParts(id, parts);
+                for (int pi = 0; pi < partCount; pi++) {
+                    const Box& box = parts[pi];
+                    for (int f = 0; f < 6; f++) {
+                        // 世界最高层的顶面顶点会算到 y=128，而顶点 y 是 int8_t，
+                        // 溢出成 -128 会生成跨越整个世界高度的巨型面（下界天花板
+                        // 全是基岩，就会变成满屏条纹）。顶层顶面本来也看不见。
+                        if (f == F_PY && y >= WORLD_HEIGHT - 1) continue;
+                        int dx = kNormal[f][0], dy = kNormal[f][1], dz = kNormal[f][2];
+                        uint8_t nb = view.at(x + dx, y + dy, z + dz);
+                        if (cullFace(id, nb)) continue;
 
-                    uint8_t fTile = blockTile(id, f);
-                    // 13/16 高的方块：角点的 y 落在小数高度上，侧面 UV 只取
-                    // 贴图第 3..15 行（跳过顶部透明区）
-                    const int h16 = blockHeight16(id);
-                    const bool partial = h16 < 16;
-                    uint32_t base = (uint32_t)ov.size();
-                    for (int c = 0; c < 4; c++) {
-                        TerrainVertex vt;
-                        int yOff = kC[f][c][1];
-                        vt.x = (int8_t)(x + kC[f][c][0]);
-                        vt.y = (int8_t)(y + (partial ? 0 : yOff));
-                        vt.z = (int8_t)(z + kC[f][c][2]);
-                        vt.fracY = (uint8_t)(partial ? yOff * h16 : 0);
-                        vt.u = (uint8_t)kU[f][c];
-                        uint8_t vv = (uint8_t)kV[f][c];
-                        if (partial && f != F_PY && f != F_NY)
-                            vv = (uint8_t)((16 - h16) + vv * h16 / 15);
-                        vt.v = vv;
-                        vt.tex = fTile;
-                        // AO：在面外侧那一层（法线方向偏移一格）取该角点的
-                        // 两条边邻居 + 对角邻居。旧实现取在本层且整体偏了一格，
-                        // 会让大片平面（如下界基岩天花板）出现条纹状明暗。
-                        int a1 = kA1[f], a2 = kA2[f];
-                        int o1 = kC[f][c][a1] == 1 ? 1 : -1;
-                        int o2 = kC[f][c][a2] == 1 ? 1 : -1;
-                        int co[3] = {0, 0, 0};
-                        co[a1] = o1;
-                        int s1x = x + kNormal[f][0] + co[0];
-                        int s1y = y + kNormal[f][1] + co[1];
-                        int s1z = z + kNormal[f][2] + co[2];
-                        co[a1] = 0; co[a2] = o2;
-                        int s2x = x + kNormal[f][0] + co[0];
-                        int s2y = y + kNormal[f][1] + co[1];
-                        int s2z = z + kNormal[f][2] + co[2];
-                        co[a1] = o1; co[a2] = o2;
-                        int dxx = x + kNormal[f][0] + co[0];
-                        int dyy = y + kNormal[f][1] + co[1];
-                        int dzz = z + kNormal[f][2] + co[2];
+                        uint8_t fTile = blockTile(id, f);
+                        uint32_t base = (uint32_t)ov.size();
+                        for (int c = 0; c < 4; c++) {
+                            TerrainVertex vt;
+                            int bx = kC[f][c][0] ? box.x1 : box.x0;
+                            int by = kC[f][c][1] ? box.y1 : box.y0;
+                            int bz = kC[f][c][2] ? box.z1 : box.z0;
+                            vt.x = (int8_t)(x + bx / 16);
+                            vt.y = (int8_t)(y + by / 16);
+                            vt.z = (int8_t)(z + bz / 16);
+                            vt.fracY = (uint8_t)((by - (by / 16) * 16) * 17);
+                            vt.u = (uint8_t)(kFaceUV[f][c][0] * box.x1 / 16 +
+                                             kFaceUV[f][c][1] * box.x0 / 16);
+                            vt.v = (uint8_t)(kFaceUV[f][c][1] * box.y1 / 16 +
+                                             kFaceUV[f][c][0] * box.y0 / 16);
+                            vt.tex = fTile;
+                            // AO：在面外侧那一层（法线方向偏移一格）取该角点的
+                            // 两条边邻居 + 对角邻居。旧实现取在本层且整体偏了一格，
+                            // 会让大片平面（如下界基岩天花板）出现条纹状明暗。
+                            int a1 = kA1[f], a2 = kA2[f];
+                            int o1 = kC[f][c][a1] == 1 ? 1 : -1;
+                            int o2 = kC[f][c][a2] == 1 ? 1 : -1;
+                            int co[3] = {0, 0, 0};
+                            co[a1] = o1;
+                            int s1x = x + kNormal[f][0] + co[0];
+                            int s1y = y + kNormal[f][1] + co[1];
+                            int s1z = z + kNormal[f][2] + co[2];
+                            co[a1] = 0; co[a2] = o2;
+                            int s2x = x + kNormal[f][0] + co[0];
+                            int s2y = y + kNormal[f][1] + co[1];
+                            int s2z = z + kNormal[f][2] + co[2];
+                            co[a1] = o1; co[a2] = o2;
+                            int dxx = x + kNormal[f][0] + co[0];
+                            int dyy = y + kNormal[f][1] + co[1];
+                            int dzz = z + kNormal[f][2] + co[2];
 
-                        bool s1 = blockIsOpaque(view.at(s1x, s1y, s1z));
-                        bool s2 = blockIsOpaque(view.at(s2x, s2y, s2z));
-                        bool dd = blockIsOpaque(view.at(dxx, dyy, dzz));
-                        int ao;
-                        if (s1 && s2) ao = 0;
-                        else ao = 3 - ((s1 ? 1 : 0) + (s2 ? 1 : 0) + (dd ? 1 : 0));
-                        vt.shade = emissiveBlock(id) ? 255 : bakeShade(f, ao, false);
-                        ov.push_back(vt);
+                            bool s1 = blockIsOpaque(view.at(s1x, s1y, s1z));
+                            bool s2 = blockIsOpaque(view.at(s2x, s2y, s2z));
+                            bool dd = blockIsOpaque(view.at(dxx, dyy, dzz));
+                            int ao;
+                            if (s1 && s2) ao = 0;
+                            else ao = 3 - ((s1 ? 1 : 0) + (s2 ? 1 : 0) + (dd ? 1 : 0));
+                            vt.shade = emissiveBlock(id) ? 255 : bakeShade(f, ao, false);
+                            ov.push_back(vt);
+                        }
+                        oi.push_back(base);
+                        oi.push_back(base + 1);
+                        oi.push_back(base + 2);
+                        oi.push_back(base);
+                        oi.push_back(base + 2);
+                        oi.push_back(base + 3);
                     }
-                    oi.push_back(base);
-                    oi.push_back(base + 1);
-                    oi.push_back(base + 2);
-                    oi.push_back(base);
-                    oi.push_back(base + 2);
-                    oi.push_back(base + 3);
                 }
             }
         }

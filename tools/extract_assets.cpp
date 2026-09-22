@@ -56,6 +56,12 @@ static const AssetEntry kAssets[] = {
     {"assets/minecraft/textures/block/end_portal_frame_side.png",  "block/end_portal_frame_side.png"},
     {"assets/minecraft/textures/block/end_portal_frame_eye.png",   "block/end_portal_frame_eye.png"},
     {"assets/minecraft/textures/block/dragon_egg.png",             "block/dragon_egg.png"},
+    // 末地植被与结构（末地平台/柱顶笼子/返回传送门火把）
+    {"assets/minecraft/textures/block/chorus_plant.png",           "block/chorus_plant.png"},
+    {"assets/minecraft/textures/block/chorus_flower.png",          "block/chorus_flower.png"},
+    {"assets/minecraft/textures/block/chorus_flower_dead.png",     "block/chorus_flower_dead.png"},
+    {"assets/minecraft/textures/block/iron_bars.png",              "block/iron_bars.png"},
+    {"assets/minecraft/textures/block/torch.png",                  "block/torch.png"},
     // GUI 贴图（assets/gui）
     {"assets/minecraft/textures/gui/sprites/widget/button.png",               "gui/button.png"},
     {"assets/minecraft/textures/gui/sprites/widget/button_highlighted.png",   "gui/button_highlighted.png"},

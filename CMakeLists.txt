@@ -21,6 +21,10 @@ add_executable(opencraft
   src/png.cpp
   src/atlas.cpp
   src/noise.cpp
+  src/mcnoise.cpp
+  src/endgen.cpp
+  src/nethergen.cpp
+  src/mctick.cpp
   src/generator.cpp
   src/world.cpp
   src/mesher.cpp
@@ -97,6 +101,11 @@ add_custom_command(TARGET opencraft POST_BUILD
 # 资源提取工具：控制台程序，从玩家的 minecraft.jar 提取贴图
 add_executable(extract_assets tools/extract_assets.cpp)
 target_link_libraries(extract_assets PRIVATE comdlg32)
+
+# 末地生成调试工具：打印高度剖面与方块统计（开发用，不入包）
+add_executable(endprobe tools/endprobe.cpp src/endgen.cpp src/mcnoise.cpp)
+target_include_directories(endprobe PRIVATE src)
+target_compile_options(endprobe PRIVATE -O2 -fno-rtti)
 
 # ---- 打包自解压安装包（7-Zip SFX）----
 # 需要仓库根目录有 7-Zip\（本地产物，不入库）；默认每次构建后自动打包

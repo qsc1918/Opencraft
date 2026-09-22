@@ -42,7 +42,24 @@ enum Block : uint8_t {
     B_DRAGON_EGG       = 30,
     B_END_PORTAL_FRAME_EYE = 31,  // 放了末影之眼的末地传送门框架
     B_FIRE = 32,
-    B_COUNT = 33,
+    // --- 末地传送门框架：原版有 facing(4 向) + eye(有/无) 共 8 种状态。
+    // 本实现方块存储是纯 uint8 id，没有状态位，故把朝向展开成独立 id。
+    // 基准 B_END_PORTAL_FRAME 的朝向是"南"（眼凸起在 -Z 侧），
+    // 顺时针 90° 依次得到西/北/东。
+    B_END_PORTAL_FRAME_W = 33,        // 西
+    B_END_PORTAL_FRAME_N = 34,        // 北
+    B_END_PORTAL_FRAME_E = 35,        // 东
+    B_END_PORTAL_FRAME_EYE_W = 36,    // 西 + 有眼
+    B_END_PORTAL_FRAME_EYE_N = 37,    // 北 + 有眼
+    B_END_PORTAL_FRAME_EYE_E = 38,    // 东 + 有眼
+    // --- 末地植被 / 结构方块 ---
+    B_CHORUS_PLANT = 39,
+    B_CHORUS_FLOWER = 40,      // 活着的花（原版 AGE 0..4，这里只区分活/死）
+    B_CHORUS_FLOWER_DEAD = 41, // 原版 AGE 5：不再生长
+    B_IRON_BARS = 42,
+    B_TORCH = 43,
+    B_WALL_TORCH = 44,
+    B_COUNT = 45,
 };
 
 // 图集图块 id（建图集时分配）。
@@ -73,7 +90,13 @@ enum Tile : uint8_t {
     T_END_PORTAL_FRAME_EYE = 34,  // 放了眼的有眼框架
     T_END_PORTAL_FRAME_SIDE = 35, // 末地传送门框架侧面
     T_FIRE = 36,
-    T_COUNT = 37,
+    // --- 末地植被 / 结构 ---
+    T_CHORUS_PLANT = 37,
+    T_CHORUS_FLOWER = 38,
+    T_CHORUS_FLOWER_DEAD = 39,
+    T_IRON_BARS = 40,
+    T_TORCH = 41,
+    T_COUNT = 42,
 };
 
 // 面索引（MC 语义: F_PY 顶面, F_NY 底面, ±X/±Z 四侧面）
@@ -141,7 +164,66 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
     /*B_END_PORTAL_FRAME_EYE*/ {"opencraft:end_portal_frame_eye","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
     // --- 火 ---
     /*B_FIRE     */ {"opencraft:fire",           "火",       false, false, 15, 0,  T_FIRE,    T_FIRE,    T_FIRE   },
+    // --- 末地传送门框架朝向变体（见 Block 枚举里的说明）---
+    /*B_END_PORTAL_FRAME_W*/ {"opencraft:end_portal_frame_west","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
+    /*B_END_PORTAL_FRAME_N*/ {"opencraft:end_portal_frame_north","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
+    /*B_END_PORTAL_FRAME_E*/ {"opencraft:end_portal_frame_east","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
+    /*B_END_PORTAL_FRAME_EYE_W*/ {"opencraft:end_portal_frame_eye_west","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
+    /*B_END_PORTAL_FRAME_EYE_N*/ {"opencraft:end_portal_frame_eye_north","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
+    /*B_END_PORTAL_FRAME_EYE_E*/ {"opencraft:end_portal_frame_eye_east","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
+    // --- 末地植被 / 结构 ---
+    /*B_CHORUS_PLANT*/ {"opencraft:chorus_plant", "紫颂植株", true,  true,  0, 15, T_CHORUS_PLANT, T_CHORUS_PLANT, T_CHORUS_PLANT},
+    /*B_CHORUS_FLOWER*/ {"opencraft:chorus_flower","紫颂花",  true,  true,  0, 15, T_CHORUS_FLOWER, T_CHORUS_FLOWER, T_CHORUS_FLOWER},
+    /*B_CHORUS_FLOWER_DEAD*/ {"opencraft:chorus_flower_dead","紫颂花(枯萎)", true, true, 0, 15, T_CHORUS_FLOWER_DEAD, T_CHORUS_FLOWER_DEAD, T_CHORUS_FLOWER_DEAD},
+    /*B_IRON_BARS*/ {"opencraft:iron_bars",      "铁栏杆",   false, true,  0, 0,  T_IRON_BARS, T_IRON_BARS, T_IRON_BARS},
+    /*B_TORCH    */ {"opencraft:torch",          "火把",     false, false, 14, 0,  T_TORCH,   T_TORCH,   T_TORCH  },
+    /*B_WALL_TORCH*/ {"opencraft:wall_torch",    "墙上的火把", false, false, 14, 0, T_TORCH,   T_TORCH,   T_TORCH  },
 };
+static_assert(sizeof(BLOCK_DEFS) / sizeof(BLOCK_DEFS[0]) == B_COUNT,
+              "BLOCK_DEFS 必须按 Block id 顺序逐一列出，新增方块要同步补在这里");
+
+// ---- 末地传送门框架：朝向 / 有眼查询 ----
+enum FrameFacing : int { FRAME_SOUTH = 0, FRAME_WEST = 1, FRAME_NORTH = 2, FRAME_EAST = 3 };
+
+inline bool blockIsPortalFrame(uint8_t id) {
+    return id == B_END_PORTAL_FRAME || id == B_END_PORTAL_FRAME_W ||
+           id == B_END_PORTAL_FRAME_N || id == B_END_PORTAL_FRAME_E ||
+           id == B_END_PORTAL_FRAME_EYE || id == B_END_PORTAL_FRAME_EYE_W ||
+           id == B_END_PORTAL_FRAME_EYE_N || id == B_END_PORTAL_FRAME_EYE_E;
+}
+
+inline bool blockFrameHasEye(uint8_t id) {
+    return id == B_END_PORTAL_FRAME_EYE || id == B_END_PORTAL_FRAME_EYE_W ||
+           id == B_END_PORTAL_FRAME_EYE_N || id == B_END_PORTAL_FRAME_EYE_E;
+}
+
+// 未列出的 id 按南处理
+inline int blockFrameFacing(uint8_t id) {
+    switch (id) {
+    case B_END_PORTAL_FRAME_W: case B_END_PORTAL_FRAME_EYE_W: return FRAME_WEST;
+    case B_END_PORTAL_FRAME_N: case B_END_PORTAL_FRAME_EYE_N: return FRAME_NORTH;
+    case B_END_PORTAL_FRAME_E: case B_END_PORTAL_FRAME_EYE_E: return FRAME_EAST;
+    default: return FRAME_SOUTH;
+    }
+}
+
+inline uint8_t frameId(int facing, bool eye) {
+    static const uint8_t kPlain[4] = {B_END_PORTAL_FRAME, B_END_PORTAL_FRAME_W,
+                                      B_END_PORTAL_FRAME_N, B_END_PORTAL_FRAME_E};
+    static const uint8_t kEye[4] = {B_END_PORTAL_FRAME_EYE, B_END_PORTAL_FRAME_EYE_W,
+                                    B_END_PORTAL_FRAME_EYE_N, B_END_PORTAL_FRAME_EYE_E};
+    return eye ? kEye[facing & 3] : kPlain[facing & 3];
+}
+
+// 朝向 (dx,dz) 单位向量：南=+Z、西=-X、北=-Z、东=+X
+inline void frameFacingDir(int facing, int& dx, int& dz) {
+    switch (facing & 3) {
+    case FRAME_WEST:  dx = -1; dz = 0;  break;
+    case FRAME_NORTH: dx = 0;  dz = -1; break;
+    case FRAME_EAST:  dx = 1;  dz = 0;  break;
+    default:          dx = 0;  dz = 1;  break; // 南
+    }
+}
 
 // 注册表访问；越界回落为空气（等价 MC 未知方块容错）。
 inline const BlockDef& blockDef(uint8_t id) {

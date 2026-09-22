@@ -130,42 +130,57 @@ bool tryLightNetherPortal(World& w, int fx, int fy, int fz) {
 
 // ---------------------------------------------------------------------------
 // 末地传送门：12 个框架围成 5×5 方环（四角无框架），中心 3×3 为 portal。
-// 检测以 (cx,cy,cz) 为框架之一的完整形状是否全是有眼框架；
-// 是则激活中心 3×3 为 end_portal，返回左上角 5×5 基准（用于生成 portal）。
 // 布局（5×5，F=框架位置，. = 中心 portal 区）：
 //   .FFF.
 //   F...F
 //   F...F
 //   F...F
 //   .FFF.
+// 每个框架还要朝向正确：原版 BlockPattern 要求上边朝南、下边朝北、左边朝东、
+// 右边朝西（即都指向环心），否则不激活。
 // ---------------------------------------------------------------------------
-static bool isFrame(const World& w, int x, int y, int z) {
-    uint8_t b = w.getBlock(x, y, z);
-    return b == B_END_PORTAL_FRAME || b == B_END_PORTAL_FRAME_EYE;
+// 该框架位置应该朝向哪里：南=+Z、西=-X、北=-Z、东=+X
+static int frameRequiresFacing(int dx, int dz) {
+    if (dz == 0) return dx > 0 ? FRAME_EAST : FRAME_WEST;
+    return dz > 0 ? FRAME_SOUTH : FRAME_NORTH;
 }
 
+// 检查 (x0,cy,z0) 为基准的 5×5 方环是否满足激活条件
 static bool allFramesHaveEye(const World& w, int x0, int cy, int z0) {
-    // (x0,z0) 是 5×5 方环左上角基准；y 统一用 cy。
     for (int dx = 0; dx < 5; dx++) {
         for (int dz = 0; dz < 5; dz++) {
             bool edge = dx == 0 || dx == 4 || dz == 0 || dz == 4;
             bool isCorner = (dx == 0 || dx == 4) && (dz == 0 || dz == 4);
-            if (!edge) continue;        // 中心 3×3 不是框架
-            if (isCorner) continue;     // 四角没有框架
-            if (w.getBlock(x0 + dx, cy, z0 + dz) != B_END_PORTAL_FRAME_EYE) return false;
+            if (!edge || isCorner) continue;  // 中心 3×3 与四角都不是框架
+            uint8_t b = w.getBlock(x0 + dx, cy, z0 + dz);
+            if (!blockIsPortalFrame(b) || !blockFrameHasEye(b)) return false;
+            if (blockFrameFacing(b) != frameRequiresFacing(2 - dx, 2 - dz)) return false;
         }
     }
     return true;
 }
 
+uint8_t frameIdForPlacement(float yaw) {
+    // 原版 getStateForPlacement 用 context.getHorizontalDirection().getOpposite()：
+    // 玩家朝哪边看，框架就背对他。
+    // 本工程相机 forward = (sin yaw, *, cos yaw)：yaw=0 看 +Z（南）、π/2 看 +X（东）。
+    float a = std::fmod(yaw, 6.2831853f);
+    if (a < 0) a += 6.2831853f;
+    int facing;
+    if (a < 0.7853982f || a >= 5.4977871f)      facing = FRAME_NORTH; // 看南 → 朝北
+    else if (a < 2.3561945f)                    facing = FRAME_WEST;  // 看东 → 朝西
+    else if (a < 3.9269908f)                    facing = FRAME_SOUTH; // 看北 → 朝南
+    else                                        facing = FRAME_EAST;  // 看西 → 朝东
+    return frameId(facing, false);
+}
+
 bool tryPlaceEyeOfEnder(World& w, int fx, int fy, int fz) {
     uint8_t b = w.getBlock(fx, fy, fz);
-    if (b != B_END_PORTAL_FRAME || b == B_END_PORTAL_FRAME_EYE) return false;
-    // 变成有眼框架
-    w.setBlock(fx, fy, fz, B_END_PORTAL_FRAME_EYE);
+    if (!blockIsPortalFrame(b) || blockFrameHasEye(b)) return false;
+    // 变成有眼框架（保留原朝向）
+    w.setBlock(fx, fy, fz, frameId(blockFrameFacing(b), true));
 
-    // 检测：以 (fx,fz) 为框架，向四个方向试 5×5 方环的左上角基准。
-    // 遍历环上 12 个非角位置，反推可能的基准。
+    // 检测：以 (fx,fz) 为环上某格，反推 5×5 方环的左上角基准
     for (int relX = 0; relX < 5; relX++) {
         for (int relZ = 0; relZ < 5; relZ++) {
             bool edge = relX == 0 || relX == 4 || relZ == 0 || relZ == 4;

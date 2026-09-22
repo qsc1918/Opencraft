@@ -1,5 +1,7 @@
 #include "generator.hpp"
 #include "blocks.hpp"
+#include "endgen.hpp"
+#include "nethergen.hpp"
 #include "noise.hpp"
 #include "util.hpp"
 #include "world.hpp"
@@ -74,200 +76,18 @@ void placeTree(uint8_t* b, int wx, int wz, int rootY, Rng& rng) {
 } // 匿名命名空间
 
 // ===========================================================================
-// 下界生成（对齐原版风格）
-// - 主体是连成一片的地狱岩，用 3D 噪声挖出大洞穴，而不是零散浮岛
-// - 基岩地板 y=0、天花板 y=127（y=1/126 各 50%）
-// - y≤31 的非实心处灌成岩浆海（顶面平在 y=31）
-// - 萤石簇挂在天花板下方，少量灵魂沙块
+// 下界生成见 nethergen.cpp（原版密度函数 + 表面规则 + 下界荒地群系）。
 // ===========================================================================
 void gen::generateNether(uint32_t seed, int cx, int cz, uint8_t* out) {
-    std::fill(out, out + CHUNK_VOL, (uint8_t)B_AIR);
-    Noise nethN(seed ^ 0xdeadbeefU);
-    Noise caveN(seed ^ 0x42cafeU);
-    Noise soulN(seed ^ 0x666U);
-    Noise glowN(seed ^ 0x777U);
-
-    int baseWX = cx * CHUNK_SIZE, baseWZ = cz * CHUNK_SIZE;
-
-    for (int lx = 0; lx < CHUNK_SIZE; lx++) {
-        for (int lz = 0; lz < CHUNK_SIZE; lz++) {
-            int wx = baseWX + lx, wz = baseWZ + lz;
-
-            // 基岩地板 (y=0/1) 和天花板 (y=126/127)：整层实心。
-            // 不要留 50% 随机缺口——那样从下方斜看会露出上层基岩的侧面，
-            // 整片天花板会变成明暗条纹。
-            ref(out, lx, 0, lz) = B_BEDROCK;
-            ref(out, lx, 1, lz) = B_BEDROCK;
-            ref(out, lx, 126, lz) = B_BEDROCK;
-            ref(out, lx, 127, lz) = B_BEDROCK;
-
-            // 主密度：阈值以下为地狱岩，噪声高处被挖成洞穴。
-            // 分三段：岩浆层最空、中部大洞穴、天花板附近最实。
-            for (int y = 2; y <= 125; y++) {
-                float n = nethN.fbm3(wx * 0.02f, y * 0.045f, wz * 0.02f, 3, 2.0f, 0.5f);
-                float cave = caveN.fbm3(wx * 0.05f, y * 0.09f, wz * 0.05f, 2, 2.0f, 0.5f);
-                float density;
-                if (y <= 34) density = -0.15f;                       // 岩浆海：大部分是空的
-                else if (y < 44) density = -0.15f + (y - 34) * 0.022f; // 过渡到中部
-                else density = 0.07f;                                // 中部：大洞穴
-                if (y > 100) density += (y - 100) * 0.028f;           // 靠近天花板更实
-                if (n * 0.65f + cave * 0.35f < density) {
-                    ref(out, lx, y, lz) = B_NETHERRACK;
-                }
-            }
-
-            // 岩浆海 y≤31：非实心处灌岩浆，表面平在 y=31
-            for (int y = 2; y <= 31; y++) {
-                if (ref(out, lx, y, lz) == B_AIR) {
-                    ref(out, lx, y, lz) = B_LAVA;
-                }
-            }
-
-            // 灵魂沙：地狱岩表层成片的区域（对齐原版灵魂沙峡谷）
-            float sv = soulN.fbm3(wx * 0.02f, 48.0f, wz * 0.02f, 2, 2.0f, 0.5f);
-            if (sv > 0.35f) {
-                for (int y = 34; y <= 96; y++) {
-                    if (ref(out, lx, y, lz) != B_NETHERRACK) continue;
-                    if (ref(out, lx, y + 1, lz) != B_AIR) continue;
-                    for (int d = 0; d < 4 && y - d >= 34; d++)
-                        ref(out, lx, y - d, lz) = B_SOUL_SAND;
-                }
-            }
-
-            // 萤石簇挂在天花板下方
-            float gv = glowN.fbm3(wx * 0.04f, 120.0f, wz * 0.04f, 2, 2.0f, 0.5f);
-            if (gv > 0.45f) {
-                for (int y = 125; y >= 80; y--) {
-                    if (ref(out, lx, y, lz) == B_NETHERRACK) {
-                        if (y + 1 <= 126 && ref(out, lx, y + 1, lz) == B_AIR) {
-                            ref(out, lx, y + 1, lz) = B_GLOWSTONE;
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-    }
+    nethergen::generateNether(seed, cx, cz, out);
 }
 
+
 // ===========================================================================
-// 末地生成（最新机制）
-// - 主岛：end_stone 圆形岛屿（半径 ~100，Perlin 起伏）
-// - 10 根黑曜石柱（半径 43 内，高 76-103，2 根带铁笼）
-// - 出口传送门：5×5 基岩平台 y=63，中心柱到 y=67
-// - 折跃门：环绕岛屿（最多 20，简化为静态生成）
+// 按维度分发。末地实现在 endgen.cpp（原版密度函数 + 结构 + 植被）。
 // ===========================================================================
-
-// 末地柱参数：固定半径 ~43，按角度分布
-struct EndPillar {
-    float angle;   // 弧度
-    int height;    // 总高度（y=0 到 y=height）
-    bool caged;    // 是否有铁笼保护水晶
-};
-
-static constexpr EndPillar kPillars[10] = {
-    {0.0f,        93, false},
-    {0.628f,      87, false},
-    {1.257f,     101, true },  // 有铁笼
-    {1.885f,      76, false},
-    {2.513f,      99, false},
-    {3.142f,      81, false},
-    {3.770f,      95, false},
-    {4.398f,     103, true },  // 有铁笼
-    {5.027f,      89, false},
-    {5.655f,      84, false},
-};
-
 void gen::generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
-    std::fill(out, out + CHUNK_VOL, (uint8_t)B_AIR);
-    Noise endN(seed ^ 0x1234abcdU);
-
-    int baseWX = cx * CHUNK_SIZE, baseWZ = cz * CHUNK_SIZE;
-
-    // 主岛中心 (0,0)，半径 ~100，Perlin 起伏
-    float islandRadius = 100.0f;
-
-    for (int lx = 0; lx < CHUNK_SIZE; lx++) {
-        for (int lz = 0; lz < CHUNK_SIZE; lz++) {
-            int wx = baseWX + lx, wz = baseWZ + lz;
-            float dist = sqrtf((float)(wx * wx + wz * wz));
-
-            // 基岩地板 y=0
-            ref(out, lx, 0, lz) = B_BEDROCK;
-
-            // 主岛地形
-            if (dist < islandRadius) {
-                // 岛屿形状：圆形衰减 + Perlin 起伏
-                float falloff = 1.0f - dist / islandRadius;
-                falloff = falloff * falloff; // 平方衰减，边缘更陡
-                float heightNoise = endN.fbm2(wx * 0.015f, wz * 0.015f, 4, 2.0f, 0.5f);
-                float h = 55.0f + falloff * 40.0f + heightNoise * 12.0f;
-                int topY = (int)h;
-                if (topY < 1) topY = 1;
-                if (topY > 126) topY = 126;
-
-                for (int y = 1; y <= topY; y++) {
-                    ref(out, lx, y, lz) = B_END_STONE;
-                }
-            }
-            // 岛屿外的虚空（保持空气）
-        }
-    }
-
-    // 10 根黑曜石柱坐标固定，只在所属区块内放置
-    for (const auto& p : kPillars) {
-        int worldPx = (int)(cosf(p.angle) * 43.0f);
-        int worldPz = (int)(sinf(p.angle) * 43.0f);
-        // 判断柱子的世界坐标是否落在本区块
-        int localPx = worldPx - baseWX;
-        int localPz = worldPz - baseWZ;
-        if (localPx < 0 || localPx >= CHUNK_SIZE || localPz < 0 || localPz >= CHUNK_SIZE) continue;
-        // 单方块柱：y=1 到 y=height
-        for (int y = 1; y <= p.height && y < WORLD_HEIGHT; y++) {
-            ref(out, localPx, y, localPz) = B_OBSIDIAN;
-        }
-        // caged 时在柱顶周围放铁块
-        if (p.caged) {
-            for (int dx = -1; dx <= 1; dx++) {
-                for (int dz = -1; dz <= 1; dz++) {
-                    int bx = localPx + dx, bz = localPz + dz;
-                    if (bx >= 0 && bx < CHUNK_SIZE && bz >= 0 && bz < CHUNK_SIZE) {
-                        ref(out, bx, p.height - 1, bz) = B_IRON;
-                        if (dx != 0 || dz != 0) {
-                            if (p.height + 1 < WORLD_HEIGHT)
-                                ref(out, bx, p.height + 1, bz) = B_IRON;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 出口传送门：5×5 基岩平台 y=63（只在 chunk(0,0) 生成，否则每块都有）
-    // 原版结构：底部 5×5 基岩框架，中心 3×3 end_portal，顶部基岩柱到 y=67
-    if (cx == 0 && cz == 0) {
-        for (int dx = -2; dx <= 2; dx++) {
-            for (int dz = -2; dz <= 2; dz++) {
-                int bx = dx + 8, bz = dz + 8; // 放在区块中心附近 (8,8)
-                if (bx >= 0 && bx < CHUNK_SIZE && bz >= 0 && bz < CHUNK_SIZE) {
-                    // 基岩平台 y=63
-                    ref(out, bx, 63, bz) = B_BEDROCK;
-                    // 3×3 end_portal (y=64, 中心)
-                    if (std::abs(dx) <= 1 && std::abs(dz) <= 1) {
-                        if (64 < WORLD_HEIGHT)
-                            ref(out, bx, 64, bz) = B_END_PORTAL;
-                    }
-                }
-            }
-        }
-        // 中心基岩柱 y=65..67
-        for (int y = 65; y <= 67 && y < WORLD_HEIGHT; y++) {
-            if (8 >= 0 && 8 < CHUNK_SIZE) {
-                ref(out, 8, y, 8) = B_BEDROCK;
-            }
-        }
-        // 龙蛋在 y=68（出口柱顶端），由主循环杀死龙后放置
-    }
+    endgen::generateEnd(seed, cx, cz, out);
 }
 
 void gen::generateForDim(DimensionId dim, uint32_t seed, int cx, int cz, uint8_t* out) {

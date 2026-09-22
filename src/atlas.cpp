@@ -17,6 +17,8 @@ static const char* kTileFiles[T_COUNT] = {
     "dragon_egg.png",      "end_portal_frame_eye.png",
     "end_portal_frame_side.png",
     nullptr, // T_FIRE — 程序化
+    "chorus_plant.png",    "chorus_flower.png",    "chorus_flower_dead.png",
+    "iron_bars.png",       "torch.png",
 };
 
 // 物品图标贴图（assets/item/），tile = T_ITEM_BASE + 下标，
@@ -80,6 +82,11 @@ const Tint kTileTint[T_COUNT] = {
     {0.8f, 1.0f, 0.3f},    // 末地传送门框架眼 → 亮绿
     {0.6f, 0.8f, 0.5f},    // 末地传送门框架侧面 → 偏绿
     {1, 1, 1},             // 火（程序化，自带颜色）
+    {1, 1, 1},             // 紫颂植株
+    {1, 1, 1},             // 紫颂花
+    {1, 1, 1},             // 枯萎的紫颂花
+    {1, 1, 1},             // 铁栏杆
+    {1, 1, 1},             // 火把
 };
 
 // ---------------------------------------------------------------------------

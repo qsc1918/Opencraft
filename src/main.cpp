@@ -1,5 +1,7 @@
 #include "camera.hpp"
+#include "endgen.hpp"
 #include "entities.hpp"
+#include "mctick.hpp"
 #include "player.hpp"
 #include "portal.hpp"
 #include "raycast.hpp"
@@ -375,6 +377,12 @@ int main(int argc, char** argv) {
         float px = player.cam.pos.x, py = player.cam.pos.y, pz = player.cam.pos.z;
         if (toDim == DIM_NETHER) { px *= inv; pz *= inv; }
         else if (toDim == DIM_OVERWORLD && fromDim == DIM_NETHER) { px *= scale; pz *= scale; }
+        // 原版进末地一律落在中央的 obsidian 平台上（return portal 留着以后做）
+        if (toDim == DIM_END) {
+            px = endgen::END_SPAWN_X;
+            pz = endgen::END_SPAWN_Z;
+            py = endgen::END_SPAWN_Y + 1.0f;
+        }
         // Y 按两边的世界高度映射，并把下界落点限制在洞穴带内：
         // 直接沿用原 Y 会把玩家送到贴着基岩天花板的位置（整片天花板怼脸）。
         {
@@ -493,9 +501,15 @@ int main(int argc, char** argv) {
                 if (a.drive) { in.keys['W'] = true; player.cam.pitch = -0.1f; player.cam.markDirty(); }
                 player.update(in, *world, 1.0f / 60.0f);
                 world->tickEntities(1.0f / 60.0f);
+                world->update(player.cam.pos.x, player.cam.pos.z, renderDist);
                 checkTeleport();
                 renderer.render(ctx, player.cam, player, in, 1.0f / 60.0f, (float)renderDist, !a.noUI);
                 win.endFrame();
+            }
+            {
+                int ready = 0;
+                world->forEachChunk([&](std::shared_ptr<Chunk>& c, int, int) { if (c->state.load() >= 2) ready++; });
+                fprintf(stderr, "[main] screenshot: %d chunks meshed\n", ready);
             }
             menu.shutdown(ctx);
             renderer.shutdown(ctx);
@@ -586,6 +600,8 @@ int main(int argc, char** argv) {
                 
                 player.update(in, *world, dt);
                 world->tickEntities(dt);
+                // 方块随机刻（紫颂花长成植株等）
+                mctick::tickRandomBlocks(*world, player.cam.pos.x, player.cam.pos.z, dt);
 
                 // ---- 传送检测：脚下方块是传送门就切维度 ----
                 checkTeleport();
@@ -619,15 +635,16 @@ int main(int argc, char** argv) {
                                 world->setBlock(tx, ty, tz, B_FIRE);
                         }
                     } else if (held == I_EYE_OF_ENDER && hit.hit) {
-                        // 末影之眼：用在末地传送门框架上。
+                        // 末影之眼：用在末地传送门框架上（空框架才吃眼）。
                         uint8_t bt = world->getBlock(hit.x, hit.y, hit.z);
-                        if (bt == B_END_PORTAL_FRAME)
-                            portal::tryPlaceEyeOfEnder(*world, hit.x, hit.y, hit.z);
-                        else if (bt == B_AIR)
+                        if (blockIsPortalFrame(bt))
                             portal::tryPlaceEyeOfEnder(*world, hit.x, hit.y, hit.z);
                     } else if (hit.hit) {
                         int px = hit.px, py = hit.py, pz = hit.pz;
                         uint8_t b = renderer.selectedBlock();
+                        // 末地传送门框架：按玩家水平朝向取反决定 facing（原版一致）
+                        if (blockIsPortalFrame(b))
+                            b = portal::frameIdForPlacement(player.cam.yaw);
                         float feet = player.cam.pos.y - player.eyeHeight;
                         bool inside = !(px + 1 <= player.cam.pos.x - player.halfWidth ||
                                         px >= player.cam.pos.x + player.halfWidth ||

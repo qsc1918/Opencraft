@@ -697,6 +697,7 @@ const uint8_t Renderer::kInvBlocks[] = {
     B_GRASS, B_STONE, B_COBBLE, B_PLANKS, B_LOG, B_DIRT, B_SAND, B_GRAVEL,
     B_GLASS, B_LEAVES, B_SNOW, B_COAL, B_IRON, B_GOLD, B_DIAMOND, B_REDSTONE,
     B_BEDROCK, B_OBSIDIAN, B_END_PORTAL_FRAME, B_NETHERRACK, B_END_STONE,
+    B_CHORUS_PLANT, B_CHORUS_FLOWER, B_IRON_BARS, B_TORCH,
 };
 const int Renderer::kInvCount = (int)(sizeof(kInvBlocks) / sizeof(kInvBlocks[0]));
 
