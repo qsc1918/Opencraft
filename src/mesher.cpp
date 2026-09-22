@@ -69,6 +69,12 @@ inline bool emissiveBlock(uint8_t id) {
     return id < B_COUNT && BLOCK_DEFS[id].lightEmission >= 10;
 }
 
+// 部分高度方块的渲染高度（1/16 格）。原版末地传送门框架只有 13/16 高，
+// 侧面贴图第 0..2 行是透明的，所以高度和侧面 UV 都得跟着缩。
+inline int blockHeight16(uint8_t id) {
+    return (id == B_END_PORTAL_FRAME || id == B_END_PORTAL_FRAME_EYE) ? 13 : 16;
+}
+
 inline uint8_t bakeShade(int face, int ao, bool water) {
     return kShade[face][ao][water ? 1 : 0];
 }
@@ -111,6 +117,7 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                             vt.x = (int8_t)(x + kC[face][c][0]);
                             vt.y = (int8_t)(y + kC[face][c][1]);
                             vt.z = (int8_t)(z + kC[face][c][2]);
+                            vt.fracY = 0;
                             vt.u = (uint8_t)kU[face][c];
                             vt.v = (uint8_t)kV[face][c];
                             vt.tex = (id == B_LAVA) ? T_LAVA : T_WATER;
@@ -148,14 +155,23 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                     if (cullFace(id, nb)) continue;
 
                     uint8_t fTile = blockTile(id, f);
+                    // 13/16 高的方块：角点的 y 落在小数高度上，侧面 UV 只取
+                    // 贴图第 3..15 行（跳过顶部透明区）
+                    const int h16 = blockHeight16(id);
+                    const bool partial = h16 < 16;
                     uint32_t base = (uint32_t)ov.size();
                     for (int c = 0; c < 4; c++) {
                         TerrainVertex vt;
+                        int yOff = kC[f][c][1];
                         vt.x = (int8_t)(x + kC[f][c][0]);
-                        vt.y = (int8_t)(y + kC[f][c][1]);
+                        vt.y = (int8_t)(y + (partial ? 0 : yOff));
                         vt.z = (int8_t)(z + kC[f][c][2]);
+                        vt.fracY = (uint8_t)(partial ? yOff * h16 : 0);
                         vt.u = (uint8_t)kU[f][c];
-                        vt.v = (uint8_t)kV[f][c];
+                        uint8_t vv = (uint8_t)kV[f][c];
+                        if (partial && f != F_PY && f != F_NY)
+                            vv = (uint8_t)((16 - h16) + vv * h16 / 15);
+                        vt.v = vv;
                         vt.tex = fTile;
                         // AO：在面外侧那一层（法线方向偏移一格）取该角点的
                         // 两条边邻居 + 对角邻居。旧实现取在本层且整体偏了一格，

@@ -911,7 +911,7 @@ static void appendBox(std::vector<TerrainVertex>& verts, Vec3 c, Vec3 h, float y
             Vec3 p = v[f.vi[t]];
             TerrainVertex vt;
             vt.x = (int8_t)p.x; vt.y = (int8_t)p.y; vt.z = (int8_t)p.z;
-            vt.pad = 0;
+            vt.fracY = 0;
             vt.u = (t < 3) ? ((t == 0 || t == 3) ? 0 : 15) : ((t == 2) ? 15 : 0);
             vt.v = (t <= 1) ? 0 : 15;
             vt.tex = tile;

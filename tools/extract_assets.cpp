@@ -54,6 +54,7 @@ static const AssetEntry kAssets[] = {
     {"assets/minecraft/textures/block/end_stone.png",              "block/end_stone.png"},
     {"assets/minecraft/textures/block/end_portal_frame_top.png",   "block/end_portal_frame.png"},
     {"assets/minecraft/textures/block/end_portal_frame_side.png",  "block/end_portal_frame_side.png"},
+    {"assets/minecraft/textures/block/end_portal_frame_eye.png",   "block/end_portal_frame_eye.png"},
     {"assets/minecraft/textures/block/dragon_egg.png",             "block/dragon_egg.png"},
     // GUI 贴图（assets/gui）
     {"assets/minecraft/textures/gui/sprites/widget/button.png",               "gui/button.png"},

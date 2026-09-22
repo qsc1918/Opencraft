@@ -204,25 +204,32 @@ int main(int argc, char** argv) {
         player.cam.markDirty();
 
         if (!loadFrom.empty()) {
-            // 从磁盘载入已保存区块（二进制格式：全部已生成区块）。
+            // 从磁盘载入已保存区块（二进制格式：各维度分别一段）。
             float savedSpawnX = 8.5f, savedSpawnY = 80.0f, savedSpawnZ = 8.5f;
             float savedYaw = 0.0f, savedPitch = -0.1f;
             bool savedFlying = false;
+            DimensionId savedDim = DIM_OVERWORLD;
             loadWorld(*world, seed, savedSpawnX, savedSpawnY, savedSpawnZ,
-                      savedYaw, savedPitch, savedFlying, loadFrom, savesDir());
+                      savedYaw, savedPitch, savedFlying, savedDim, loadFrom, savesDir());
             // 网格不持久化（只存方块数据），载入后必须重建全部已载入区块，
-            // 否则残留网格与邻块边界面会不一致。
-            std::vector<std::pair<int,int>> loadedChunks;
-            world->forEachChunk([&](std::shared_ptr<Chunk>& c, int cx, int cz) {
-                if (c->state.load() >= 1) loadedChunks.push_back({cx, cz});
-            });
-            for (auto& [cx, cz] : loadedChunks) {
-                world->forceMeshChunk(cx, cz);
-                world->forceMeshChunk(cx + 1, cz);
-                world->forceMeshChunk(cx - 1, cz);
-                world->forceMeshChunk(cx, cz + 1);
-                world->forceMeshChunk(cx, cz - 1);
+            // 否则残留网格与邻块边界面会不一致。要逐维度重建。
+            for (int d = 0; d < DIM_COUNT; d++) {
+                world->setDimension((DimensionId)d);
+                std::vector<std::pair<int,int>> loadedChunks;
+                world->forEachChunk([&](std::shared_ptr<Chunk>& c, int cx, int cz) {
+                    if (c->state.load() >= 1) loadedChunks.push_back({cx, cz});
+                });
+                for (auto& [cx, cz] : loadedChunks) {
+                    world->forceMeshChunk(cx, cz);
+                    world->forceMeshChunk(cx + 1, cz);
+                    world->forceMeshChunk(cx - 1, cz);
+                    world->forceMeshChunk(cx, cz + 1);
+                    world->forceMeshChunk(cx, cz - 1);
+                }
             }
+            // 恢复存档里玩家所在的维度（否则会站在主世界看下界的区块）
+            player.dim = savedDim;
+            world->setDimension(savedDim);
             if (!a.posStr.empty()) {
                 float x = 0, y = 80, z = 0;
                 if (sscanf(a.posStr.c_str(), "%f,%f,%f", &x, &y, &z) >= 1) player.cam.pos = Vec3(x, y, z);

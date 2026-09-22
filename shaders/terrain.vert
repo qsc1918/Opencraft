@@ -20,7 +20,8 @@ layout(set = 0, binding = 0) uniform Ubo {
 } ubo;
 
 void main() {
-    vec3 p = vec3(inPos.xyz);
+    // inPos.w 存 y 的 1/16 小数部分（末地传送门框架是 13/16 高）
+    vec3 p = vec3(inPos.xyz) + vec3(0.0, float(inPos.w) / 16.0, 0.0);
     vec3 wp = p + pc.origin.xyz;
     gl_Position = ubo.viewProj * vec4(wp, 1.0);
 

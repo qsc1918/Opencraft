@@ -133,12 +133,12 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
     /*B_NETHER_PORTAL*/ {"opencraft:nether_portal","传送门", false, false, 11, 0,  T_NETHER_PORTAL, T_NETHER_PORTAL, T_NETHER_PORTAL},
     // --- 末地 ---
     /*B_END_STONE */ {"opencraft:end_stone",     "末地石",   true,  true,  0, 15, T_END_STONE, T_END_STONE, T_END_STONE},
-    // 框架：顶面与侧面纹理不同，六面都要用对应面的纹理
-    /*B_END_PORTAL_FRAME*/ {"opencraft:end_portal_frame","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME_SIDE, T_END_PORTAL_FRAME_SIDE},
+    // 框架：顶面/侧面纹理不同，只有 13/16 高（高度见 mesher 的 blockHeight16）
+    /*B_END_PORTAL_FRAME*/ {"opencraft:end_portal_frame","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
     /*B_END_PORTAL */ {"opencraft:end_portal",   "末地传送门", false, false, 15, 0, T_END_PORTAL, T_END_PORTAL, T_END_PORTAL},
     /*B_END_GATEWAY*/ {"opencraft:end_gateway",  "折跃门",   false, false, 15, 0,  T_END_GATEWAY, T_END_GATEWAY, T_END_GATEWAY},
     /*B_DRAGON_EGG*/ {"opencraft:dragon_egg",    "龙蛋",     true,  true,  1,  15, T_DRAGON_EGG, T_DRAGON_EGG, T_DRAGON_EGG},
-    /*B_END_PORTAL_FRAME_EYE*/ {"opencraft:end_portal_frame_eye","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_PORTAL_FRAME_SIDE},
+    /*B_END_PORTAL_FRAME_EYE*/ {"opencraft:end_portal_frame_eye","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
     // --- 火 ---
     /*B_FIRE     */ {"opencraft:fire",           "火",       false, false, 15, 0,  T_FIRE,    T_FIRE,    T_FIRE   },
 };

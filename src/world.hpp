@@ -29,7 +29,7 @@ inline int chunkIndex(int x, int y, int z) { return x + (z << 4) + (y << 8); }
 // 地形/水面网格共用的 8 字节紧凑顶点。
 struct TerrainVertex {
     int8_t  x, y, z;
-    uint8_t pad;
+    uint8_t fracY;    // y 的小数部分（1/16 格）：13/16 高的方块（末地门框架）用
     uint8_t u, v;     // 图块内 0..15
     uint8_t tex;      // 图集图块下标
     uint8_t shade;    // 0..255 预烘焙亮度（面光 * AO）
@@ -141,6 +141,10 @@ public:
     // 遍历全部区块（主线程，当前维度）。
     void forEachChunk(const std::function<void(std::shared_ptr<Chunk>&, int, int)>& fn);
 
+    // 指定维度的区块遍历（存档要按维度分别收集）。
+    void forEachChunkInDim(DimensionId dim,
+                           const std::function<void(std::shared_ptr<Chunk>&, int, int)>& fn);
+
     // 裸指针快照（当前维度），免得渲染侧持有 shared_ptr。
     struct ChunkInfo { Chunk* c; int cx; int cz; };
     void snapshotChunks(std::vector<ChunkInfo>& out);
@@ -152,6 +156,7 @@ public:
 
     void forceGenerateChunk(int cx, int cz);
     void loadChunkFromDisk(int cx, int cz, std::istream& f);
+    void loadChunkFromDiskInDim(DimensionId dim, int cx, int cz, std::istream& f);
     void forceMeshChunk(int cx, int cz);
 
     size_t chunkCount() const {

@@ -100,13 +100,18 @@ bool World::setBlockInDim(DimensionId dim, int x, int y, int z, uint8_t id) {
     return true;
 }
 
-void World::forEachChunk(const std::function<void(std::shared_ptr<Chunk>&, int, int)>& fn) {
+void World::forEachChunkInDim(DimensionId dim,
+                              const std::function<void(std::shared_ptr<Chunk>&, int, int)>& fn) {
     std::lock_guard<std::mutex> lk(mapLock_);
-    for (auto& kv : dc().chunks) {
+    for (auto& kv : dims_[dim].chunks) {
         int cx = (int)(int32_t)(kv.first >> 32);
         int cz = (int)(int32_t)kv.first;
         fn(kv.second, cx, cz);
     }
+}
+
+void World::forEachChunk(const std::function<void(std::shared_ptr<Chunk>&, int, int)>& fn) {
+    forEachChunkInDim(currentDim_, fn);
 }
 
 void World::snapshotChunks(std::vector<ChunkInfo>& out) {
@@ -155,19 +160,23 @@ void World::markDirty(int cx, int cz) {
     scheduleMesh(currentDim_, cx, cz);
 }
 
-void World::loadChunkFromDisk(int cx, int cz, std::istream& f) {
+void World::loadChunkFromDiskInDim(DimensionId dim, int cx, int cz, std::istream& f) {
     uint64_t key = chunkKey(cx, cz);
-    auto& dim = dc();
+    auto& ds = dims_[dim];
     std::shared_ptr<Chunk> c;
     {
         std::lock_guard<std::mutex> lk(mapLock_);
-        auto it = dim.chunks.find(key);
-        if (it == dim.chunks.end()) { c = std::make_shared<Chunk>(); dim.chunks[key] = c; }
+        auto it = ds.chunks.find(key);
+        if (it == ds.chunks.end()) { c = std::make_shared<Chunk>(); ds.chunks[key] = c; }
         else c = it->second;
     }
     f.read((char*)c->blocks.data(), CHUNK_VOL);
     c->state.store(1);
     c->dirty.store(true);
+}
+
+void World::loadChunkFromDisk(int cx, int cz, std::istream& f) {
+    loadChunkFromDiskInDim(currentDim_, cx, cz, f);
 }
 
 void World::forceMeshChunk(int cx, int cz) {
