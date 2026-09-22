@@ -20,7 +20,8 @@ layout(set = 0, binding = 0) uniform Ubo {
 } ubo;
 
 void main() {
-    vec3 p = vec3(inPos.xyz);
+    // inPos.xyz 是 1/16 格单位的整数（与 terrain.vert 同一顶点格式）
+    vec3 p = vec3(inPos.xyz) / 16.0;
     vec3 wp = p + pc.origin.xyz;
     gl_Position = ubo.viewProj * vec4(wp, 1.0);
 

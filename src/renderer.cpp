@@ -248,10 +248,10 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     }
 
     // --- 管线 ---
-    VkVertexInputBindingDescription terrBinding = {0, 8, VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputBindingDescription terrBinding = {0, 12, VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription terrAttrs[2] = {};
-    terrAttrs[0] = {0, 0, VK_FORMAT_R8G8B8A8_SINT, 0};
-    terrAttrs[1] = {1, 0, VK_FORMAT_R8G8B8A8_UINT, 4};
+    terrAttrs[0] = {0, 0, VK_FORMAT_R16G16B16A16_SINT, 0};
+    terrAttrs[1] = {1, 0, VK_FORMAT_R8G8B8A8_UINT, 8};
 
     terrainPipe_ = makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
                                 "terrain.vert.spv", "terrain.frag.spv",
@@ -295,7 +295,7 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
                                false, true, true);
     if (!entityPipe_) fprintf(stderr, "[renderer] WARNING: entity pipeline creation failed\n");
 
-    // 实体动态顶点缓冲：CPU 每帧构建，256KB 约够 8K 个方块面
+    // 实体动态顶点缓冲：CPU 每帧构建，256KB 约够 3.6K 个方块面（12 字节/顶点）
     for (int i = 0; i < VkCtx::MAX_FRAMES_IN_FLIGHT; i++) {
         createBuffer(ctx, 256 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, entityVB_[i]);
@@ -911,10 +911,17 @@ static void appendBox(std::vector<TerrainVertex>& verts, Vec3 c, Vec3 h, float y
         for (int t : {0,1,2, 0,2,3}) {
             Vec3 p = v[f.vi[t]];
             TerrainVertex vt;
-            vt.x = (int8_t)p.x; vt.y = (int8_t)p.y; vt.z = (int8_t)p.z;
-            vt.fracY = 0;
-            vt.u = (t < 3) ? ((t == 0 || t == 3) ? 0 : 15) : ((t == 2) ? 15 : 0);
-            vt.v = (t <= 1) ? 0 : 15;
+            // 顶点位置是 1/16 格单位的 int16，越界会截断，故夹一下
+            auto q16 = [](float q) {
+                float s = std::floor(q * 16.0f + 0.5f);
+                if (s > 32767.0f) s = 32767.0f;
+                if (s < -32768.0f) s = -32768.0f;
+                return (int16_t)s;
+            };
+            vt.x = q16(p.x); vt.y = q16(p.y); vt.z = q16(p.z);
+            vt.w = 0;
+            vt.u = (t < 3) ? ((t == 0 || t == 3) ? 0 : 16) : ((t == 2) ? 16 : 0);
+            vt.v = (t <= 1) ? 0 : 16;
             vt.tex = tile;
             vt.shade = f.sh;
             verts.push_back(vt);
@@ -941,8 +948,10 @@ void Renderer::drawEntities(VkCtx& ctx, const Camera& cam) {
         }
     }
     if (entityVerts_.empty()) return;
-    // 上传顶点
-    memcpy(entityMap_[curFrame_], entityVerts_.data(), entityVerts_.size() * sizeof(TerrainVertex));
+    // 上传顶点（缓冲 256KB，超了就截断，别越界写显存映射）
+    size_t maxVerts = (256 * 1024) / sizeof(TerrainVertex);
+    size_t n = entityVerts_.size() < maxVerts ? entityVerts_.size() : maxVerts;
+    memcpy(entityMap_[curFrame_], entityVerts_.data(), n * sizeof(TerrainVertex));
     VkCommandBuffer cb = ctx.cmds[curFrame_];
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, entityPipe_);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainLayout_, 0, 1, &terrainSet_[curFrame_], 0, nullptr);
@@ -951,7 +960,7 @@ void Renderer::drawEntities(VkCtx& ctx, const Camera& cam) {
     VkBuffer vb = entityVB_[curFrame_].b;
     VkDeviceSize off = 0;
     vkCmdBindVertexBuffers(cb, 0, 1, &vb, &off);
-    vkCmdDraw(cb, (uint32_t)entityVerts_.size(), 1, 0, 0);
+    vkCmdDraw(cb, (uint32_t)n, 1, 0, 0);
 }
 
 // drawEntities 的调用点应放在 drawChunks 结束大括号之后
@@ -1102,16 +1111,30 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
             for (auto& v : q) quads.push_back(v);
         };
         float bx = (float)hit.x, by = (float)hit.y, bz = (float)hit.z;
-        Vec3 cube[8] = {
-            {bx, by, bz}, {bx + 1, by, bz}, {bx + 1, by + 1, bz}, {bx, by + 1, bz},
-            {bx, by, bz + 1}, {bx + 1, by, bz + 1}, {bx + 1, by + 1, bz + 1}, {bx, by + 1, bz + 1}};
-        int edges[12][2] = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
-        float t = 1.0f;
-        for (auto& e : edges) {
-            float ax, ay, b2x, b2y;
-            if (!project(cube[e[0]].x, cube[e[0]].y, cube[e[0]].z, ax, ay)) continue;
-            if (!project(cube[e[1]].x, cube[e[1]].y, cube[e[1]].z, b2x, b2y)) continue;
-            pushLineQuad(ax, ay, b2x, b2y, t, 0, 0, 0, 0.85f);
+        // 轮廓盒按方块形状给：末地门框架只有 13/16 高，有眼时再画中间凸起的眼块
+        // （对应原版 SHAPE_EMPTY / SHAPE_FULL）。
+        auto drawBoxEdges = [&](float x0, float y0, float z0, float x1, float y1, float z1) {
+            Vec3 cube[8] = {
+                {x0, y0, z0}, {x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0},
+                {x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1}};
+            static const int edges[12][2] = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},
+                                             {0,4},{1,5},{2,6},{3,7}};
+            for (auto& e : edges) {
+                float ax, ay, b2x, b2y;
+                if (!project(cube[e[0]].x, cube[e[0]].y, cube[e[0]].z, ax, ay)) continue;
+                if (!project(cube[e[1]].x, cube[e[1]].y, cube[e[1]].z, b2x, b2y)) continue;
+                pushLineQuad(ax, ay, b2x, b2y, 1.0f, 0, 0, 0, 0.85f);
+            }
+        };
+        uint8_t hitBlock = world_->getBlock(hit.x, hit.y, hit.z);
+        if (blockIsPortalFrame(hitBlock)) {
+            const float kFrameTop = 13.0f / 16.0f;
+            drawBoxEdges(bx, by, bz, bx + 1, by + kFrameTop, bz + 1);
+            if (blockFrameHasEye(hitBlock))
+                drawBoxEdges(bx + 0.25f, by + kFrameTop, bz + 0.25f,
+                             bx + 0.75f, by + 1.0f, bz + 0.75f);
+        } else {
+            drawBoxEdges(bx, by, bz, bx + 1, by + 1, bz + 1);
         }
     }
 

@@ -26,15 +26,16 @@
 // 见 docs/standards.md。
 inline int chunkIndex(int x, int y, int z) { return x + (z << 4) + (y << 8); }
 
-// 地形/水面网格共用的 8 字节紧凑顶点。
+// 地形/水面网格共用的紧凑顶点。
+// 位置是 1/16 格为单位的整数（亚方块精度：末地门框架 13/16 高、眼睛 element 4..12），
+// 由着色器除以 16 还原；区块内坐标 0..16 格 → 0..256，实体世界坐标 ±2048 格内够用。
 struct TerrainVertex {
-    int8_t  x, y, z;
-    uint8_t fracY;    // y 的小数部分（1/16 格）：13/16 高的方块（末地门框架）用
-    uint8_t u, v;     // 图块内 0..15
+    int16_t x, y, z, w;  // 1/16 格单位；w 留空（对齐 8 字节属性）
+    uint8_t u, v;     // 图块内 UV（原版语义 0..16，着色器再偏移半像素取纹素中心）
     uint8_t tex;      // 图集图块下标
     uint8_t shade;    // 0..255 预烘焙亮度（面光 * AO）
 };
-static_assert(sizeof(TerrainVertex) == 8, "vertex must be 8 bytes");
+static_assert(sizeof(TerrainVertex) == 12, "vertex must be 12 bytes");
 
 inline bool operator==(const TerrainVertex& a, const TerrainVertex& b) {
     return std::memcmp(&a, &b, sizeof(TerrainVertex)) == 0;

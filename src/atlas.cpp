@@ -403,23 +403,9 @@ Atlas buildAtlas(const std::string& dir) {
         blitTile(t, img, w, h);
     }
 
-    // 有眼的末地传送门框架：原版顶面 = 框架顶面 + 中间的眼（眼贴图 4..11 区域），
-    // 这里直接把框架顶面合进"有眼"图块，顶面就不会只显示一个眼图案。
-    {
-        auto cell = [&](int tile, int x, int y) -> uint8_t* {
-            int tx = tile % a.tilesX, ty = tile / a.tilesX;
-            return &a.rgba[((size_t)(ty * a.cellSize + a.tilePad + y) * a.width +
-                            (tx * a.cellSize + a.tilePad + x)) * 4];
-        };
-        for (int y = 0; y < 16; y++) {
-            for (int x = 0; x < 16; x++) {
-                if (x >= 4 && x < 12 && y >= 4 && y < 12) continue; // 中间保留眼图案
-                uint8_t* dst = cell(T_END_PORTAL_FRAME_EYE, x, y);
-                const uint8_t* src = cell(T_END_PORTAL_FRAME, x, y);
-                for (int c = 0; c < 4; c++) dst[c] = src[c];
-            }
-        }
-    }
+    // 有眼的框架不再把眼贴图合进"框架顶面"图块：mesher 按原版模型另外画一个
+    // 居中的眼 element（顶面 uv 4,4,12,12 / 侧面 uv 4,0,12,3），
+    // 所以 T_END_PORTAL_FRAME_EYE 必须保持 end_portal_frame_eye.png 原样。
 
     a.built = true;
     return a;

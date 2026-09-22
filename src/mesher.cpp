@@ -7,36 +7,35 @@ namespace {
 
 // 预计算面表，下标顺序必须与 Face 枚举一致：
 // F_PX=0, F_NX=1, F_PY=2, F_NY=3, F_PZ=4, F_NZ=5
-const int kC[6][4][3] = {
-    {{1,0,1},{1,0,0},{1,1,0},{1,1,1}}, // +X 面
-    {{0,0,0},{0,0,1},{0,1,1},{0,1,0}}, // -X 面
-    {{0,1,1},{1,1,1},{1,1,0},{0,1,0}}, // +Y 面
-    {{1,0,1},{0,0,1},{0,0,0},{1,0,0}}, // -Y 面（绕序反转，否则从下方看被剔除）
-    {{0,0,1},{1,0,1},{1,1,1},{0,1,1}}, // +Z 面
-    {{1,0,0},{0,0,0},{0,1,0},{1,1,0}}, // -Z 面
+// 原版 FaceBakery 的角点顺序（每个角点分量 0=element 的 min、1=max）：
+// 顶点 0..3 三角化为 0,1,2 / 0,2,3，法线 (p1-p0)×(p2-p0) 指向 element 外侧，
+// 与管线的前面绕序一致。
+const uint8_t kCorner[6][4][3] = {
+    {{1,1,1},{1,0,1},{1,0,0},{1,1,0}}, // +X east
+    {{0,1,0},{0,0,0},{0,0,1},{0,1,1}}, // -X west
+    {{0,1,0},{0,1,1},{1,1,1},{1,1,0}}, // +Y up
+    {{0,0,1},{0,0,0},{1,0,0},{1,0,1}}, // -Y down
+    {{0,1,1},{0,0,1},{1,0,1},{1,1,1}}, // +Z south
+    {{1,1,0},{1,0,0},{0,0,0},{0,1,0}}, // -Z north
 };
-const int kU[6][4] = {
-    {15,0,0,15}, {0,15,15,0}, {0,15,15,0}, {15,0,0,15}, {0,15,15,0}, {15,0,0,15},
-};
-const int kV[6][4] = {
-    {15,15,0,0}, {15,15,0,0}, {15,15,0,0}, {15,15,0,0}, {15,15,0,0}, {15,15,0,0},
-};
-const int kA1[6] = {2,2,0,0,0,0};
-const int kA2[6] = {1,1,2,2,1,1};
+// 原版 CuboidFace.UVs：顶点 0=(minU,minV) 1=(minU,maxV) 2=(maxU,maxV) 3=(maxU,minV)
+const uint8_t kUvCorner[4][2] = {{0,0},{0,1},{1,1},{1,0}};
+
 const int kNormal[6][3] = {
     {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1},
 };
 
 // me 朝 nb 的面是否需要剔除（同类玻璃/树叶之间也剔除）。
+// 邻居遮挡按"整面"判断：末地门框架只有 13/16 高，遮不住邻居的整个面，
+// 所以它旁边的方块（比如框顶上方那块）该画的面必须画，否则会透出方块内部。
 inline bool cullFace(uint8_t me, uint8_t nb) {
     if (me == B_GLASS && nb == B_GLASS) return true;
     if (me == B_LEAVES && nb == B_LEAVES) return true;
+    // 两个框架贴着时遮挡形状相同，接触面重合，剔掉避免 z-fighting
+    if (blockIsPortalFrame(me) && blockIsPortalFrame(nb)) return true;
+    if (blockIsPortalFrame(nb)) return false;
     if (blockIsOpaque(nb)) return true;
     return false;
-}
-
-inline bool waterCull(uint8_t nb) {
-    return nb == B_WATER || blockIsOpaque(nb);
 }
 
 // 流体只保留最上面那一层的顶面：同种流体叠在一起时必须剔除，
@@ -44,17 +43,6 @@ inline bool waterCull(uint8_t nb) {
 inline bool fluidCull(uint8_t nb) {
     return nb == B_WATER || nb == B_LAVA || blockIsOpaque(nb);
 }
-
-// 每个实体面在贴图里的 UV（0..16 像素，按未旋转纹理布局），
-// 顺序与 kC 的顶点顺序一致。
-const int kFaceUV[6][4][2] = {
-    {{0,15},{0,0},{15,0},{15,15}},   // +X
-    {{15,15},{15,0},{0,0},{0,15}},   // -X
-    {{0,0},{15,0},{15,15},{0,15}},   // +Y
-    {{0,0},{15,0},{15,15},{0,15}},   // -Y
-    {{0,0},{15,0},{15,15},{0,15}},   // +Z
-    {{15,0},{0,0},{0,15},{15,15}},   // -Z
-};
 
 const float kAoBright[4] = {0.42f, 0.64f, 0.82f, 1.0f};
 const float kFaceBright[6] = {0.80f, 0.80f, 1.0f, 0.55f, 0.80f, 0.80f};
@@ -80,34 +68,104 @@ inline bool emissiveBlock(uint8_t id) {
     return id < B_COUNT && BLOCK_DEFS[id].lightEmission >= 10;
 }
 
-// 一个方块可以由多个长方体拼成（原版模型 element 语义）。
-// 坐标是 1/16 格、以方块原点为基准，取值范围 0..16。
-struct Box { int x0, y0, z0, x1, y1, z1; };
+// ---------------------------------------------------------------------------
+// 方块模型：一个方块由若干长方体（原版 element）拼成，坐标 1/16 格、0..16。
+// 与原版一致，UV 与位置分开：每个面有自己的图块与 UV 矩形（0..16 像素），
+// cullface 只写在贴在方块边界上的面上，没写的面（模型内部面）永不被邻居剔除。
+// ---------------------------------------------------------------------------
+struct BoxFace {
+    uint8_t tile = T_WHITE;
+    uint8_t u0 = 0, v0 = 0, u1 = 16, v1 = 16;
+    bool present = true;   // 该面是否存在（原版模型里没写的面不画）
+    bool cull = false;     // 原版 cullface：允许被相邻不透明整方块剔除
+};
 
-// 末地传送门框架是 13/16 高；带眼时再叠一个 8×8×8 的眼块（13..16 高），
-// 眼块贴向朝向那一侧、与框架两侧各留 4 像素，这就是原版
-// end_portal_frame_filled 模型的两个 element。
+struct Box {
+    int x0 = 0, y0 = 0, z0 = 0, x1 = 16, y1 = 16, z1 = 16;
+    BoxFace face[6];
+};
+
+inline void setFace(Box& b, int f, uint8_t tile, uint8_t u0, uint8_t v0, uint8_t u1, uint8_t v1,
+                    bool cull) {
+    b.face[f].tile = tile;
+    b.face[f].u0 = u0; b.face[f].v0 = v0; b.face[f].u1 = u1; b.face[f].v1 = v1;
+    b.face[f].present = true;
+    b.face[f].cull = cull;
+}
+
+// 该面是否贴在方块边界上（只有边界面的 cullface 才有意义，也是 AO 采样的前提）
+inline bool onBoundary(const Box& b, int f) {
+    switch (f) {
+    case F_PX: return b.x1 == 16;
+    case F_NX: return b.x0 == 0;
+    case F_PY: return b.y1 == 16;
+    case F_NY: return b.y0 == 0;
+    case F_PZ: return b.z1 == 16;
+    default:   return b.z0 == 0;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 末地传送门框架：原版 models/block/end_portal_frame(_filled).json
+//  - element0 [0,0,0]->[16,13,16]：down=end_stone(cullface)、up=frame_top(无 cullface)、
+//    四侧 uv [0,3,16,16]（侧面贴图顶部 3 行是透明的，正好跳过）(cullface 同名)。
+//  - element1 [4,13,4]->[12,16,12]（仅"有眼"）：up uv [4,4,12,12](cullface up)、
+//    四侧 uv [4,0,12,3]（无 cullface，绝不因邻居消失）、没有 down 面。
+// 眼块是"居中"的 8×8 柱子、凸出框顶 3/16（对应原版 SHAPE_FULL），不随朝向偏移。
+// ---------------------------------------------------------------------------
 inline int buildParts(uint8_t id, Box* out) {
     if (blockIsPortalFrame(id)) {
-        out[0] = {0, 0, 0, 16, 13, 16};
+        Box& b = out[0];
+        b = Box{};
+        b.y1 = 13;
+        setFace(b, F_NY, T_END_STONE, 0, 0, 16, 16, true);
+        setFace(b, F_PY, T_END_PORTAL_FRAME, 0, 0, 16, 16, false);
+        for (int f : {F_PX, F_NX, F_PZ, F_NZ})
+            setFace(b, f, T_END_PORTAL_FRAME_SIDE, 0, 3, 16, 16, true);
         if (!blockFrameHasEye(id)) return 1;
-        int dx, dz;
-        frameFacingDir(blockFrameFacing(id), dx, dz);
-        int ex0 = 4, ez0 = 4, ex1 = 12, ez1 = 12;
-        // 眼块整体贴着朝向那一侧的边缘：留 4 像素缝（朝向面在 12，反面在 4）
-        if (dx < 0)      { ex0 = 0;  ex1 = 8;  }
-        else if (dx > 0) { ex0 = 8;  ex1 = 16; }
-        if (dz < 0)      { ez0 = 0;  ez1 = 8;  }
-        else if (dz > 0) { ez0 = 8;  ez1 = 16; }
-        out[1] = {ex0, 13, ez0, ex1, 16, ez1};
+
+        Box& e = out[1];
+        e = Box{};
+        e.x0 = 4; e.x1 = 12; e.y0 = 13; e.y1 = 16; e.z0 = 4; e.z1 = 12;
+        for (int f = 0; f < 6; f++) e.face[f].present = false;
+        setFace(e, F_PY, T_END_PORTAL_FRAME_EYE, 4, 4, 12, 12, true);
+        for (int f : {F_PX, F_NX, F_PZ, F_NZ})
+            setFace(e, f, T_END_PORTAL_FRAME_EYE, 4, 0, 12, 3, false);
         return 2;
     }
-    out[0] = {0, 0, 0, 16, 16, 16};
+    out[0] = Box{};
+    for (int f = 0; f < 6; f++) setFace(out[0], f, blockTile(id, f), 0, 0, 16, 16, true);
     return 1;
 }
 
 inline uint8_t bakeShade(int face, int ao, bool water) {
     return kShade[face][ao][water ? 1 : 0];
+}
+
+// ---------------------------------------------------------------------------
+// AO：在原版里是"面外侧那一层"（法线方向偏移一格）的角点邻居，
+// 角点朝外的两个方向由该角落在 element 的 min 还是 max 侧决定。
+// ---------------------------------------------------------------------------
+inline int aoForFace(const MeshView& view, int x, int y, int z, int f, int c) {
+    int na = f >> 1;                 // 法线轴：0=X,1=Y,2=Z（Face 枚举成对排列）
+    int a1 = (na + 1) % 3, a2 = (na + 2) % 3;
+    int o1 = kCorner[f][c][a1] ? 1 : -1;
+    int o2 = kCorner[f][c][a2] ? 1 : -1;
+    int co[3] = {0, 0, 0};
+    co[a1] = o1;
+    bool s1 = blockIsOpaque(view.at(x + kNormal[f][0] + co[0],
+                                    y + kNormal[f][1] + co[1],
+                                    z + kNormal[f][2] + co[2]));
+    co[a1] = 0; co[a2] = o2;
+    bool s2 = blockIsOpaque(view.at(x + kNormal[f][0] + co[0],
+                                    y + kNormal[f][1] + co[1],
+                                    z + kNormal[f][2] + co[2]));
+    co[a1] = o1; co[a2] = o2;
+    bool dd = blockIsOpaque(view.at(x + kNormal[f][0] + co[0],
+                                    y + kNormal[f][1] + co[1],
+                                    z + kNormal[f][2] + co[2]));
+    if (s1 && s2) return 0;
+    return 3 - ((s1 ? 1 : 0) + (s2 ? 1 : 0) + (dd ? 1 : 0));
 }
 
 } // 匿名命名空间
@@ -141,16 +199,16 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                     // 还会产生发暗的瑕疵。
                     if (fluidCull(view.at(x, y + 1, z))) continue;
                     {
-                        int face = F_PY;
+                        const int face = F_PY;
                         uint32_t base = (uint32_t)wv.size();
                         for (int c = 0; c < 4; c++) {
                             TerrainVertex vt;
-                            vt.x = (int8_t)(x + kC[face][c][0]);
-                            vt.y = (int8_t)(y + kC[face][c][1]);
-                            vt.z = (int8_t)(z + kC[face][c][2]);
-                            vt.fracY = 0;
-                            vt.u = (uint8_t)kU[face][c];
-                            vt.v = (uint8_t)kV[face][c];
+                            vt.x = (int16_t)((x + kCorner[face][c][0]) * 16);
+                            vt.y = (int16_t)((y + kCorner[face][c][1]) * 16);
+                            vt.z = (int16_t)((z + kCorner[face][c][2]) * 16);
+                            vt.w = 0;
+                            vt.u = kUvCorner[c][0] ? 16 : 0;
+                            vt.v = kUvCorner[c][1] ? 16 : 0;
                             vt.tex = (id == B_LAVA) ? T_LAVA : T_WATER;
                             vt.shade = emissiveBlock(id) ? 255 : bakeShade(face, 3, true);
                             wv.push_back(vt);
@@ -167,70 +225,37 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
 
                 if (!blockIsRenderable(id)) continue;
 
-                // 快速剔除：六面全被遮挡
-                bool anyExposed = false;
-                for (int f = 0; f < 6 && !anyExposed; f++) {
-                    int dx = kNormal[f][0], dy = kNormal[f][1], dz = kNormal[f][2];
-                    if (!cullFace(id, view.at(x + dx, y + dy, z + dz))) anyExposed = true;
-                }
-                if (!anyExposed) continue;
-
                 Box parts[2];
                 const int partCount = buildParts(id, parts);
                 for (int pi = 0; pi < partCount; pi++) {
                     const Box& box = parts[pi];
                     for (int f = 0; f < 6; f++) {
-                        // 世界最高层的顶面顶点会算到 y=128，而顶点 y 是 int8_t，
-                        // 溢出成 -128 会生成跨越整个世界高度的巨型面（下界天花板
-                        // 全是基岩，就会变成满屏条纹）。顶层顶面本来也看不见。
-                        if (f == F_PY && y >= WORLD_HEIGHT - 1) continue;
-                        int dx = kNormal[f][0], dy = kNormal[f][1], dz = kNormal[f][2];
-                        uint8_t nb = view.at(x + dx, y + dy, z + dz);
-                        if (cullFace(id, nb)) continue;
+                        const BoxFace& bf = box.face[f];
+                        if (!bf.present) continue;
+                        // 只有"贴方块边界的 cullface 面"才被不透明邻居剔除；
+                        // 模型内部面（如眼块四周、框顶面）永远画，否则贴着方块摆
+                        // 就会缺面。
+                        if (bf.cull && onBoundary(box, f) &&
+                            cullFace(id, view.at(x + kNormal[f][0], y + kNormal[f][1],
+                                                 z + kNormal[f][2])))
+                            continue;
 
-                        uint8_t fTile = blockTile(id, f);
                         uint32_t base = (uint32_t)ov.size();
                         for (int c = 0; c < 4; c++) {
                             TerrainVertex vt;
-                            int bx = kC[f][c][0] ? box.x1 : box.x0;
-                            int by = kC[f][c][1] ? box.y1 : box.y0;
-                            int bz = kC[f][c][2] ? box.z1 : box.z0;
-                            vt.x = (int8_t)(x + bx / 16);
-                            vt.y = (int8_t)(y + by / 16);
-                            vt.z = (int8_t)(z + bz / 16);
-                            vt.fracY = (uint8_t)((by - (by / 16) * 16) * 17);
-                            vt.u = (uint8_t)(kFaceUV[f][c][0] * box.x1 / 16 +
-                                             kFaceUV[f][c][1] * box.x0 / 16);
-                            vt.v = (uint8_t)(kFaceUV[f][c][1] * box.y1 / 16 +
-                                             kFaceUV[f][c][0] * box.y0 / 16);
-                            vt.tex = fTile;
-                            // AO：在面外侧那一层（法线方向偏移一格）取该角点的
-                            // 两条边邻居 + 对角邻居。旧实现取在本层且整体偏了一格，
-                            // 会让大片平面（如下界基岩天花板）出现条纹状明暗。
-                            int a1 = kA1[f], a2 = kA2[f];
-                            int o1 = kC[f][c][a1] == 1 ? 1 : -1;
-                            int o2 = kC[f][c][a2] == 1 ? 1 : -1;
-                            int co[3] = {0, 0, 0};
-                            co[a1] = o1;
-                            int s1x = x + kNormal[f][0] + co[0];
-                            int s1y = y + kNormal[f][1] + co[1];
-                            int s1z = z + kNormal[f][2] + co[2];
-                            co[a1] = 0; co[a2] = o2;
-                            int s2x = x + kNormal[f][0] + co[0];
-                            int s2y = y + kNormal[f][1] + co[1];
-                            int s2z = z + kNormal[f][2] + co[2];
-                            co[a1] = o1; co[a2] = o2;
-                            int dxx = x + kNormal[f][0] + co[0];
-                            int dyy = y + kNormal[f][1] + co[1];
-                            int dzz = z + kNormal[f][2] + co[2];
-
-                            bool s1 = blockIsOpaque(view.at(s1x, s1y, s1z));
-                            bool s2 = blockIsOpaque(view.at(s2x, s2y, s2z));
-                            bool dd = blockIsOpaque(view.at(dxx, dyy, dzz));
-                            int ao;
-                            if (s1 && s2) ao = 0;
-                            else ao = 3 - ((s1 ? 1 : 0) + (s2 ? 1 : 0) + (dd ? 1 : 0));
-                            vt.shade = emissiveBlock(id) ? 255 : bakeShade(f, ao, false);
+                            int cx16 = kCorner[f][c][0] ? box.x1 : box.x0;
+                            int cy16 = kCorner[f][c][1] ? box.y1 : box.y0;
+                            int cz16 = kCorner[f][c][2] ? box.z1 : box.z0;
+                            vt.x = (int16_t)(x * 16 + cx16);
+                            vt.y = (int16_t)(y * 16 + cy16);
+                            vt.z = (int16_t)(z * 16 + cz16);
+                            vt.w = 0;
+                            vt.u = kUvCorner[c][0] ? bf.u1 : bf.u0;
+                            vt.v = kUvCorner[c][1] ? bf.v1 : bf.v0;
+                            vt.tex = bf.tile;
+                            vt.shade = emissiveBlock(id)
+                                          ? 255
+                                          : bakeShade(f, aoForFace(view, x, y, z, f, c), false);
                             ov.push_back(vt);
                         }
                         oi.push_back(base);
