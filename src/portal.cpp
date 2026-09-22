@@ -1,7 +1,10 @@
 #include "portal.hpp"
 #include "world.hpp"
+#include <algorithm>
 #include <array>
+#include <climits>
 #include <cmath>
+#include <cstdlib>
 #include <vector>
 
 namespace portal {
@@ -161,6 +164,13 @@ uint8_t frameIdForPlacement(float yaw) {
 bool tryPlaceEyeOfEnder(World& w, int fx, int fy, int fz) {
     uint8_t b = w.getBlock(fx, fy, fz);
     if (!blockIsPortalFrame(b) || blockFrameHasEye(b)) return false;
+
+    // 方环可能跨 2×2 区块；先把 5×5 范围内涉及的区块生成出来，
+    // 否则 setBlock 对未生成的区块直接失败，门只会填上一部分（原版没这个问题）。
+    for (int rx = -4; rx <= 4; rx++)
+        for (int rz = -4; rz <= 4; rz++)
+            w.forceGenerateChunk(blockToChunkCoord(fx + rx), blockToChunkCoord(fz + rz));
+
     // 变成有眼框架（保留原朝向）
     w.setBlock(fx, fy, fz, frameId(blockFrameFacing(b), true));
 
@@ -172,7 +182,7 @@ bool tryPlaceEyeOfEnder(World& w, int fx, int fy, int fz) {
             if (!edge || isCorner) continue;
             int x0 = fx - relX, z0 = fz - relZ;
             if (allFramesHaveEye(w, x0, fy, z0)) {
-                // 激活中心 3×3 的 portal
+                // 激活中心 3×3 的 portal（对应原版 EnderEyeItem 的 frontTopLeft + (-3,0,-3)）
                 for (int i = 1; i <= 3; i++)
                     for (int j = 1; j <= 3; j++) {
                         int px = x0 + i, pz = z0 + j;
@@ -226,6 +236,172 @@ void onBlockRemoved(World& w, int x, int y, int z, uint8_t oldId) {
             return;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 下界门目的地：对齐原版 PortalForcer（26.2）
+// 原版流程：按坐标比例算出近似出口 → 在附近找已有的门（POI 方形搜索），
+// 找不到就 createPortal 造一扇：33×33 方形螺旋找一列"底下实心、上方 4×4 可替换"的
+// 空腔，放黑曜石框 + 2×3 传送门方块；落点取门内横向中点、底排。
+// 本实现没有 POI 索引，只在"已生成的区块"里找已有门（回程时原门通常还在内存里）。
+// ---------------------------------------------------------------------------
+namespace {
+
+// 能不能被门/门框替换（原版 canBeReplaced() && fluidState.isEmpty()：水/岩浆不算空位）
+inline bool portalReplaceable(uint8_t id) {
+    return id == B_AIR || id == B_FIRE;
+}
+
+// 顶面高度：最上层"阻挡运动"的方块之上的第一格（原版 MOTION_BLOCKING；水/火不算阻挡）
+inline int motionBlockingHeight(const World& w, int x, int z) {
+    for (int y = WORLD_HEIGHT - 1; y >= 0; y--) {
+        uint8_t b = w.getBlock(x, y, z);
+        if (b != B_AIR && b != B_FIRE && b != B_WATER) return y + 1;
+    }
+    return 0;
+}
+
+// 门内落点：横向取中点（2 宽正好落在两格缝上，与原版一致）、纵向取底排。
+inline Vec3 portalLandingPos(const World& w, int px, int py, int pz, int axis) {
+    int wx = axis == 0 ? 1 : 0, wz = axis == 0 ? 0 : 1;
+    int x0 = px, z0 = pz, y0 = py;
+    while (w.getBlock(x0 - wx, py, z0 - wz) == B_NETHER_PORTAL) { x0 -= wx; z0 -= wz; }
+    while (y0 - 1 >= WORLD_MIN_Y && w.getBlock(x0, y0 - 1, z0) == B_NETHER_PORTAL) y0--;
+    int width = 1;
+    while (width < 21 && w.getBlock(x0 + wx * width, py, z0 + wz * width) == B_NETHER_PORTAL) width++;
+    return Vec3((float)x0 + (axis == 0 ? width * 0.5f : 0.5f), (float)y0,
+                (float)z0 + (axis == 0 ? 0.5f : width * 0.5f));
+}
+
+} // 匿名命名空间
+
+int inferPortalAxis(const World& w, int x, int y, int z) {
+    if (w.getBlock(x, y, z) != B_NETHER_PORTAL) return -1;
+    // 门宽方向那一侧一定有同门方块；另一侧是黑曜石框
+    bool xSide = w.getBlock(x + 1, y, z) == B_NETHER_PORTAL ||
+                 w.getBlock(x - 1, y, z) == B_NETHER_PORTAL;
+    bool zSide = w.getBlock(x, y, z + 1) == B_NETHER_PORTAL ||
+                 w.getBlock(x, y, z - 1) == B_NETHER_PORTAL;
+    if (xSide == zSide) return 0;  // 1 格宽等歧义情况按 X 处理
+    return xSide ? 0 : 1;
+}
+
+bool findExistingNetherPortal(World& w, int tx, int ty, int tz, int radiusBlocks, Vec3& outPos) {
+    int bestD2 = INT_MAX, bx = 0, by = 0, bz = 0;
+    // 只扫已生成的区块：跨维度回程时目的地的区块往往还没生成，
+    // 这时就当没找到、直接造新门（原版有 POI 索引，本实现没有）。
+    w.forEachChunk([&](std::shared_ptr<Chunk>& c, int cx, int cz) {
+        int minX = cx * CHUNK_SIZE, minZ = cz * CHUNK_SIZE;
+        if (minX > tx + radiusBlocks || minX + CHUNK_SIZE - 1 < tx - radiusBlocks) return;
+        if (minZ > tz + radiusBlocks || minZ + CHUNK_SIZE - 1 < tz - radiusBlocks) return;
+        if (c->state.load() < 1) return;
+        const uint8_t* blocks = c->blocks.data();
+        for (int y = 0; y < WORLD_HEIGHT; y++)
+            for (int z = 0; z < CHUNK_SIZE; z++)
+                for (int x = 0; x < CHUNK_SIZE; x++) {
+                    if (blocks[chunkIndex(x, y, z)] != B_NETHER_PORTAL) continue;
+                    int wx = minX + x, wz = minZ + z;
+                    int dx = wx - tx, dy = y - ty, dz = wz - tz;
+                    int d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 < bestD2) { bestD2 = d2; bx = wx; by = y; bz = wz; }
+                }
+    });
+    if (bestD2 == INT_MAX) return false;
+    int axis = inferPortalAxis(w, bx, by, bz);
+    outPos = portalLandingPos(w, bx, by, bz, axis < 0 ? 0 : axis);
+    return true;
+}
+
+bool createNetherPortal(World& w, int tx, int ty, int tz, int axis, Vec3& outPos) {
+    const int dirX = axis == 0 ? 1 : 0, dirZ = axis == 0 ? 0 : 1;   // 门宽方向
+    const int cwX = -dirZ, cwZ = dirX;                              // 原版 getClockWise
+    const int maxY = WORLD_HEIGHT - 1;
+
+    auto canReplace = [&](int x, int y, int z) { return portalReplaceable(w.getBlock(x, y, z)); };
+    auto solidAt = [&](int x, int y, int z) { return blockIsSolid(w.getBlock(x, y, z)); };
+    // 原版 canHostFrame：4 宽 × 4 高（底下那排要实心、上面 4 排要可替换）
+    auto canHostFrame = [&](int bx, int by, int bz, int offset) {
+        for (int width = -1; width < 3; width++)
+            for (int height = -1; height < 4; height++) {
+                int x = bx + dirX * width + cwX * offset;
+                int z = bz + dirZ * width + cwZ * offset;
+                int y = by + height;
+                if (y < WORLD_MIN_Y || y >= WORLD_HEIGHT) return false;
+                if (height < 0) { if (!solidAt(x, y, z)) return false; }
+                else if (!canReplace(x, y, z)) return false;
+            }
+        return true;
+    };
+
+    // 螺旋扫 33×33 列（原版 spiralAround(origin, 16)），优先"两侧都能放"的完整位置
+    bool haveFull = false, havePart = false;
+    int fx = 0, fy = 0, fz = 0, px = 0, py = 0, pz = 0;
+    double fullD2 = 0, partD2 = 0;
+    auto scanColumn = [&](int colX, int colZ) {
+        int height = std::min(maxY, motionBlockingHeight(w, colX, colZ));
+        for (int y = height; y >= WORLD_MIN_Y; y--) {
+            if (!canReplace(colX, y, colZ)) continue;
+            int firstEmptyY = y, bottom = y;
+            while (bottom > WORLD_MIN_Y && canReplace(colX, bottom - 1, colZ)) bottom--;
+            if (bottom + 4 > maxY) continue;
+            int deltaY = firstEmptyY - bottom;   // 头顶到柱顶的距离
+            if (!(deltaY <= 0 || deltaY >= 3)) continue;
+            if (!canHostFrame(colX, bottom, colZ, 0)) continue;
+            double d2 = (double)(colX - tx) * (colX - tx) + (double)(bottom - ty) * (bottom - ty) +
+                        (double)(colZ - tz) * (colZ - tz);
+            if (canHostFrame(colX, bottom, colZ, -1) && canHostFrame(colX, bottom, colZ, 1) &&
+                (!haveFull || d2 < fullD2)) {
+                haveFull = true; fullD2 = d2;
+                fx = colX; fy = bottom; fz = colZ;
+            }
+            if (!haveFull && (!havePart || d2 < partD2)) {
+                havePart = true; partD2 = d2;
+                px = colX; py = bottom; pz = colZ;
+            }
+        }
+    };
+    const int kRadius = 16;
+    for (int r = 0; r <= kRadius; r++) {
+        if (r == 0) { scanColumn(tx, tz); continue; }
+        for (int i = -r; i <= r; i++) { scanColumn(tx + i, tz - r); scanColumn(tx + i, tz + r); }
+        for (int i = -r + 1; i <= r - 1; i++) { scanColumn(tx - r, tz + i); scanColumn(tx + r, tz + i); }
+    }
+    if (!haveFull && havePart) { haveFull = true; fx = px; fy = py; fz = pz; }
+
+    if (!haveFull) {
+        // 兜底：硬凿一个口袋（原版同款），保证一定能造出门
+        int minStartY = std::max(WORLD_MIN_Y + 1, 70), maxStartY = maxY - 9;
+        if (maxStartY < minStartY) return false;
+        fx = tx - dirX; fz = tz - dirZ;
+        fy = ty < minStartY ? minStartY : (ty > maxStartY ? maxStartY : ty);
+        for (int box = -1; box < 2; box++)
+            for (int width = 0; width < 2; width++)
+                for (int height = -1; height < 3; height++) {
+                    int x = fx + dirX * width + cwX * box, z = fz + dirZ * width + cwZ * box;
+                    w.setBlock(x, fy + height, z, height < 0 ? B_OBSIDIAN : B_AIR);
+                }
+    }
+
+    // 黑曜石框（4 宽 × 5 层里的边框）
+    for (int width = -1; width < 3; width++)
+        for (int height = -1; height < 4; height++) {
+            if (width != -1 && width != 2 && height != -1 && height != 3) continue;
+            w.setBlock(fx + dirX * width, fy + height, fz + dirZ * width, B_OBSIDIAN);
+        }
+    // 门内 2×3
+    for (int width = 0; width < 2; width++)
+        for (int height = 0; height < 3; height++)
+            w.setBlock(fx + dirX * width, fy + height, fz + dirZ * width, B_NETHER_PORTAL);
+
+    outPos = Vec3((float)fx + (axis == 0 ? 1.0f : 0.5f), (float)fy,
+                  (float)fz + (axis == 0 ? 0.5f : 1.0f));
+    return true;
+}
+
+bool findOrCreateNetherPortal(World& w, int tx, int ty, int tz, int axis, int radiusBlocks,
+                              Vec3& outPos) {
+    if (findExistingNetherPortal(w, tx, ty, tz, radiusBlocks, outPos)) return true;
+    return createNetherPortal(w, tx, ty, tz, axis, outPos);
 }
 
 } // namespace portal

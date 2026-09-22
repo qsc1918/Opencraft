@@ -19,13 +19,23 @@ static void check(bool ok, const char* what) {
 }
 
 // 按原版布局摆一圈：每个框架朝向环心并放上眼睛
+// expectedFacing(dx,dz) 用"写死的期望值"，不调用被测的 frameRequiredFacing，
+// 否则规则写错时自检会跟着一起错（这个坑踩过）。
+static int expectedFacing(int dx, int dz) {
+    // 环坐标（0..4，环心 2,2）：西→东、东→西、北→南、南→北
+    if (dx == 0) return FRAME_EAST;
+    if (dx == 4) return FRAME_WEST;
+    if (dz == 0) return FRAME_SOUTH;
+    return FRAME_NORTH;
+}
+
 static void buildRing(int x0, int y, int z0, bool eyes, bool correctFacing) {
     g_blocks.clear();
     for (int dx = 0; dx < 5; dx++) {
         for (int dz = 0; dz < 5; dz++) {
-            int need = portal::frameRequiredFacing(dx, dz);
-            if (need < 0) continue;
-            int facing = correctFacing ? need : (need + 1) & 3;
+            if (portal::frameRequiredFacing(dx, dz) < 0) continue;
+            int facing = expectedFacing(dx, dz);
+            if (!correctFacing) facing = (facing + 1) & 3;
             g_blocks[{x0 + dx, z0 + dz}] = frameId(facing, eyes);
         }
     }
@@ -34,6 +44,16 @@ static void buildRing(int x0, int y, int z0, bool eyes, bool correctFacing) {
 
 int main() {
     printf("末地门方环自检：\n");
+
+    // 朝向规则本身（对着原版要塞布局的朝向写的期望值）
+    check(portal::frameRequiredFacing(0, 2) == FRAME_EAST, "西边中格 → 朝东（指向环心）");
+    check(portal::frameRequiredFacing(4, 2) == FRAME_WEST, "东边中格 → 朝西");
+    check(portal::frameRequiredFacing(2, 0) == FRAME_SOUTH, "北边中格 → 朝南");
+    check(portal::frameRequiredFacing(2, 4) == FRAME_NORTH, "南边中格 → 朝北");
+    check(portal::frameRequiredFacing(0, 1) == FRAME_EAST, "西边非中格 → 朝东");
+    check(portal::frameRequiredFacing(1, 4) == FRAME_NORTH, "南边非中格 → 朝北");
+    check(portal::frameRequiredFacing(2, 2) < 0, "环心不是框架位置");
+    check(portal::frameRequiredFacing(0, 0) < 0, "四角不是框架位置");
 
     buildRing(0, 64, 0, true, true);
     check(portal::isCompleteRingAt(getBlock, 0, 64, 0), "朝向正确 + 全部有眼 → 激活");

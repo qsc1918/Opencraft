@@ -28,6 +28,8 @@ struct Args {
     std::string posStr;
     std::string breakBlock;
     std::vector<std::string> placeBlocks; // --place x,y,z,id（调试，可多次）
+    std::vector<std::string> useEyes;     // --use-eye x,y,z（调试：对末地门框架用末影之眼）
+    std::vector<std::string> lightPortals; // --light-portal x,y,z（调试：点燃下界门）
     float yaw = 0.0f, pitch = -0.35f;
     float timeArg = -1.0f;
     int renderDist = 8;
@@ -45,6 +47,7 @@ struct Args {
     std::string menuShot;
     int menuScreen = 1; // 默认主菜单（Menuscreen::MainMenu）
     bool spawnPortal = false; // 调试：在出生点生成已点燃的下界门
+    std::string tpDim;        // 调试：--tp-dim 进入世界后立即传送到该维度
     bool showVersion = false; // --version：打印版本号后退出
 };
 
@@ -67,6 +70,8 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--no-ui") a.noUI = true;
         else if (arg == "--break") a.breakBlock = next();
         else if (arg == "--place") a.placeBlocks.push_back(next());
+        else if (arg == "--use-eye") a.useEyes.push_back(next());
+        else if (arg == "--light-portal") a.lightPortals.push_back(next());
         else if (arg == "--time") a.timeArg = std::stof(next());
         else if (arg == "--drive") a.drive = true;
         else if (arg == "--no-vsync") a.noVsync = true;
@@ -78,11 +83,14 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--menu-shot") a.menuShot = next();
         else if (arg == "--menu-screen") a.menuScreen = std::stoi(next());
         else if (arg == "--spawn-portal") a.spawnPortal = true;
+        else if (arg == "--tp-dim") a.tpDim = next();
         else if (arg == "--version") a.showVersion = true;
         else if (arg == "--help") {
             printf("Usage: opencraft [--seed N] [--render-dist N] [--threads N] [--pos x,y,z]\n"
                    "  [--screenshot out.png] [--frames N] [--no-vsync] [--no-ui]\n"
                    "  [--time f] [--drive] [--break x,y,z] [--inventory] [--gpu-index N]\n"
+                   "  [--place x,y,z,id] [--use-eye x,y,z] [--spawn-portal]\n"
+                   "  [--tp-dim overworld|nether|end] 进入世界后立刻切维度（调试）\n"
                    "  [--version] 打印版本号后退出\n");
         }
     }
@@ -367,71 +375,103 @@ int main(int argc, char** argv) {
     };
 
     // 维度传送：切 player.dim 与 world 维度，再设玩家位置。
-    // 下界门：主世界与下界互传，坐标按下界缩放系数 8.0 换算。
-    // 末地门：主世界与末地互传（回程回主世界）。
+    // 下界门：主世界与下界互传，坐标按下界缩放系数 8.0 换算；目的地按原版
+    //   PortalForcer 那套处理（先找已有门，找不到就螺旋选址造一扇新门），
+    //   落点在门内，因此不会把玩家丢进岩浆或方块里。
+    // 末地门：主世界与末地互传（进末地落在中央黑曜石平台上）。
+    // srcX/srcY/srcZ 是源门方块坐标（INT_MIN 表示没有源门，如调试传送）。
     float portalCooldown = 0.0f; // 防止出入口来回反复传送
-    auto performTeleport = [&](DimensionId toDim) {
+    auto performTeleport = [&](DimensionId toDim, int srcX, int srcY, int srcZ) {
         DimensionId fromDim = player.dim;
-        float scale = getDimensionType(toDim).coordinateScale;
-        float inv = 1.0f / scale;
+        if (toDim == fromDim) return;
+        const float scale = getDimensionType(toDim).coordinateScale;
+        const float inv = 1.0f / scale;
         float px = player.cam.pos.x, py = player.cam.pos.y, pz = player.cam.pos.z;
+        // 源门的横向轴要在切维度之前推断（新门沿用源门的轴，原版行为）
+        int srcAxis = 0;
+        if (srcX != INT_MIN) {
+            int a = portal::inferPortalAxis(*world, srcX, srcY, srcZ);
+            if (a >= 0) srcAxis = a;
+        }
         if (toDim == DIM_NETHER) { px *= inv; pz *= inv; }
-        else if (toDim == DIM_OVERWORLD && fromDim == DIM_NETHER) { px *= scale; pz *= scale; }
-        // 原版进末地一律落在中央的 obsidian 平台上（return portal 留着以后做）
-        if (toDim == DIM_END) {
-            px = endgen::END_SPAWN_X;
-            pz = endgen::END_SPAWN_Z;
-            py = endgen::END_SPAWN_Y + 1.0f;
-        }
-        // Y 按两边的世界高度映射，并把下界落点限制在洞穴带内：
-        // 直接沿用原 Y 会把玩家送到贴着基岩天花板的位置（整片天花板怼脸）。
-        {
-            const DimensionType& toT = getDimensionType(toDim);
-            const DimensionType& fromT = getDimensionType(fromDim);
-            float ratio = (py - fromT.minY) / (float)fromT.height;
-            if (ratio < 0.0f) ratio = 0.0f;
-            if (ratio > 1.0f) ratio = 1.0f;
-            py = toT.minY + ratio * toT.height;
-            if (toDim == DIM_NETHER) {
-                if (py < 32.0f) py = 32.0f;
-                if (py > 96.0f) py = 96.0f;
-            }
-        }
+        else if (fromDim == DIM_NETHER) { px *= scale; pz *= scale; }
+
         player.dim = toDim;
         world->setDimension(toDim);
-        // 落点安全化：新维度地形可能是实心的，先把目标区块生成出来，
-        // 再向上找到有 2 格净空的位置，避免玩家直接卡在方块里。
-        world->forceGenerateChunk(blockToChunkCoord((int)std::floor(px)),
-                                  blockToChunkCoord((int)std::floor(pz)));
-        {
-            int bx = (int)std::floor(px), bz = (int)std::floor(pz);
-            auto open = [&](uint8_t b) {
-                return b == B_AIR || b == B_WATER || b == B_LAVA || b == B_NETHER_PORTAL;
+
+        // 安全落点：目标 X/Z 上找两格净空、脚下实心、且不泡岩浆的位置。
+        // （原版 PortalShape.findCollisionFreePosition 的等价简化）
+        auto safeGroundY = [&](int bx, int bz, int startY) {
+            world->forceGenerateChunk(blockToChunkCoord(bx), blockToChunkCoord(bz));
+            auto passable = [&](uint8_t b) {
+                return b == B_AIR || b == B_WATER || b == B_NETHER_PORTAL || b == B_END_PORTAL;
             };
-            // 可站立：脚与头两格净空，且下方有实心块
-            auto standable = [&](int y) {
-                if (y < 2 || y >= WORLD_HEIGHT - 1) return false;
-                if (!open(world->getBlock(bx, y, bz)) || !open(world->getBlock(bx, y + 1, bz)))
-                    return false;
+            auto ok = [&](int y) {
+                if (y < 1 || y >= WORLD_HEIGHT - 1) return false;
+                if (!passable(world->getBlock(bx, y, bz))) return false;
+                if (!passable(world->getBlock(bx, y + 1, bz))) return false;
                 uint8_t below = world->getBlock(bx, y - 1, bz);
-                return blockIsSolid(below) || below == B_NETHER_PORTAL;
+                if (below == B_LAVA || below == B_FIRE) return false;
+                return blockIsSolid(below);
             };
-            // 从目标高度向上下找最近的可站立空位（先往下，避免贴在天花板上）
-            int sy = (int)std::floor(py);
-            if (sy < 2) sy = 2;
+            int sy = startY;
+            if (sy < 1) sy = 1;
             if (sy > WORLD_HEIGHT - 2) sy = WORLD_HEIGHT - 2;
-            int found = -1;
             for (int d = 0; d < WORLD_HEIGHT; d++) {
-                int down = sy - d, up = sy + d;
-                if (down >= 2 && standable(down)) { found = down; break; }
-                if (up < WORLD_HEIGHT - 1 && standable(up)) { found = up; break; }
+                if (ok(sy - d)) return sy - d;
+                if (ok(sy + d)) return sy + d;
             }
-            if (found > 0) py = (float)found;
+            // 实在没有空腔：落在最高的实心方块上
+            for (int y = WORLD_HEIGHT - 2; y >= 1; y--)
+                if (blockIsSolid(world->getBlock(bx, y, bz))) return y + 1;
+            return WORLD_HEIGHT / 2;
+        };
+
+        if (toDim == DIM_END) {
+            // 原版进末地一律落在中央的 obsidian 平台上（return portal 留着以后做）
+            world->forceGenerateChunk(blockToChunkCoord(endgen::END_PLATFORM_X),
+                                      blockToChunkCoord(endgen::END_PLATFORM_Z));
+            px = endgen::END_SPAWN_X;
+            py = endgen::END_SPAWN_Y;
+            pz = endgen::END_SPAWN_Z;
+            // 原版进末地朝向 WEST（本工程 yaw=+π/2 看 +X，西是 -π/2）
+            player.cam.yaw = -1.5707963f;
+            player.cam.pitch = 0.0f;
+        } else if (toDim == DIM_NETHER || fromDim == DIM_NETHER) {
+            int tx = (int)std::floor(px), ty = (int)std::floor(py), tz = (int)std::floor(pz);
+            // 新门选址最多离线 16 格，3×3 区块足以覆盖
+            for (int cx = blockToChunkCoord(tx) - 1; cx <= blockToChunkCoord(tx) + 1; cx++)
+                for (int cz = blockToChunkCoord(tz) - 1; cz <= blockToChunkCoord(tz) + 1; cz++)
+                    world->forceGenerateChunk(cx, cz);
+            // 原版搜索半径：去下界 16 格、回主世界 128 格（方形）
+            const int radius = toDim == DIM_NETHER ? 16 : 128;
+            Vec3 land;
+            if (portal::findOrCreateNetherPortal(*world, tx, ty, tz, srcAxis, radius, land)) {
+                px = land.x;
+                py = land.y;
+                pz = land.z;
+                int ta = portal::inferPortalAxis(*world, (int)std::floor(px), (int)std::floor(py),
+                                                 (int)std::floor(pz));
+                if (srcX != INT_MIN && ta >= 0 && ta != srcAxis)
+                    player.cam.yaw -= 1.5707963f;   // 原版：轴不同转 90°
+            } else {
+                px = tx + 0.5f;
+                pz = tz + 0.5f;
+                py = (float)safeGroundY(tx, tz, ty);
+            }
+        } else {
+            // 从末地回主世界：同一 X/Z 上找安全落点
+            int tx = (int)std::floor(px), tz = (int)std::floor(pz);
+            py = (float)safeGroundY(tx, tz, (int)std::floor(py));
+            px = tx + 0.5f;
+            pz = tz + 0.5f;
         }
         player.cam.pos = Vec3(px, py, pz);
         player.cam.markDirty();
         player.vel = Vec3(0, 0, 0);
         portalCooldown = 1.5f;
+        fprintf(stderr, "[main] teleport %d -> %d at (%.2f, %.2f, %.2f)\n", (int)fromDim,
+                (int)toDim, px, py, pz);
     };
 
     // 每帧检测：脚下方块是传送门就切维度。主循环与截图分支共用。
@@ -455,17 +495,37 @@ int main(int argc, char** argv) {
                     toDim = (curDim == DIM_END) ? DIM_OVERWORLD : DIM_END;
                 }
                 if (toDim != curDim) {
-                    performTeleport(toDim);
+                    performTeleport(toDim, bx, by, bz);
                 }
                 foundPortal = true;
             }
         }
     };
 
+    // 维度名 → DimensionId（--tp-dim 用）
+    auto dimFromName = [](const std::string& s, DimensionId& out) {
+        if (s == "overworld" || s == "主世界") { out = DIM_OVERWORLD; return true; }
+        if (s == "nether" || s == "下界") { out = DIM_NETHER; return true; }
+        if (s == "end" || s == "末地") { out = DIM_END; return true; }
+        return false;
+    };
+
     if (gs == GS::Play) {
         enterWorld(a.seed, "world", std::string());
         
         settle();
+
+        // 调试：--tp-dim 进入世界后立刻切维度（快速在主世界/下界/末地之间穿越）
+        if (!a.tpDim.empty()) {
+            DimensionId d = DIM_OVERWORLD;
+            if (dimFromName(a.tpDim, d)) {
+                fprintf(stderr, "[main] debug teleport -> %s\n", a.tpDim.c_str());
+                performTeleport(d, INT_MIN, 0, 0);
+                settle();
+            } else {
+                fprintf(stderr, "[main] 未知维度: %s\n", a.tpDim.c_str());
+            }
+        }
         
         if (!a.breakBlock.empty()) {
             int bx = 0, by = 0, bz = 0;
@@ -482,6 +542,24 @@ int main(int argc, char** argv) {
                 world->forceGenerateChunk(blockToChunkCoord(px), blockToChunkCoord(pz));
                 world->setBlock(px, py, pz, (uint8_t)pid);
                 fprintf(stderr, "[main] place (%d,%d,%d)=%d\n", px, py, pz, pid);
+            }
+        }
+        // 调试：模拟对末地门框架用末影之眼（x,y,z，可多次），用来验证激活链路
+        for (const std::string& e : a.useEyes) {
+            int ex = 0, ey = 0, ez = 0;
+            if (sscanf(e.c_str(), "%d,%d,%d", &ex, &ey, &ez) == 3) {
+                world->forceGenerateChunk(blockToChunkCoord(ex), blockToChunkCoord(ez));
+                bool lit = portal::tryPlaceEyeOfEnder(*world, ex, ey, ez);
+                fprintf(stderr, "[main] use eye (%d,%d,%d) activated=%d\n", ex, ey, ez, (int)lit);
+            }
+        }
+        // 调试：模拟用打火石点燃下界门（x,y,z 指向门洞内任意空位）
+        for (const std::string& e : a.lightPortals) {
+            int ex = 0, ey = 0, ez = 0;
+            if (sscanf(e.c_str(), "%d,%d,%d", &ex, &ey, &ez) == 3) {
+                world->forceGenerateChunk(blockToChunkCoord(ex), blockToChunkCoord(ez));
+                bool lit = portal::tryLightNetherPortal(*world, ex, ey, ez);
+                fprintf(stderr, "[main] light portal (%d,%d,%d) lit=%d\n", ex, ey, ez, (int)lit);
             }
         }
         if (!a.crystalPos.empty()) {
@@ -589,6 +667,15 @@ int main(int argc, char** argv) {
                 else { win.setCapture(true); ShowCursor(FALSE); }
             }
             if (a.drive) { in.keys['W'] = true; player.cam.pitch = -0.1f; player.cam.markDirty(); }
+
+            // 调试：F7 顺序切维度、F6 反向切，快速在主世界/下界/末地之间穿越
+            if (in.pressed[VK_F7] || in.pressed[VK_F6]) {
+                int step = in.pressed[VK_F7] ? 1 : -1;
+                int d = ((int)player.dim + step + DIM_COUNT) % DIM_COUNT;
+                fprintf(stderr, "[main] debug teleport (F%d) -> dim %d\n",
+                        in.pressed[VK_F7] ? 7 : 6, d);
+                performTeleport((DimensionId)d, INT_MIN, 0, 0);
+            }
 
             if (renderer.inventoryOpen()) {
                 float ccx, ccy; win.cursorPos(ccx, ccy); renderer.setCursor(ccx, ccy);

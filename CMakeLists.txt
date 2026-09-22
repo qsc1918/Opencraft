@@ -112,6 +112,22 @@ add_executable(portalselftest tools/portalselftest.cpp)
 target_include_directories(portalselftest PRIVATE src)
 target_compile_options(portalselftest PRIVATE -O2 -fno-rtti)
 
+# 传送门流程自检（末地门激活 + 下界门目的地生成/回程，链接 World）
+add_executable(portalflowtest
+  tools/portalflowtest.cpp
+  src/portal.cpp
+  src/world.cpp
+  src/generator.cpp
+  src/endgen.cpp
+  src/nethergen.cpp
+  src/mcnoise.cpp
+  src/noise.cpp
+  src/mesher.cpp
+)
+target_include_directories(portalflowtest PRIVATE src)
+target_compile_options(portalflowtest PRIVATE -O2 -fno-rtti)
+target_link_libraries(portalflowtest PRIVATE user32)
+
 # ---- 打包自解压安装包（7-Zip SFX）----
 # 需要仓库根目录有 7-Zip\（本地产物，不入库）；默认每次构建后自动打包
 option(OPENCRAFT_AUTO_PACKAGE "每次构建后自动打包安装包" ON)

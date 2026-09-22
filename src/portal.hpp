@@ -1,6 +1,7 @@
 #pragma once
 #include "blocks.hpp"
 #include "dimensions.hpp"
+#include "util.hpp"
 
 class World;
 
@@ -26,18 +27,41 @@ bool tryPlaceEyeOfEnder(World& w, int frameX, int frameY, int frameZ);
 uint8_t frameIdForPlacement(float yaw);
 
 // ---------------------------------------------------------------------------
-// 末地门 5×5 方环的几何规则（原版 EndPortalFrameBlock.getOrCreatePortalShape）
+// 下界门目的地（对齐原版 PortalForcer）
+// 调用前请先把 World 切到目标维度，并保证目标点附近区块已生成。
+// ---------------------------------------------------------------------------
+// 门方块的横向轴：0 = 沿 X 展开，1 = 沿 Z 展开；不是门方块返回 -1。
+int inferPortalAxis(const World& w, int x, int y, int z);
+
+// 目标点附近已有门的落点（门内 2 宽取中、底排）；找不到返回 false。
+// radiusBlocks 是方形搜索半径（原版：去下界 16、回主世界 128）。
+bool findExistingNetherPortal(World& w, int tx, int ty, int tz, int radiusBlocks, Vec3& outPos);
+
+// 按原版 PortalForcer.createPortal 造一扇新门（螺旋找 4×4 空腔 + 黑曜石框 + 点燃），
+// 成功返回门内落点。axis 是源门的横向轴（新门沿用）。
+bool createNetherPortal(World& w, int tx, int ty, int tz, int axis, Vec3& outPos);
+
+// 先找已有门、找不到就造一扇；返回落点。
+bool findOrCreateNetherPortal(World& w, int tx, int ty, int tz, int axis, int radiusBlocks,
+                              Vec3& outPos);
+
+// ---------------------------------------------------------------------------
+// 末地门 5×5 方环的几何规则（原版 EndPortalFrameBlock.getOrCreatePortalShape
+// 的等价判定，见 portal.cpp 的说明）。
 // 环上框架的 facing 必须指向环心，否则整环不算数。
 // 供激活检测与自检复用，避免规则写两遍。
 // ---------------------------------------------------------------------------
-// 环上相对坐标 (dx,dz)（0..4）应使用的朝向；中心/四角返回 -1
+// 环上相对坐标 (dx,dz)（0..4）应使用的朝向；中心/四角返回 -1。
+// 原版图案（要塞 StrongholdPieces 的实证布局）要求：北边朝南、南边朝北、
+// 西边朝东、东边朝西 —— 也就是每个框架都指向环心。
 inline int frameRequiredFacing(int dx, int dz) {
     bool edge = dx == 0 || dx == 4 || dz == 0 || dz == 4;
     bool isCorner = (dx == 0 || dx == 4) && (dz == 0 || dz == 4);
     if (!edge || isCorner) return -1;  // 中心 3×3 与四角都不是框架
-    int ox = 2 - dx, oz = 2 - dz;      // 指向环心的方向
-    if (oz == 0) return ox > 0 ? FRAME_EAST : FRAME_WEST;
-    return oz > 0 ? FRAME_SOUTH : FRAME_NORTH;
+    if (dx == 0) return FRAME_EAST;    // 西边 → 朝东
+    if (dx == 4) return FRAME_WEST;    // 东边 → 朝西
+    if (dz == 0) return FRAME_SOUTH;   // 北边 → 朝南
+    return FRAME_NORTH;                // 南边 → 朝北
 }
 
 // 以 (x0,z0) 为左上角基准的 5×5 方环是否满足激活条件。
