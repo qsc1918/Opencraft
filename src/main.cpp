@@ -399,31 +399,47 @@ int main(int argc, char** argv) {
         player.dim = toDim;
         world->setDimension(toDim);
 
-        // 安全落点：目标 X/Z 上找两格净空、脚下实心、且不泡岩浆的位置。
-        // （原版 PortalShape.findCollisionFreePosition 的等价简化）
+        // 安全落点：目标列及其 4 格邻域里找"两格净空、脚下实心、且不泡岩浆"的位置。
+        // （原版 PortalShape.findCollisionFreePosition 的等价简化；邻域搜索半径小是
+        //   为了避免为找落点生成一大片区块）
         auto safeGroundY = [&](int bx, int bz, int startY) {
-            world->forceGenerateChunk(blockToChunkCoord(bx), blockToChunkCoord(bz));
             auto passable = [&](uint8_t b) {
                 return b == B_AIR || b == B_WATER || b == B_NETHER_PORTAL || b == B_END_PORTAL;
             };
-            auto ok = [&](int y) {
+            auto okAt = [&](int x, int y, int z) {
                 if (y < 1 || y >= WORLD_HEIGHT - 1) return false;
-                if (!passable(world->getBlock(bx, y, bz))) return false;
-                if (!passable(world->getBlock(bx, y + 1, bz))) return false;
-                uint8_t below = world->getBlock(bx, y - 1, bz);
+                if (!passable(world->getBlock(x, y, z))) return false;
+                if (!passable(world->getBlock(x, y + 1, z))) return false;
+                uint8_t below = world->getBlock(x, y - 1, z);
                 if (below == B_LAVA || below == B_FIRE) return false;
                 return blockIsSolid(below);
             };
             int sy = startY;
             if (sy < 1) sy = 1;
             if (sy > WORLD_HEIGHT - 2) sy = WORLD_HEIGHT - 2;
-            for (int d = 0; d < WORLD_HEIGHT; d++) {
-                if (ok(sy - d)) return sy - d;
-                if (ok(sy + d)) return sy + d;
+            auto tryColumn = [&](int x, int z) -> int {
+                world->forceGenerateChunk(blockToChunkCoord(x), blockToChunkCoord(z));
+                for (int d = 0; d < WORLD_HEIGHT; d++) {
+                    if (okAt(x, sy - d, z)) return sy - d;
+                    if (okAt(x, sy + d, z)) return sy + d;
+                }
+                return -1;
+            };
+            int y = tryColumn(bx, bz);
+            if (y >= 0) return y;
+            for (int r = 1; r <= 4; r++) {
+                for (int i = -r; i <= r; i++) {
+                    const int cand[4][2] = {{bx + i, bz - r}, {bx + i, bz + r},
+                                            {bx - r, bz + i}, {bx + r, bz + i}};
+                    for (const auto& c : cand) {
+                        y = tryColumn(c[0], c[1]);
+                        if (y >= 0) return y;
+                    }
+                }
             }
-            // 实在没有空腔：落在最高的实心方块上
-            for (int y = WORLD_HEIGHT - 2; y >= 1; y--)
-                if (blockIsSolid(world->getBlock(bx, y, bz))) return y + 1;
+            // 实在没有空腔：落在目标列最高的实心方块上
+            for (int yy = WORLD_HEIGHT - 2; yy >= 1; yy--)
+                if (blockIsSolid(world->getBlock(bx, yy, bz))) return yy + 1;
             return WORLD_HEIGHT / 2;
         };
 
@@ -446,6 +462,8 @@ int main(int argc, char** argv) {
             // 原版搜索半径：去下界 16 格、回主世界 128 格（方形）
             const int radius = toDim == DIM_NETHER ? 16 : 128;
             Vec3 land;
+            // 走门与调试传送都走这套：找不到已有门就按原版造一扇，
+            // 落点必然在门内（调试传送也顺带留一扇回程门）
             if (portal::findOrCreateNetherPortal(*world, tx, ty, tz, srcAxis, radius, land)) {
                 px = land.x;
                 py = land.y;
