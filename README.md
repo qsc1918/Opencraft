@@ -1,8 +1,11 @@
 # Opencraft
 
 Opencraft 是一个用 C++20 写的类 Minecraft 体素沙盒游戏，自带手写 Vulkan 渲染器和多线程
-区块生成/网格化。内容参考早期 Minecraft：草方块与矿石、橡树、海洋，以及下界和末地维度、
-传送门、末影水晶等。
+区块生成/网格化。基础内容参考早期 Minecraft：草方块与矿石、橡树、海洋。下界与末地两个
+维度按 Minecraft Java 版 26.2 的**原版机制**实现（密度函数、黑曜石柱、返回传送门、外岛、
+紫颂植株等）；主世界地形仍是简易实现，后续计划翻新。
+
+项目现状、文件职责与开发约定见 `PROJECT_STATE.md` 与 `AGENTS.md`。
 
 ## 编译
 
@@ -69,13 +72,15 @@ build/opencraft.exe
 
 ## 目录
 
-- `src/` 源码：世界与区块、地形生成、网格化、Vulkan 渲染、菜单、存档
+- `src/` 源码：世界与区块、地形生成（`nethergen.cpp` / `endgen.cpp` / 原版噪声 `mcnoise.cpp`）、
+  网格化、Vulkan 渲染、菜单、存档
 - `shaders/` GLSL 着色器，构建时由 glslc 编译
-- `tools/` 资源提取工具与自解压安装包脚本
-- `docs/` 项目说明
+- `tools/` 资源提取工具、自解压安装包脚本、开发自检工具（`endprobe`、`portalselftest`）
+- `docs/` 项目说明；`PROJECT_STATE.md` 项目现状与文件职责
 
 ## 开发约定
 
 - 注释一律用**简短的中文**，一两句话说清即可，不要长篇大论。
 - 不要写英文或其他语言的注释。
+- Git 提交要少而清晰，提交信息也用简短中文。
 - 其它约定见 `AGENTS.md`。
