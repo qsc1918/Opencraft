@@ -3,7 +3,7 @@
 > 本文件是"压缩上下文"式的项目现状说明：换一个 AI/会话接手时，读这一份 + `AGENTS.md`
 > 就能继续干活。**改动项目后请同步更新下面的「当前状态」一节。**
 >
-> 最后更新：末地/下界按原版机制重写完成（版本 `0.4.0-snapshot-2`）。
+> 最后更新：修好末地门框架渲染/激活与下界门目的地生成，加入维度调试传送（版本 `0.4.0-snapshot-3`）。
 
 ---
 
@@ -30,9 +30,9 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 | 主世界生成 | 简易噪声（高度图 + 洞穴 + 矿石 + 树 + 水），非原版，待翻新 |
 | **下界生成** | **已按 26.2 原版机制重写**：`nether/base_3d_noise` + slide 密度、基岩地板/天花板渐变、y=32 岩浆海、下界荒地群系表面规则 |
 | **末地生成** | **已按 26.2 原版机制重写**：`end_islands` + `base_3d_noise` 密度、主岛、10 根黑曜石柱（含铁栏杆笼）、返回传送门、末地平台、外岛、紫颂植株 |
-| 末地传送门框架 | 有朝向（facing）与有眼两种状态，共 8 个方块 id；13/16 高 + 眼块突出（多 element 模型） |
-| 末地门激活 | 12 个框架**朝向必须指向环心**且都有眼；有自检 `portalselftest` |
-| 维度传送 | 下界门（8:1 缩放）、末地门（进末地落在 y=49 的黑曜石平台） |
+| 末地传送门框架 | 有朝向（facing）与有眼两种状态，共 8 个方块 id；按原版模型：框 13/16 高 + **居中**的 8×8 眼块（凸出框顶 3/16），逐面 UV/cullface 与原版 `end_portal_frame(_filled).json` 一致 |
+| 末地门激活 | 12 个框架**朝向必须指向环心**且都有眼（规则与 `portalselftest` / `portalflowtest` 覆盖） |
+| 维度传送 | 下界门（8:1 缩放，**目的地按原版 PortalForcer 找/造门 + 门内安全落点**）、末地门（进末地落在 y=49 的黑曜石平台上，朝向 WEST）；调试可用 `--tp-dim` 与 F6/F7 快速切维度 |
 | 实体 | 末影龙、末影水晶、龙蛋（部分） |
 | 存档 | 自定义二进制 v3，**按维度分段**保存/读取 |
 | 紫颂花生长 | 方块随机刻（`mctick`）复刻 `ChorusFlowerBlock.randomTick` |
@@ -51,6 +51,15 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
   结构长相与原版一致但**具体位置与原版不同种子不一致**。
 - 火把/墙火把是普通全方块（没有原版的细杆模型，也没有朝向），铁栏杆也没有连接模型
   （只有 id 与贴图）；返回传送门柱上的四个火把朝向因此不完全正确。
+- 方块碰撞箱仍是整格：末地门框架在原版是 13/16 高、有眼时再加中间的 8×8 柱，
+  站在框上会比原版高 3/16（渲染轮廓已按原版形状画）。
+- 下界门的目的地搜索只在**已生成区块**里找已有门（原版有 POI 索引，能搜 16/128 格方形
+  范围内所有门）；找不到就按原版 `createPortal` 造一扇，所以回程一般能找到原门。
+- 传送门方块没有 AXIS 状态位，门轴靠邻居推断（`portal::inferPortalAxis`）；
+  1 格宽的畸形门会退化成 X 轴。
+- 末地门激活用的是"12 框同 Y、都有眼、朝向都指向环心"这条等价规则，而不是原版
+  `BlockPattern.find` 的 24 种朝向枚举；玩家正常摆法（站环心朝外放）与原版一致，
+  但原版理论上还能凑出的几种畸形摆法（如框排/列朝向混搭）这里不激活。
 - 存档不存方块状态/实体，只存 uint8 方块 id 数组。
 
 ### 最近一次验证
@@ -58,8 +67,12 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 - `cmake --build build` 通过；
 - `build/opencraft.exe --version`、`--menu-shot build/menu.png` 正常；
 - `build/endprobe.exe 12345 7`：末地地形有山有谷（顶面高度 40~64），有黑曜石柱/传送门/紫颂统计；
-- `build/portalselftest.exe`：8 项方环几何用例全部通过；
-- 截图脚本：`--dim end` / `--dim nether` + `--pos/--yaw/--pitch` + `--screenshot out.png --no-ui`。
+- `build/portalselftest.exe`：朝向规则 + 16 项方环几何用例全部通过；
+- `build/portalflowtest.exe 12345`：19 项通过（末地门插眼激活链路、下界门造门/回程落点）；
+- 截图脚本：`--dim end` / `--dim nether` + `--pos/--yaw/--pitch` + `--screenshot out.png --no-ui`；
+- 末地门端到端：`--place` 摆 12 框 + `--use-eye` 插最后一个眼 → 中心 3×3 变 end_portal，
+  玩家站进去 → 传送到末地平台（截图 `build/ring_lit.png` / `build/ring_tp.png`）；
+- 下界门端到端：黑曜石框 + `--light-portal` → 玩家走进去 → 下界生成新门并落在门内。
 
 ## 3. 目录与文件职责
 
@@ -67,7 +80,7 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 
 | 路径 | 作用 |
 |------|------|
-| `CMakeLists.txt` | 主程序 + `extract_assets` / `endprobe` / `portalselftest` 三个小工具 + 打包目标 |
+| `CMakeLists.txt` | 主程序 + `extract_assets` / `endprobe` / `portalselftest` / `portalflowtest` 四个小工具 + 打包目标 |
 | `cmake/gen_version.cmake` | 构建时拼版本号（`version.txt` 的 `[current]` + 时间戳） |
 | `version.txt` | 版本名唯一来源；只改 `[current]` 行，别写时间戳 |
 | `shaders/*.vert/.frag` | GLSL，构建时 `glslc` 编译成 `build/shaders/*.spv` |
@@ -83,7 +96,8 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 | 工具 | 作用 |
 |------|------|
 | `tools/endprobe.cpp` → `build/endprobe.exe` | 打印末地高度剖面、方块统计、密度中间量（排查生成问题先跑它） |
-| `tools/portalselftest.cpp` → `build/portalselftest.exe` | 末地门 5×5 方环朝向规则自检（8 个用例） |
+| `tools/portalselftest.cpp` → `build/portalselftest.exe` | 末地门朝向规则 + 5×5 方环几何自检（16 个用例，期望值写死，不调用被测函数） |
+| `tools/portalflowtest.cpp` → `build/portalflowtest.exe` | 传送门流程自检：末地门插眼激活链路（真 World）+ 下界门造门/回程落点 |
 
 ### 核心源码 `src/`
 
@@ -108,9 +122,9 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 | `endgen.hpp/.cpp` | 末地生成（原版密度 + 黑曜石柱 + 返回传送门 + 末地平台 + 外岛 + 紫颂） |
 | `mcnoise.hpp/.cpp` | **原版噪声复刻**：`McCnRandom`(LegacyRandomSource)、`McImprovedNoise`、`McSimplexNoise`、`McPerlinNoise`、`McBlendedNoise` |
 | `noise.hpp/.cpp` | 早期简易 value noise（主世界还在用） |
-| `mesher.hpp/.cpp` | 区块网格化：面剔除、AO、多 element 方块模型（末地门框架）、8 字节顶点 |
+| `mesher.hpp/.cpp` | 区块网格化：逐面 cullface、AO、多 element 方块模型（末地门框架）、12 字节顶点 |
 | `mctick.hpp/.cpp` | 方块随机刻（紫颂花生长） |
-| `portal.hpp/.cpp` | 下界门框架识别与点燃、末地门方环识别与激活、门破碎 |
+| `portal.hpp/.cpp` | 下界门框架识别与点燃、末地门方环识别与激活、门破碎、**下界门目的地找/造门** |
 | `raycast.hpp/.cpp` | 方块射线检测 |
 | `save.hpp/.cpp` | 存档（v3，按维度分段） |
 
@@ -121,7 +135,7 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 | `vk.hpp/.cpp`、`volk_impl.c` | Vulkan 设备/交换链/内存/管线基建 |
 | `renderer.hpp/.cpp` | 渲染器：地形/水/天空/实体/UI/背包、区块缓冲上传、截图 |
 | `atlas.hpp/.cpp` | 图集：读 `assets/block/*.png`，缺失/需要程序化的图块代码生成 |
-| `shaders/terrain.vert` 等 | 着色器；`terrain.vert` 里用顶点第 4 字节还原 y 的小数部分 |
+| `shaders/terrain.vert` 等 | 着色器；顶点位置是 1/16 格单位的整数，着色器除以 16 |
 | `window.hpp/.cpp` | Win32 窗口、输入、鼠标捕获 |
 | `menu.hpp/.cpp` | 主菜单/存档选择/新建世界/选项/暂停 |
 | `camera.hpp/.cpp` | 相机（`yaw=0` 朝 +Z 即南，`forward=(sin yaw,*,cos yaw)`） |
@@ -192,17 +206,31 @@ final = squeeze(0.64 * (t - 23.4375))
 
 ### 4.5 方块模型（多 element）
 
-`mesher.cpp` 的 `buildParts()` 把一个方块拆成若干长方体（1/16 格坐标）：
+`mesher.cpp` 的 `buildParts()` 把一个方块拆成若干长方体（原版 element，1/16 格坐标）：
 
 - 普通方块 = 一个 `0..16` 的整块。
-- 末地门框架 = `0..13` 高的块；有眼时再加一个 `13..16` 高的眼块，眼块贴着朝向那一侧。
-- `TerrainVertex` 是 8 字节：`x,y,z`(int8) + `fracY`(uint8, y 的 1/16 小数) + `u,v,tex,shade`。
-  着色器 `terrain.vert` 里 `y += inPos.w / 16.0`（`w` 存 16 个 1/8 单位）。
+- 末地门框架（原版 `end_portal_frame(_filled).json`）：element0 = `0..16 × 0..13 × 0..16`，
+  顶面 frame_top（**无 cullface**）、底面 end_stone（cullface）、四侧 side 用 UV `[0,3,16,16]`
+  （侧面贴图顶部 3 行是透明的，正好跳过）；有眼时再加 element1 = `4..12 × 13..16 × 4..12`
+  （**居中**、凸出框顶 3/16），顶面 UV `[4,4,12,12]`（cullface up）、四侧 UV `[4,0,12,3]`（无 cullface）。
+- **cullface 是唯一的邻居遮挡开关**：没写 cullface 的面（框顶面、眼块四周）永远画，
+  不能按"邻居不透明"一刀切，否则把框架贴着方块摆就会缺面。
+- UV 用原版 FaceBakery 的角点顺序（见 `mesher.cpp` 的 `kCorner` / `kUvCorner`），
+  不能用坐标轴各自反推符号（NORTH/EAST/DOWN 是镜像的）。
+- `TerrainVertex` 是 12 字节：`x,y,z,w`(int16，**1/16 格单位**) + `u,v,tex,shade`(u8)。
+  着色器里 `p = inPos.xyz / 16.0`；uv 是原版语义 0..16，着色器再偏移半像素取纹素中心。
 
 ### 4.6 相机 yaw 约定
 
 `forward = (sin yaw, sin pitch, cos yaw)`：`yaw=0` 看 **+Z（南）**，`yaw=π/2` 看 +X（东）。
 放末地门框架时朝向取玩家朝向的反方向（`portal::frameIdForPlacement`）。
+
+### 4.7 末地门朝向规则（踩过坑）
+
+原版 `BlockPattern` 要 12 个框架同 Y、都有眼、**朝向指向环心**（要塞布局实证：
+北边朝南、南边朝北、西边朝东、东边朝西）。曾经的 `frameRequiredFacing` 写成
+"先看 oz 再看 ox"，导致西/东边非中格的 6 个框要求了错误朝向 —— 玩家按原版摆法
+永远激活不了。**自检必须写死期望值**，别用被测函数生成期望（`portalselftest` 已改成这样）。
 
 ## 5. 常用命令
 
@@ -223,7 +251,12 @@ build/opencraft.exe --dim nether --seed 12345 --pos 0,70,0      --yaw 0.7    --p
 
 # 生成自检
 build/endprobe.exe 12345 7        # 末地高度剖面 + 方块统计
-build/portalselftest.exe          # 末地门方环朝向规则
+build/portalselftest.exe          # 末地门朝向规则 + 方环几何
+build/portalflowtest.exe 12345    # 末地门插眼激活 + 下界门造门/回程落点
+
+# 调试传送：进入世界后直接切维度（F6/F7 也能在游戏里循环切）
+build/opencraft.exe --seed 12345 --tp-dim end --pos 8,80,8 \
+                    --render-dist 6 --frames 200 --screenshot build/end.png --no-ui
 
 # 打包
 cmake --build build --target package_7z
@@ -231,8 +264,8 @@ cmake --build build --target package_7z
 
 命令行参数（`src/main.cpp` 顶部）：`--seed --dim(overworld|nether|end) --pos x,y,z --yaw --pitch
 --render-dist --threads --frames --no-ui --no-vsync --screenshot --menu-shot --menu-screen
---place x,y,z,id --break x,y,z --crystal x,y,z --drive --inventory --inv-page --spawn-portal
---gpu-index --time --version`。
+--place x,y,z,id --use-eye x,y,z --light-portal x,y,z --break x,y,z --crystal x,y,z --drive
+--inventory --inv-page --spawn-portal --tp-dim(overworld|nether|end) --gpu-index --time --version`。
 
 ## 6. 约定速查
 

@@ -31,7 +31,8 @@ cmake --build build
 build/opencraft.exe --version
 build/opencraft.exe --menu-shot build/menu.png
 build/endprobe.exe 12345 7      # 末地生成自检：高度剖面 + 方块统计
-build/portalselftest.exe        # 末地门方环朝向规则自检
+build/portalselftest.exe        # 末地门朝向规则 + 方环几何自检
+build/portalflowtest.exe 12345  # 传送门流程自检：末地门插眼激活 + 下界门造门/回程落点
 ```
 
 打包：默认构建后自动出 `releases/Opencraft-Installer.exe`（7-Zip SFX，开关
@@ -39,6 +40,10 @@ build/portalselftest.exe        # 末地门方环朝向规则自检
 
 截图调试：`build/opencraft.exe --dim end|nether --seed N --pos x,y,z --yaw R --pitch R
 --render-dist N --frames 300 --screenshot out.png --no-ui`（`--frames` 要给够，等区块生成完）。
+
+调试用参数（见 `PROJECT_STATE.md` §5）：`--tp-dim overworld|nether|end` 进世界后直接切维度
+（游戏里 F7 正向、F6 反向循环切主世界/下界/末地）；`--place x,y,z,id` 放方块、
+`--use-eye x,y,z` 对末地门框架用末影之眼、`--light-portal x,y,z` 点燃下界门。
 
 ## 目录入口
 
