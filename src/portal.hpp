@@ -25,6 +25,37 @@ bool tryPlaceEyeOfEnder(World& w, int frameX, int frameY, int frameZ);
 // 玩家放置末地传送门框架时该用的 id：朝向 = 玩家水平朝向的反方向（原版一致）。
 uint8_t frameIdForPlacement(float yaw);
 
+// ---------------------------------------------------------------------------
+// 末地门 5×5 方环的几何规则（原版 EndPortalFrameBlock.getOrCreatePortalShape）
+// 环上框架的 facing 必须指向环心，否则整环不算数。
+// 供激活检测与自检复用，避免规则写两遍。
+// ---------------------------------------------------------------------------
+// 环上相对坐标 (dx,dz)（0..4）应使用的朝向；中心/四角返回 -1
+inline int frameRequiredFacing(int dx, int dz) {
+    bool edge = dx == 0 || dx == 4 || dz == 0 || dz == 4;
+    bool isCorner = (dx == 0 || dx == 4) && (dz == 0 || dz == 4);
+    if (!edge || isCorner) return -1;  // 中心 3×3 与四角都不是框架
+    int ox = 2 - dx, oz = 2 - dz;      // 指向环心的方向
+    if (oz == 0) return ox > 0 ? FRAME_EAST : FRAME_WEST;
+    return oz > 0 ? FRAME_SOUTH : FRAME_NORTH;
+}
+
+// 以 (x0,z0) 为左上角基准的 5×5 方环是否满足激活条件。
+// get 返回 (x,y,z) 处的方块 id。
+template <typename GetBlock>
+bool isCompleteRingAt(GetBlock get, int x0, int y, int z0) {
+    for (int dx = 0; dx < 5; dx++) {
+        for (int dz = 0; dz < 5; dz++) {
+            int need = frameRequiredFacing(dx, dz);
+            if (need < 0) continue;
+            uint8_t b = get(x0 + dx, y, z0 + dz);
+            if (!blockIsPortalFrame(b) || !blockFrameHasEye(b)) return false;
+            if (blockFrameFacing(b) != need) return false;
+        }
+    }
+    return true;
+}
+
 // 该方块是否触发传送（nether_portal / end_portal）。
 bool isPortalBlock(uint8_t id);
 

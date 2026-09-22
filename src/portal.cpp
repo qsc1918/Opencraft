@@ -139,25 +139,9 @@ bool tryLightNetherPortal(World& w, int fx, int fy, int fz) {
 // 每个框架还要朝向正确：原版 BlockPattern 要求上边朝南、下边朝北、左边朝东、
 // 右边朝西（即都指向环心），否则不激活。
 // ---------------------------------------------------------------------------
-// 该框架位置应该朝向哪里：南=+Z、西=-X、北=-Z、东=+X
-static int frameRequiresFacing(int dx, int dz) {
-    if (dz == 0) return dx > 0 ? FRAME_EAST : FRAME_WEST;
-    return dz > 0 ? FRAME_SOUTH : FRAME_NORTH;
-}
-
 // 检查 (x0,cy,z0) 为基准的 5×5 方环是否满足激活条件
 static bool allFramesHaveEye(const World& w, int x0, int cy, int z0) {
-    for (int dx = 0; dx < 5; dx++) {
-        for (int dz = 0; dz < 5; dz++) {
-            bool edge = dx == 0 || dx == 4 || dz == 0 || dz == 4;
-            bool isCorner = (dx == 0 || dx == 4) && (dz == 0 || dz == 4);
-            if (!edge || isCorner) continue;  // 中心 3×3 与四角都不是框架
-            uint8_t b = w.getBlock(x0 + dx, cy, z0 + dz);
-            if (!blockIsPortalFrame(b) || !blockFrameHasEye(b)) return false;
-            if (blockFrameFacing(b) != frameRequiresFacing(2 - dx, 2 - dz)) return false;
-        }
-    }
-    return true;
+    return isCompleteRingAt([&](int x, int y, int z) { return w.getBlock(x, y, z); }, x0, cy, z0);
 }
 
 uint8_t frameIdForPlacement(float yaw) {

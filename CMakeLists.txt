@@ -107,6 +107,11 @@ add_executable(endprobe tools/endprobe.cpp src/endgen.cpp src/mcnoise.cpp)
 target_include_directories(endprobe PRIVATE src)
 target_compile_options(endprobe PRIVATE -O2 -fno-rtti)
 
+# 末地门方环几何自检（只用 blocks.hpp/portal.hpp 的头文件逻辑，不链接 World）
+add_executable(portalselftest tools/portalselftest.cpp)
+target_include_directories(portalselftest PRIVATE src)
+target_compile_options(portalselftest PRIVATE -O2 -fno-rtti)
+
 # ---- 打包自解压安装包（7-Zip SFX）----
 # 需要仓库根目录有 7-Zip\（本地产物，不入库）；默认每次构建后自动打包
 option(OPENCRAFT_AUTO_PACKAGE "每次构建后自动打包安装包" ON)
