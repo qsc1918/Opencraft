@@ -25,7 +25,9 @@ jobs:
       - name: Install Vulkan SDK
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
-          vulkan_version: latest
+          # 钉死版本：着色器由这个 SDK 的 glslc 编译并直接进发布包，
+          # 用 latest 会让同一个 tag 重跑产出不同结果
+          vulkan_version: 1.4.357.0
           install_runtime: false
           cache: true
 
