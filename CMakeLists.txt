@@ -74,7 +74,10 @@ add_executable(opencraft
 )
 
 # 生成头文件目录（版本号）也要能被包含
-target_include_directories(opencraft PRIVATE src ${CMAKE_CURRENT_BINARY_DIR} ${VK}/Include ${VK}/Include/volk)
+# volk 走仓库内的 third_party/volk，不用 SDK 的：SDK 里是 Include/Volk（大写），
+# 原来写的 Include/volk 只在大小写不敏感的文件系统上侥幸命中，CI 上直接找不到
+# volk.h（fatal error C1083）。自带一份也让本地与 CI 行为一致。
+target_include_directories(opencraft PRIVATE src third_party/volk ${CMAKE_CURRENT_BINARY_DIR} ${VK}/Include)
 target_compile_definitions(opencraft PRIVATE VK_NO_PROTOTYPES)
 # 优化等级交给 CMake 的 Release 配置（MSVC 是 /O2，GCC 是 -O3）；
 # 原来写死的 -O3 和 -march=native 在 MSVC 下是错误参数，-march=native 还会让

@@ -51,6 +51,9 @@ build/portalflowtest.exe 12345  # 传送门流程自检：末地门插眼激活 
 ## 目录入口
 
 - `src/specs.hpp` 世界常量唯一来源；`src/dimensions.hpp` 维度表；`src/blocks.hpp` 方块表。
+- `third_party/volk/` 是自带的 volk（MIT），**别改回用 SDK 的 `Include/Volk`**：那是大写目录，
+  本地大小写不敏感能过、CI 上会 `fatal error C1083: volk.h`；`src/volk_impl.c` 是它的
+  包装编译单元（先包含 Win32 头，才会生成 KHR_win32_surface 的函数指针）。
 - `src/generator.cpp` 按维度分发的入口；下界在 `src/nethergen.cpp`，末地在 `src/endgen.cpp`。
 - `src/mcnoise.cpp` 原版噪声/随机数复刻（LegacyRandomSource、ImprovedNoise、SimplexNoise、
   PerlinNoise、BlendedNoise）；改生成前先确认这里的参数与顺序。

@@ -11,6 +11,10 @@ Opencraft 是一个用 C++20 写的类 Minecraft 体素沙盒游戏，自带手�
 
 依赖：Vulkan SDK、CMake ≥ 3.20、Ninja、MinGW GCC 12+ 或 MSVC。
 
+volk 已经自带在 `third_party/volk/`，**不依赖 SDK 里那份**（SDK 里是 `Include/Volk`，
+大小写和不同装法都不一致，CI 上会找不到 `volk.h`）。所以仓库只从 SDK 取
+`Include/vulkan`、`Include/vk_video` 和 `Bin/glslc.exe`。
+
 ```sh
 cmake -G Ninja -S . -B build
 cmake --build build

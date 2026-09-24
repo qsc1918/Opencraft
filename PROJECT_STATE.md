@@ -3,9 +3,10 @@
 > 本文件是"压缩上下文"式的项目现状说明：换一个 AI/会话接手时，读这一份 + `AGENTS.md`
 > 就能继续干活。**改动项目后请同步更新下面的「当前状态」一节。**
 >
-> 最后更新：加入 GitHub Actions 自动发布（推 `ci*` tag 出安装包），并把构建改成
-> MSVC / GCC 双兼容（`/utf-8`、`NOMINMAX`、`_USE_MATH_DEFINES`、`/MT`）、修掉
-> `assets/` 缺失时构建失败的问题（版本 `0.4.0-snapshot-3`）。
+> 最后更新：加入 GitHub Actions 自动发布（推 `ci*` tag 出安装包），把构建改成
+> MSVC / GCC 双兼容（`/utf-8`、`NOMINMAX`、`_USE_MATH_DEFINES`、`/MT`），修掉
+> `assets/` 缺失时构建失败、以及 volk 依赖 SDK 目录布局（CI 上 `volk.h` 找不到）
+> 两个问题——volk 已自带进 `third_party/`（版本 `0.4.0-snapshot-3`）。
 
 ---
 
@@ -69,6 +70,8 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 - **MSVC 构建 + CI 发布链路**（新增）：`.github/workflows/release.yml` 的
   configure/构建/打包/校验步骤在本机用 `vcvars64` + Ninja 实跑通过，产出
   `releases/Opencraft-Installer.exe`，PE 里不含 `VCRUNTIME140.dll`/`MSVCP140.dll`（`/MT` 生效）；
+- **volk 自带化验证**：造了一个只含 `Include/vulkan` + `Include/vk_video`（**无 Volk**）
+  的 SDK 目录，MSVC 全量构建通过 —— 证明已不依赖 SDK 的 volk 布局；
 - `cmake --build build` 通过；
 - `build/opencraft.exe --version`、`--menu-shot build/menu.png` 正常；
 - `build/endprobe.exe 12345 7`：末地地形有山有谷（顶面高度 40~64），有黑曜石柱/传送门/紫颂统计；
@@ -93,6 +96,7 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 | `tools/extract_assets.cpp` | 从 `minecraft.jar` 提取所需贴图到 `assets/`；新增方块贴图要加在这里 |
 | `tools/pack_7z.ps1`、`7-Zip/` | 7-Zip SFX 自解压安装包（`releases/Opencraft-Installer.exe`） |
 | `.github/workflows/release.yml` | CI：推 `ci*` tag 时在 windows-latest 用 MSVC 构建并发布安装包 |
+| `third_party/volk/volk.h`、`volk.c` | 自带的 volk（MIT，v1.4.357.0 随 SDK 版本）。**不用 SDK 里那份**：SDK 装的是 `Include/Volk`（大写），且不同装法/精简过的 SDK 可能没有它，CI 上会 `fatal error C1083: 无法打开包括文件 volk.h`。自带一份让本地和 CI 行为一致 |
 | `docs/standards.md` | 世界结构规范（常量来源、命名空间、存档格式） |
 | `docs/minecraft_1.0_reference.md` | MC 1.0 对照参考 |
 | `PROJECT_STATE.md` | **本文件** |
@@ -287,6 +291,9 @@ cmake --build build --target package_7z
 - 交叉编译器差异（改 `CMakeLists.txt` 时注意）：编译选项要分 MSVC/GCC 两套；`windows.h`
   的 `min/max` 宏要 `NOMINMAX`；`M_PI` 在 MSVC 要 `_USE_MATH_DEFINES`；MSVC 用 `/MT`
   静态链接运行库，玩家机不需要装 VC++ 可再发行组件。
+- 第三方头文件（volk）走 `third_party/`，**不要引用 SDK 目录内的头**。SDK 里 Volk 在
+  `Include/Volk`（大写 V），而 Windows 文件系统大小写不敏感，写 `Include/volk` 本地能过、
+  CI 上找不到；精简过或不同装法的 SDK 甚至没有该目录。
 - 提交要少而清晰，一个提交一件事（方便回退），别攒成一个巨型提交。
 - 新增方块贴图：加到 `tools/extract_assets.cpp` 的清单、`assets/block/`（本地）、
   `atlas.cpp` 的 `kTileFiles` + `kTileTint`。
