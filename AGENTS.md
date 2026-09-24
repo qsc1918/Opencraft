@@ -14,6 +14,9 @@ Opencraft 是 C++20 写的类 Minecraft 体素沙盒游戏，自带手写 Vulkan
 - `.ps1` 脚本含中文时必须存成 UTF-8 带 BOM，否则 Windows PowerShell 5.1 会乱码。
   `.cpp/.hpp` 必须存成 UTF-8 **不带 BOM**；别用 `Set-Content`（会写成 ANSI 弄坏中文），
   用 `[IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($false)))`。
+  正因如此 MSVC 侧必须加 `/utf-8`（`CMakeLists.txt` 已加）：MSVC 默认按系统代码页解析
+  无 BOM 源码，中文机器上按 GBK 解析会报一堆“字符串字面量中的换行符”；GCC 默认 UTF-8，
+  所以本地 MinGW 构建永远碰不到，只有 CI 的 MSVC 会炸。
 - 版本号只改 `version.txt` 的 `[current]` 行；编译时间戳由 `cmake/gen_version.cmake`
   在构建时自动追加，不要手写时间戳。
 - Git 提交要少而清晰：一个提交一件事，方便回退；提交信息用简短中文，别攒巨型提交。

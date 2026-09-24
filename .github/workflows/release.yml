@@ -1,0 +1,81 @@
+name: Build Windows Release
+
+# 打 ci* 的 tag（ci1.0.0 / ci-1.0.0 之类）时自动构建并发布；也可以在 Actions
+# 页面手动跑（手动跑只构建验证，不发布，发布需要 tag）。
+on:
+  push:
+    tags:
+      - 'ci*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: latest
+          install_runtime: false
+          cache: true
+
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@master
+
+      - name: Verify tools
+        shell: pwsh
+        run: |
+          cmake --version
+          ninja --version
+          cl 2>&1 | Select-Object -First 2
+          Write-Host "VULKAN_SDK = $env:VULKAN_SDK"
+          glslc --version
+
+      # 仓库里没有 assets/（贴图按 Mojang EULA 不入库，由玩家用 extract_assets.exe
+      # 从自己的 Minecraft 提取）。CMakeLists 已经能在 assets 缺失时正常构建，
+      # 这里建个空目录只是为了保持目录结构一致。
+      - name: Create empty assets dir
+        shell: pwsh
+        run: |
+          if (-not (Test-Path assets)) { New-Item -ItemType Directory -Path assets | Out-Null }
+          Write-Host "assets 目录项数: $((Get-ChildItem assets -Force).Count)"
+
+      - name: Configure
+        run: cmake -G Ninja -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      # 安装包是 7-Zip SFX 自解压程序，exe + shaders + version.txt + extract_assets
+      # 都已经打进去了，所以发布只需要这一个文件。
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          # PowerShell 5.1 默认按 ANSI 读文件，中文会乱码，这里显式指定编码
+          [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          $exe = 'releases\Opencraft-Installer.exe'
+          if (-not (Test-Path $exe)) {
+            Get-ChildItem -Recurse -Filter *.exe | ForEach-Object { Write-Host $_.FullName }
+            throw "没有生成 $exe"
+          }
+          $f = Get-Item $exe
+          $mb = [math]::Round($f.Length / 1MB, 1)
+          Write-Host "安装包: $($f.FullName)  $mb MB"
+          Get-Content version.txt -Encoding UTF8 | Select-String -Pattern '\[current\]'
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: releases/Opencraft-Installer.exe
+          generate_release_notes: true

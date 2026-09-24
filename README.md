@@ -40,9 +40,26 @@ cmake --build build --target package_7z    # releases/Opencraft-Installer.exe
 powershell -File tools\pack_7z.ps1         # 也可以直接跑脚本，参数见脚本头部
 ```
 
-安装包不含 `assets/`（遵守 Mojang EULA）；玩家首次运行时用包里的
-`extract_assets.exe` 选择自己的 jar 提取贴图（这个工具由 CMake 从
-`tools/extract_assets.cpp` 构建，产物在 `build/extract_assets.exe`）。
+## 自动发布（GitHub Actions）
+
+推一个 `ci` 开头的 tag 就会在 GitHub 上自动构建并发布：
+
+```sh
+git tag ci0.4.0-snapshot-3
+git push origin ci0.4.0-snapshot-3
+```
+
+workflow 在 `.github/workflows/release.yml`：在 `windows-latest` 上用 MSVC + Ninja +
+Vulkan SDK 构建，跑 `package_7z` 打包，然后把 `releases/Opencraft-Installer.exe`
+作为 Release 附件上传（安装包是自解压程序，里面已经含 exe、shaders、version.txt 和
+`extract_assets.exe`，所以发布只需要这一个文件）。也可以在 Actions 页面手动触发，
+手动触发只构建验证、不发布。
+
+`assets/` 不入库，CI 上不存在，所以代码里避开它：CMakeLists 在 `assets/` 缺失时跳过
+复制，构建和打包都照常成功。安装包本来也不含贴图，因此**玩家拿到安装包后必须先运行
+包里的 `extract_assets.exe` 提取贴图，否则 `opencraft.exe` 会因为读不到
+`assets/gui/button.png` 而直接退出**（`menu.cpp` 加载失败即启动失败）。这是遵守
+Mojang EULA 的预期流程，不是 bug。
 
 ## 运行
 

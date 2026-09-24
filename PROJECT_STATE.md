@@ -3,7 +3,9 @@
 > 本文件是"压缩上下文"式的项目现状说明：换一个 AI/会话接手时，读这一份 + `AGENTS.md`
 > 就能继续干活。**改动项目后请同步更新下面的「当前状态」一节。**
 >
-> 最后更新：修好末地门框架渲染/激活与下界门目的地生成，加入维度调试传送（版本 `0.4.0-snapshot-3`）。
+> 最后更新：加入 GitHub Actions 自动发布（推 `ci*` tag 出安装包），并把构建改成
+> MSVC / GCC 双兼容（`/utf-8`、`NOMINMAX`、`_USE_MATH_DEFINES`、`/MT`）、修掉
+> `assets/` 缺失时构建失败的问题（版本 `0.4.0-snapshot-3`）。
 
 ---
 
@@ -64,6 +66,9 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 
 ### 最近一次验证
 
+- **MSVC 构建 + CI 发布链路**（新增）：`.github/workflows/release.yml` 的
+  configure/构建/打包/校验步骤在本机用 `vcvars64` + Ninja 实跑通过，产出
+  `releases/Opencraft-Installer.exe`，PE 里不含 `VCRUNTIME140.dll`/`MSVCP140.dll`（`/MT` 生效）；
 - `cmake --build build` 通过；
 - `build/opencraft.exe --version`、`--menu-shot build/menu.png` 正常；
 - `build/endprobe.exe 12345 7`：末地地形有山有谷（顶面高度 40~64），有黑曜石柱/传送门/紫颂统计；
@@ -87,6 +92,7 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 | `assets/block`、`assets/item`、`assets/gui` | 官方贴图（**不入库**，由 `extract_assets` 从玩家 jar 提取） |
 | `tools/extract_assets.cpp` | 从 `minecraft.jar` 提取所需贴图到 `assets/`；新增方块贴图要加在这里 |
 | `tools/pack_7z.ps1`、`7-Zip/` | 7-Zip SFX 自解压安装包（`releases/Opencraft-Installer.exe`） |
+| `.github/workflows/release.yml` | CI：推 `ci*` tag 时在 windows-latest 用 MSVC 构建并发布安装包 |
 | `docs/standards.md` | 世界结构规范（常量来源、命名空间、存档格式） |
 | `docs/minecraft_1.0_reference.md` | MC 1.0 对照参考 |
 | `PROJECT_STATE.md` | **本文件** |
@@ -274,6 +280,13 @@ cmake --build build --target package_7z
 - `.ps1` 含中文必须存成 UTF-8 **带 BOM**；`.cpp/.hpp` 存成 UTF-8 **不带 BOM**
   （用 PowerShell `Set-Content` 会写成 ANSI 把中文弄坏，用 `[IO.File]::WriteAllText` +
   `UTF8Encoding($false)`；改完务必确认文件头不是 `EF BB BF`、中文不花）。
+- **源码含中文 ⇒ MSVC 必须加 `/utf-8`**（`CMakeLists.txt` 已加）。MSVC 不指定时按系统
+  代码页（中文机器是 GBK）解析 UTF-8 无 BOM 源码，某些中文字节会把换行"吃掉"，表现为
+  一堆莫名其妙的 `error C2001: 字符串字面量中的换行符`。GCC 默认 UTF-8，所以本地用
+  MinGW 永远碰不到，只有 MSVC/CI 会炸。
+- 交叉编译器差异（改 `CMakeLists.txt` 时注意）：编译选项要分 MSVC/GCC 两套；`windows.h`
+  的 `min/max` 宏要 `NOMINMAX`；`M_PI` 在 MSVC 要 `_USE_MATH_DEFINES`；MSVC 用 `/MT`
+  静态链接运行库，玩家机不需要装 VC++ 可再发行组件。
 - 提交要少而清晰，一个提交一件事（方便回退），别攒成一个巨型提交。
 - 新增方块贴图：加到 `tools/extract_assets.cpp` 的清单、`assets/block/`（本地）、
   `atlas.cpp` 的 `kTileFiles` + `kTileTint`。
