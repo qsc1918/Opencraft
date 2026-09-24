@@ -41,3 +41,6 @@ desktop.ini
 # 本地打包产物
 /releases/
 /perf_artifacts/
+
+# CI 生成 Release 正文用的临时文件
+/release_notes.md

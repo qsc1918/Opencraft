@@ -11,6 +11,12 @@ on:
 permissions:
   contents: write
 
+# 一次推送同时更新 main 和 tag 时，GitHub 可能给同一个 ref 派发两次 run；
+# 同一个 ref 只保留最新一次，避免两个 run 抢着发布同一个 Release。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: windows-latest
@@ -75,9 +81,29 @@ jobs:
           Write-Host "安装包: $($f.FullName)  $mb MB"
           Get-Content version.txt -Encoding UTF8 | Select-String -Pattern '\[current\]'
 
+      # 写 Release 正文：前两行是自己加的，后面由 generate_release_notes 自动接上
+      # 自带的 full changelog（action 会把 body 前置到自动生成的 notes 前面）。
+      - name: Build release notes
+        shell: pwsh
+        run: |
+          [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+          $subject = (git log -1 --pretty=%s).Trim()
+          $sha = git rev-parse --short HEAD
+          $md = @(
+            '此版本为CI自动发布'
+            ''
+            "最近一次提交：$subject（``$sha``）"
+            ''
+          ) -join "`n"
+          $path = Join-Path $env:GITHUB_WORKSPACE 'release_notes.md'
+          [IO.File]::WriteAllText($path, $md, (New-Object Text.UTF8Encoding($false)))
+          Write-Host "写入 $path ："
+          Get-Content $path -Encoding UTF8 | ForEach-Object { "  | $_" }
+
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: releases/Opencraft-Installer.exe
+          body_path: release_notes.md
           generate_release_notes: true
