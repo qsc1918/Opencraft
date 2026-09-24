@@ -59,6 +59,11 @@ Vulkan SDK 构建，跑 `package_7z` 打包，然后把 `releases/Opencraft-Inst
 `extract_assets.exe`，所以发布只需要这一个文件）。也可以在 Actions 页面手动触发，
 手动触发只构建验证、不发布。
 
+Release 正文由 workflow 拼出来：第一行是固定的「此版本为CI自动发布」，接着写最近一次
+提交的标题，后面再接 GitHub 自动生成的 Full Changelog（`generate_release_notes` 会把
+自定义正文前置到自动生成的 notes 前面）。同一个 ref 有并发保护（`concurrency`），
+一次推送同时动 main 和 tag 时只会保留最新一个 run，不会两个 run 抢着发布。
+
 `assets/` 不入库，CI 上不存在，所以代码里避开它：CMakeLists 在 `assets/` 缺失时跳过
 复制，构建和打包都照常成功。安装包本来也不含贴图，因此**玩家拿到安装包后必须先运行
 包里的 `extract_assets.exe` 提取贴图，否则 `opencraft.exe` 会因为读不到
