@@ -83,10 +83,14 @@ bool isCompleteRingAt(GetBlock get, int x0, int y, int z0) {
 // 该方块是否触发传送（nether_portal / end_portal）。
 bool isPortalBlock(uint8_t id);
 
-// 方块被挖掉后调用：挖到传送门方块、或破坏了黑曜石框架时，整扇下界传送门破碎（同原版）。
+// 方块被挖掉后调用：挖到传送门方块、破坏下界门黑曜石框或末地门框架时，
+// 相连的传送门方块整体破碎。
 void onBlockRemoved(World& w, int x, int y, int z, uint8_t oldId);
 
 // 清除与 (x,y,z) 连成一片的所有下界传送门方块。
 void breakNetherPortal(World& w, int x, int y, int z);
+
+// 清除与 (x,y,z) 连成一片的所有末地传送门方块。
+void breakEndPortal(World& w, int x, int y, int z);
 
 } // namespace portal

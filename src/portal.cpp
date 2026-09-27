@@ -196,10 +196,10 @@ bool tryPlaceEyeOfEnder(World& w, int fx, int fy, int fz) {
     return false;
 }
 
-// 洪水填充：清掉与起点相连的全部下界传送门方块（原版里门是整体破碎的）
-void breakNetherPortal(World& w, int x, int y, int z) {
+// 洪水填充：清掉与起点相连的同一种传送门方块（原版里门是整体破碎的）
+static void floodClearPortal(World& w, int x, int y, int z, uint8_t portalId) {
     static const int d[6][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
-    if (w.getBlock(x, y, z) != B_NETHER_PORTAL) return;
+    if (w.getBlock(x, y, z) != portalId) return;
     std::vector<std::array<int, 3>> stack;
     stack.push_back({x, y, z});
     w.setBlock(x, y, z, B_AIR);
@@ -208,12 +208,22 @@ void breakNetherPortal(World& w, int x, int y, int z) {
         stack.pop_back();
         for (const auto& dd : d) {
             int nx = p[0] + dd[0], ny = p[1] + dd[1], nz = p[2] + dd[2];
-            if (w.getBlock(nx, ny, nz) == B_NETHER_PORTAL) {
+            if (w.getBlock(nx, ny, nz) == portalId) {
                 w.setBlock(nx, ny, nz, B_AIR);
                 stack.push_back({nx, ny, nz});
             }
         }
     }
+}
+
+// 清掉与 (x,y,z) 连成一片的所有下界传送门方块。
+void breakNetherPortal(World& w, int x, int y, int z) {
+    floodClearPortal(w, x, y, z, B_NETHER_PORTAL);
+}
+
+// 清掉与 (x,y,z) 连成一片的所有末地传送门方块。
+void breakEndPortal(World& w, int x, int y, int z) {
+    floodClearPortal(w, x, y, z, B_END_PORTAL);
 }
 
 void onBlockRemoved(World& w, int x, int y, int z, uint8_t oldId) {
@@ -224,6 +234,23 @@ void onBlockRemoved(World& w, int x, int y, int z, uint8_t oldId) {
         for (const auto& dd : d) {
             int nx = x + dd[0], ny = y + dd[1], nz = z + dd[2];
             if (w.getBlock(nx, ny, nz) == B_NETHER_PORTAL) breakNetherPortal(w, nx, ny, nz);
+        }
+        return;
+    }
+    if (oldId == B_END_PORTAL) {
+        // 挖掉末地门方块：相连的门方块整体破碎
+        if (w.getBlock(x, y, z) == B_END_PORTAL) breakEndPortal(w, x, y, z);
+        for (const auto& dd : d) {
+            int nx = x + dd[0], ny = y + dd[1], nz = z + dd[2];
+            if (w.getBlock(nx, ny, nz) == B_END_PORTAL) breakEndPortal(w, nx, ny, nz);
+        }
+        return;
+    }
+    if (blockIsPortalFrame(oldId)) {
+        // 破坏末地门框架：环内的末地门方块跟着破碎
+        for (const auto& dd : d) {
+            int nx = x + dd[0], ny = y + dd[1], nz = z + dd[2];
+            if (w.getBlock(nx, ny, nz) == B_END_PORTAL) breakEndPortal(w, nx, ny, nz);
         }
         return;
     }

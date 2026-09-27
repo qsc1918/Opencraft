@@ -290,10 +290,21 @@ void placePodium(uint8_t* out, int baseWX, int baseWZ, int oy) {
     put(out, baseWX, baseWZ, 0, oy + 2, -1, B_WALL_TORCH);
 }
 
-// 返回传送门底座 y：原版从 heightmap 往下跳过基岩层，这里等效地从 y=70 向下找地面
-int podiumOriginY(const uint8_t* out) {
+// 返回传送门底座 y：从 y=70 向下找 (0,0) 列的第一个实心方块。
+// (0,0) 恰是采样列（fx=fz=0），用竖向 lerp 公式算出的密度与区块 (0,0) 的
+// 生成数组逐格一致——四个宿主区块不读数组也能算出同一个 y（生成与顺序无关）。
+int podiumOriginY(uint32_t seed) {
+    const NoiseSet& ns = endNoise(seed);
+    double island = islandDensity(*ns.islandShape, 0, 0);
+    auto densAt = [&](int y) {
+        int cy = y >> 2;
+        double v0 = endDensity(island, *ns.base3D, 0, cy * 4, 0);
+        if ((y & 3) == 0) return v0;
+        double v1 = endDensity(island, *ns.base3D, 0, cy * 4 + 4, 0);
+        return mcLerp((y & 3) * 0.25, v0, v1);
+    };
     for (int y = 70; y > 63; y--) {
-        if (out[0 + 0 + (y << 8)] != B_AIR) return y;
+        if (densAt(y) > 0.0) return y;
     }
     return 63;
 }
@@ -413,18 +424,26 @@ void generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
         }
     }
 
-    // ---- 黑曜石柱（只在柱心所在区块生成，等价原版 isCenterWithinChunk）----
+    // ---- 黑曜石柱（原版 EndSpikeFeature.placeSpike）----
+    // 柱子半径 2..5 会跨区块：原版只在柱心所在区块放置（feature 可写入邻块），
+    // 本引擎逐区块自足，改为"包围盒与当前区块相交就算一遍"，put 只留本块部分。
     EndSpike spikes[10];
     buildSpikes(seed, spikes);
     for (const EndSpike& s : spikes) {
-        if (blockToChunkCoord(s.cx) != cx || blockToChunkCoord(s.cz) != cz) continue;
+        if (s.cx + s.radius < baseWX || s.cx - s.radius >= baseWX + CHUNK_SIZE) continue;
+        if (s.cz + s.radius < baseWZ || s.cz - s.radius >= baseWZ + CHUNK_SIZE) continue;
         int r2 = s.radius * s.radius + 1;
         for (int x = s.cx - s.radius; x <= s.cx + s.radius; x++) {
             for (int z = s.cz - s.radius; z <= s.cz + s.radius; z++) {
-                if ((x - s.cx) * (x - s.cx) + (z - s.cz) * (z - s.cz) > r2) continue;
-                for (int y = 0; y < s.height; y++) put(out, baseWX, baseWZ, x, y, z, B_OBSIDIAN);
-                // 柱体上方直到 y=65 之外全部清空（原版 pos.getY() > 65 → AIR）
-                for (int y = 66; y <= s.height + 10; y++) put(out, baseWX, baseWZ, x, y, z, B_AIR);
+                bool inCylinder = (x - s.cx) * (x - s.cx) + (z - s.cz) * (z - s.cz) <= r2;
+                // 原版是同一位置的 if/else：柱体内 y<height 黑曜石（优先），
+                // 其余 y>65 清空气。此前清空写成独立循环，把 66 以上的柱身擦掉了。
+                for (int y = 0; y <= s.height + 10; y++) {
+                    if (inCylinder && y < s.height)
+                        put(out, baseWX, baseWZ, x, y, z, B_OBSIDIAN);
+                    else if (y > 65)
+                        put(out, baseWX, baseWZ, x, y, z, B_AIR);
+                }
             }
         }
         // 柱顶：基岩 + 火（原版先放水晶实体，再把水晶脚下换基岩、脚下上方放火）
@@ -442,10 +461,15 @@ void generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
     }
 
     // ---- 返回传送门 ----
-    if (cx == 0 && cz == 0) placePodium(out, baseWX, baseWZ, podiumOriginY(out));
+    // 结构以 (0,0) 为中心、半径 4，会跨到西北邻块；四个宿主区块各算一遍，
+    // put 只留本块部分；底座 y 由种子直接算（见 podiumOriginY），各块结果一致。
+    if (cx >= -1 && cx <= 0 && cz >= -1 && cz <= 0)
+        placePodium(out, baseWX, baseWZ, podiumOriginY(seed));
 
     // ---- 末地平台 ----
-    if (blockToChunkCoord(END_PLATFORM_X) == cx && blockToChunkCoord(END_PLATFORM_Z) == cz) {
+    // 5×5 以 (100,0) 为中心：z∈[-2,2] 跨到区块 (6,-1)，按范围相交判定而非中心区块
+    if (END_PLATFORM_X + 2 >= baseWX && END_PLATFORM_X - 2 < baseWX + CHUNK_SIZE &&
+        END_PLATFORM_Z + 2 >= baseWZ && END_PLATFORM_Z - 2 < baseWZ + CHUNK_SIZE) {
         for (int dx = -2; dx <= 2; dx++)
             for (int dz = -2; dz <= 2; dz++) {
                 put(out, baseWX, baseWZ, END_PLATFORM_X + dx, END_PLATFORM_Y - 1, END_PLATFORM_Z + dz, B_OBSIDIAN);

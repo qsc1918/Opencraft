@@ -7,6 +7,12 @@ Opencraft 是 C++20 写的类 Minecraft 体素沙盒游戏，自带手写 Vulkan
 **接手项目先读 `PROJECT_STATE.md`**：那里有完整的文件职责表、当前状态、未完成项和
 踩过的坑。本文件只放约定和索引入口。
 
+以下可参考：
+MC反编译源码及工具：D:\i\decompiled，D:\i\tools
+MC jar自带assets：G:\assets
+MC jar自带数据包：G:\data
+MC assets文件夹：C:\Users\abc\AppData\Roaming\.minecraft\assets
+
 ## 约定
 
 - 注释一律用简体中文，尽量短：能一行就一行，只说明“为什么 / 约束 / 坑”，不复述代码。

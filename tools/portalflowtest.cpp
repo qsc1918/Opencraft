@@ -79,6 +79,34 @@ int main(int argc, char** argv) {
         check(countPortalBlocks(w, x0 + 1, y, z0 + 1, x0 + 3, y, z0 + 3) == 9,
               "中心 3×3 全部变成 end_portal");
 
+        // (a2) 挖掉一个框架 → 相连的末地门方块整体破碎
+        {
+            int fdx, fdz;
+            ringFramePos(x0, z0, 0, fdx, fdz);
+            uint8_t old = w.getBlock(x0 + fdx, y, z0 + fdz);
+            portal::onBlockRemoved(w, x0 + fdx, y, z0 + fdz, old);
+            w.setBlock(x0 + fdx, y, z0 + fdz, B_AIR);
+            check(countPortalBlocks(w, x0, y, z0, x0 + 4, y, z0 + 4) == 0,
+                  "挖掉框架 → 环内 end_portal 全部破碎");
+        }
+
+        // (a3) 重新激活后挖掉一个门方块 → 整片门方块破碎
+        buildRingByPlacement(w, x0, y, z0);
+        for (int i = 0; i < 12; i++) {
+            int dx, dz;
+            ringFramePos(x0, z0, i, dx, dz);
+            portal::tryPlaceEyeOfEnder(w, x0 + dx, y, z0 + dz);
+        }
+        check(countPortalBlocks(w, x0 + 1, y, z0 + 1, x0 + 3, y, z0 + 3) == 9,
+              "重建环后再次激活");
+        {
+            int px = x0 + 2, pz = z0 + 2;
+            portal::onBlockRemoved(w, px, y, pz, B_END_PORTAL);
+            w.setBlock(px, y, pz, B_AIR);
+            check(countPortalBlocks(w, x0, y, z0, x0 + 4, y, z0 + 4) == 0,
+                  "挖掉门方块 → 相连门方块全部破碎");
+        }
+
         // (b) 把其中一个框拧 90° → 不该激活
         World w2(seed);
         w2.setDimension(DIM_OVERWORLD);

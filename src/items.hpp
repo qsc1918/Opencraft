@@ -10,9 +10,12 @@
 // 图标图块从 T_ITEM_BASE 起排在图集 (atlas.cpp) 中。
 // ===========================================================================
 #include <cstdint>
+#include "blocks.hpp" // T_COUNT：物品图标排在全部方块图块之后
 
-// 图集分配: blocks.hpp 的 T_* 占 0..36，物品图标从此开始。
-inline constexpr uint8_t T_ITEM_BASE = 37;
+// 图标图块基址 = blocks.hpp 的 T_COUNT。
+// 不能写死数字：方块图块扩到 41 后，写死的 37 起的物品图标把紫颂植株/紫颂花/
+// 铁栏杆/火把的贴图覆盖成了工具图标（铁栏杆显示成木剑就是这里）。
+inline constexpr uint8_t T_ITEM_BASE = T_COUNT;
 
 // 工具类型（MC 1.0: 镐/斧/锹/剑）
 enum ToolType : uint8_t {

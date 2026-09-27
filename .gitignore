@@ -26,6 +26,7 @@
 *.sln
 *.vcxproj
 *.vcxproj.filters
+.workbuddy/
 
 # CMake 用户配置
 CMakeUserPresets.json
