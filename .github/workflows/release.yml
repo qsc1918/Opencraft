@@ -1,12 +1,18 @@
 name: Build Windows Release
 
 # 打 ci* 的 tag（ci1.0.0 / ci-1.0.0 之类）时自动构建并发布；也可以在 Actions
-# 页面手动跑（手动跑只构建验证，不发布，发布需要 tag）。
+# 页面手动跑：填了 tag_name 就发布（checkout 到该 tag 对应的 commit），
+# 留空则只构建验证，不发布。
 on:
   push:
     tags:
       - 'ci*'
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: '要发布的 tag（如 ci1.0.0）。留空则只构建验证，不发布。'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -24,6 +30,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 手动跑填了 tag 就 checkout 该 tag 指向的 commit；否则默认
+          # （tag 推送 = 该 tag，手动留空 = 当前分支）
+          ref: ${{ inputs.tag_name || github.ref }}
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
@@ -89,8 +99,9 @@ jobs:
           [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
           $subject = (git log -1 --pretty=%s).Trim()
           $sha = git rev-parse --short HEAD
+          $trigger = if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') { '此版本为手动触发发布' } else { '此版本为CI自动发布' }
           $md = @(
-            '此版本为CI自动发布'
+            $trigger
             ''
             "最近一次提交：$subject（``$sha``）"
             ''
@@ -101,9 +112,13 @@ jobs:
           Get-Content $path -Encoding UTF8 | ForEach-Object { "  | $_" }
 
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
+        # tag 推送照旧自动发布；手动跑时只有在填了 tag_name 才发布。
+        # push 触发时 inputs 上下文为空，所以这里等价于原来的 startsWith 判断。
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.tag_name != '')
         uses: softprops/action-gh-release@v2
         with:
+          # 手动跑用输入的 tag；tag 推送时 inputs.tag_name 为空，回落到 github.ref_name（即该 tag）
+          tag_name: ${{ inputs.tag_name || github.ref_name }}
           files: releases/Opencraft-Installer.exe
           body_path: release_notes.md
           generate_release_notes: true
