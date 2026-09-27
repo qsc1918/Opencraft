@@ -172,9 +172,11 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
     /*B_END_PORTAL_FRAME_EYE_N*/ {"opencraft:end_portal_frame_eye_north","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
     /*B_END_PORTAL_FRAME_EYE_E*/ {"opencraft:end_portal_frame_eye_east","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
     // --- 末地植被 / 结构 ---
-    /*B_CHORUS_PLANT*/ {"opencraft:chorus_plant", "紫颂植株", true,  true,  0, 15, T_CHORUS_PLANT, T_CHORUS_PLANT, T_CHORUS_PLANT},
-    /*B_CHORUS_FLOWER*/ {"opencraft:chorus_flower","紫颂花",  true,  true,  0, 15, T_CHORUS_FLOWER, T_CHORUS_FLOWER, T_CHORUS_FLOWER},
-    /*B_CHORUS_FLOWER_DEAD*/ {"opencraft:chorus_flower_dead","紫颂花(枯萎)", true, true, 0, 15, T_CHORUS_FLOWER_DEAD, T_CHORUS_FLOWER_DEAD, T_CHORUS_FLOWER_DEAD},
+    // 紫颂植株/花都不是整方块（植株是 8×8 细柱 + 凸起，花四角内凹），
+    // opaque=false：别去剔邻居的面，也别挡光。
+    /*B_CHORUS_PLANT*/ {"opencraft:chorus_plant", "紫颂植株", false, true,  0, 0, T_CHORUS_PLANT, T_CHORUS_PLANT, T_CHORUS_PLANT},
+    /*B_CHORUS_FLOWER*/ {"opencraft:chorus_flower","紫颂花",  false, true,  0, 0, T_CHORUS_FLOWER, T_CHORUS_FLOWER, T_CHORUS_FLOWER},
+    /*B_CHORUS_FLOWER_DEAD*/ {"opencraft:chorus_flower_dead","紫颂花(枯萎)", false, true, 0, 0, T_CHORUS_FLOWER_DEAD, T_CHORUS_FLOWER_DEAD, T_CHORUS_FLOWER_DEAD},
     /*B_IRON_BARS*/ {"opencraft:iron_bars",      "铁栏杆",   false, true,  0, 0,  T_IRON_BARS, T_IRON_BARS, T_IRON_BARS},
     /*B_TORCH    */ {"opencraft:torch",          "火把",     false, false, 14, 0,  T_TORCH,   T_TORCH,   T_TORCH  },
     /*B_WALL_TORCH*/ {"opencraft:wall_torch",    "墙上的火把", false, false, 14, 0, T_TORCH,   T_TORCH,   T_TORCH  },

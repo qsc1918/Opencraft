@@ -47,6 +47,9 @@ build/portalflowtest.exe 12345  # 传送门流程自检：末地门插眼激活 
 打包：默认构建后自动出 `releases/Opencraft-Installer.exe`（7-Zip SFX，开关
 `OPENCRAFT_AUTO_PACKAGE`，缺 `7-Zip\` 时只警告）；也可用 `--target package_7z`。
 
+发版：`tools\tag_ci.ps1` 读 `version.txt` 的 `[current]` 打 `ci<版本>` 标签并推送
+（工作区不干净会拦，`-DryRun` 预览、`-Force` 强行、重复标签指向别的提交时报错）。
+
 截图调试：`build/opencraft.exe --dim end|nether --seed N --pos x,y,z --yaw R --pitch R
 --render-dist N --frames 300 --screenshot out.png --no-ui`（`--frames` 要给够，等区块生成完）。
 
@@ -63,8 +66,9 @@ build/portalflowtest.exe 12345  # 传送门流程自检：末地门插眼激活 
 - `src/generator.cpp` 按维度分发的入口；下界在 `src/nethergen.cpp`，末地在 `src/endgen.cpp`。
 - `src/mcnoise.cpp` 原版噪声/随机数复刻（LegacyRandomSource、ImprovedNoise、SimplexNoise、
   PerlinNoise、BlendedNoise）；改生成前先确认这里的参数与顺序。
-- `src/world.cpp` 区块存储与工作线程；`src/mesher.cpp` 网格化与多 element 方块模型；
-  `src/renderer.cpp` 渲染；`src/portal.cpp` 传送门。
+- `src/world.cpp` 区块存储与工作线程；`src/mesher.cpp` 网格化与多 element 方块模型
+  （紫颂植株/花模型见 `PROJECT_STATE.md` §4.9）；`src/renderer.cpp` 渲染；`src/portal.cpp` 传送门。
+- `src/console.hpp` 控制台指令输入（`tp`/`where`/`help`，主循环每帧取队列执行）。
 - `docs/standards.md` 世界规范；`docs/minecraft_1.0_reference.md` MC 对照资料。
 - 反编译源码在 `D:\i\decompiled\26.2`（首选）与 `D:\i\decompiled\1.21.4`。
 

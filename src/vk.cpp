@@ -28,6 +28,17 @@ static const char* deviceTypeName(VkPhysicalDeviceType t) {
     }
 }
 
+// 菜单按钮用的简短类型名
+static const char* deviceTypeShort(VkPhysicalDeviceType t) {
+    switch (t) {
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:   return "独立显卡";
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: return "核显";
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:    return "虚拟GPU";
+        case VK_PHYSICAL_DEVICE_TYPE_CPU:            return "软件渲染";
+        default:                                     return "其他";
+    }
+}
+
 static const char* vendorName(uint32_t vid) {
     switch (vid) {
         case 0x10DE: return "NVIDIA";
@@ -164,6 +175,13 @@ bool VkCtx::init(Window& win, int w, int h) {
     std::vector<VkPhysicalDevice> devices(devCount);
     vkEnumeratePhysicalDevices(instance, &devCount, devices.data());
 
+    // 配置文件里残留的序号可能超出当前设备数（换机器/拔了显卡），回落为自动
+    if (desiredGpuIndex >= (int)devCount) {
+        fprintf(stderr, "[vk] gpuIndex %d 超出设备数 (%u)，回落为自动选择\n",
+                desiredGpuIndex, devCount);
+        desiredGpuIndex = -1;
+    }
+
     printf("\n");
     printf("======================================================================\n");
     printf(" Opencraft %s - Graphics / GPU information\n", version::full().c_str());
@@ -202,6 +220,20 @@ bool VkCtx::init(Window& win, int w, int h) {
         int score = (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 100 : 50);
         printDeviceInfo((int)di, d, hasGfx && hasSwap);
         bool usable = hasGfx && hasSwap;
+        // 供菜单显卡选择展示
+        {
+            GpuInfo gi;
+            gi.name = props.deviceName;
+            gi.type = deviceTypeShort(props.deviceType);
+            gi.usable = usable;
+            gi.discrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+            VkPhysicalDeviceMemoryProperties mp;
+            vkGetPhysicalDeviceMemoryProperties(d, &mp);
+            for (uint32_t i = 0; i < mp.memoryHeapCount; i++)
+                if (mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+                    gi.vramMB += (uint64_t)(mp.memoryHeaps[i].size / (1024 * 1024));
+            gpus.push_back(gi);
+        }
         if (desiredGpuIndex >= 0) {
             // 按枚举序号强制指定设备。
             if ((int)di == desiredGpuIndex) {
@@ -219,6 +251,7 @@ bool VkCtx::init(Window& win, int w, int h) {
         return false;
     }
     graphicsFamily = bestGfxFamily;   // 实际选中设备的队列族
+    activeGpuIndex = bestIndex;
     vkGetPhysicalDeviceProperties(phys, &props);
     printf("\n -> Using GPU [%d]: %s (%s)\n", bestIndex, props.deviceName,
            deviceTypeName(props.deviceType));

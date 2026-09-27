@@ -1,4 +1,5 @@
 #include "camera.hpp"
+#include "console.hpp"
 #include "endgen.hpp"
 #include "entities.hpp"
 #include "mctick.hpp"
@@ -109,6 +110,7 @@ static std::string exeDir() {
 struct Options {
     bool vsync = false;       // 默认关闭垂直同步
     int renderDist = 8;       // 默认渲染距离（区块）
+    int gpuIndex = -1;        // 显卡选择：-1=自动（独显优先），>=0 为物理设备序号
 };
 
 static std::string optionsPath() { return exeDir() + "\\options.txt"; }
@@ -123,6 +125,9 @@ static Options loadOptions() {
         } else if (line.rfind("renderDist:", 0) == 0) {
             int v = std::atoi(line.c_str() + 11);
             if (v >= 2 && v <= 32) o.renderDist = v;
+        } else if (line.rfind("gpuIndex:", 0) == 0) {
+            int v = std::atoi(line.c_str() + 9);
+            if (v >= -1) o.gpuIndex = v;
         }
     }
     return o;
@@ -133,6 +138,7 @@ static void saveOptions(const Options& o) {
     if (!f) return;
     f << "vsync:" << (o.vsync ? "on" : "off") << "\n";
     f << "renderDist:" << o.renderDist << "\n";
+    f << "gpuIndex:" << o.gpuIndex << "\n";
 }
 
 int main(int argc, char** argv) {
@@ -153,7 +159,8 @@ int main(int argc, char** argv) {
 
     VkCtx ctx;
     ctx.vsync = a.noVsync ? false : opts.vsync;
-    ctx.desiredGpuIndex = a.gpuIndex;
+    // 显卡选择优先级：命令行 --gpu-index > options.txt > 自动（独显优先）
+    ctx.desiredGpuIndex = a.gpuIndex >= 0 ? a.gpuIndex : opts.gpuIndex;
     if (!ctx.init(win, 1280, 720)) { printf("Vulkan init failed: %s\n", ctx.lastError.c_str()); return 1; }
 
     Renderer renderer;
@@ -178,6 +185,12 @@ int main(int argc, char** argv) {
     int frame = 0;
     int lastW = 0, lastH = 0;
     int renderDist = (a.renderDistSet ? a.renderDist : opts.renderDist); // 视频设置里可运行时调整
+    int gpuSel = opts.gpuIndex; // 显卡选择：-1=自动；菜单里循环切换并保存，重启生效
+
+    // 控制台指令输入线程（tp / where / help）
+    ConsoleInput consoleInput;
+    consoleInput.start();
+    printf("[cmd] 控制台指令已启用：输入 help 查看用法\n");
     bool escPrev = false, ePrev = false, in_prevL = false, in_prevR = false;
     auto last = std::chrono::steady_clock::now();
 
@@ -528,6 +541,69 @@ int main(int argc, char** argv) {
         return false;
     };
 
+    // ---- 控制台指令 ----
+    auto dimToName = [](DimensionId d) -> const char* {
+        switch (d) {
+        case DIM_NETHER: return "下界";
+        case DIM_END:    return "末地";
+        default:         return "主世界";
+        }
+    };
+    auto runConsoleCommand = [&](const std::string& line) {
+        std::vector<std::string> tok;
+        {
+            std::string cur;
+            for (char c : line) {
+                if (c == ' ') { if (!cur.empty()) { tok.push_back(cur); cur.clear(); } }
+                else cur += c;
+            }
+            if (!cur.empty()) tok.push_back(cur);
+        }
+        if (tok.empty()) return;
+        const std::string& cmd = tok[0];
+        if (cmd == "help") {
+            printf("[cmd] 可用指令:\n"
+                   "  tp <x> <y> <z>             传送到本维度坐标（y 为脚底高度，支持小数）\n"
+                   "  tp <overworld|nether|end>  跨维度传送（也可写 主世界/下界/末地）\n"
+                   "  where                      显示当前坐标与维度\n");
+        } else if (cmd == "tp") {
+            if (!world) { printf("[cmd] 尚未进入世界\n"); return; }
+            if (tok.size() == 2) {
+                DimensionId d;
+                if (dimFromName(tok[1], d)) {
+                    printf("[cmd] tp -> %s\n", dimToName(d));
+                    performTeleport(d, INT_MIN, 0, 0);
+                } else {
+                    printf("[cmd] 用法: tp <x> <y> <z> 或 tp <overworld|nether|end>\n");
+                }
+            } else if (tok.size() == 4) {
+                try {
+                    float x = std::stof(tok[1]), y = std::stof(tok[2]), z = std::stof(tok[3]);
+                    player.cam.pos = Vec3(x, y + player.eyeHeight, z);
+                    player.cam.markDirty();
+                    player.vel = Vec3(0, 0, 0);
+                    printf("[cmd] 已传送到 (%.2f, %.2f, %.2f) @ %s\n",
+                           x, y, z, dimToName(world->getDimension()));
+                } catch (...) {
+                    printf("[cmd] 坐标解析失败，用法: tp <x> <y> <z>\n");
+                }
+            } else {
+                printf("[cmd] 用法: tp <x> <y> <z> 或 tp <overworld|nether|end>\n");
+            }
+        } else if (cmd == "where") {
+            if (!world) { printf("[cmd] 尚未进入世界\n"); return; }
+            printf("[cmd] 位置: x=%.2f y=%.2f z=%.2f (脚底 y=%.2f)  方块: (%d, %d, %d)  维度: %s\n",
+                   player.cam.pos.x, player.cam.pos.y, player.cam.pos.z,
+                   player.cam.pos.y - player.eyeHeight,
+                   (int)std::floor(player.cam.pos.x),
+                   (int)std::floor(player.cam.pos.y - player.eyeHeight),
+                   (int)std::floor(player.cam.pos.z),
+                   dimToName(world->getDimension()));
+        } else {
+            printf("[cmd] 未知指令: %s（输入 help 查看可用指令）\n", cmd.c_str());
+        }
+    };
+
     if (gs == GS::Play) {
         enterWorld(a.seed, "world", std::string());
         
@@ -645,6 +721,9 @@ int main(int argc, char** argv) {
         md.vsync = ctx.vsync;
         md.renderDist = renderDist;
         md.seedText = "123456";
+        for (const GpuInfo& g : ctx.gpus) md.gpuNames.push_back(g.name);
+        md.gpuIndex = gpuSel;
+        md.gpuActive = ctx.activeGpuIndex;
         menu.renderMenu(ctx, ms, md, 640.0f, 300.0f, false);
         menu.debugSaveMenu(a.menuShot);
         menu.shutdown(ctx);
@@ -672,6 +751,13 @@ int main(int argc, char** argv) {
         bool eKey = in.keys['E'], eEdge = eKey && !ePrev;
         escPrev = esc;
         ePrev = eKey;
+
+        // 控制台指令：每帧最多处理 8 条，防止刷屏卡帧
+        {
+            std::string cmdline;
+            for (int ci = 0; ci < 8 && consoleInput.poll(cmdline); ci++)
+                runConsoleCommand(cmdline);
+        }
 
         if (gs == GS::Play) {
             if (escEdge) {
@@ -797,6 +883,9 @@ int main(int argc, char** argv) {
             md.renderDist = renderDist;
             md.renderDistPtr = &renderDist;
             md.titleText = "新建世界";
+            for (const GpuInfo& g : ctx.gpus) md.gpuNames.push_back(g.name);
+            md.gpuIndex = gpuSel;
+            md.gpuActive = ctx.activeGpuIndex;
             int clicked = menu.renderMenu(ctx, screenFromGS(gs), md, cx, cy, in.mouse[0]);
 
             switch (clicked) {
@@ -830,11 +919,17 @@ int main(int argc, char** argv) {
                 case MENU_VSYNC:
                     ctx.vsync = !ctx.vsync;
                     ctx.recreateSwapchain(cw, ch);
-                    saveOptions(Options{ctx.vsync, renderDist});
+                    saveOptions(Options{ctx.vsync, renderDist, gpuSel});
                     break;
                 case MENU_RENDERDIST:
                     // 滑块已把新值写入 renderDist，这里只需保存。
-                    saveOptions(Options{ctx.vsync, renderDist});
+                    saveOptions(Options{ctx.vsync, renderDist, gpuSel});
+                    break;
+                case MENU_GPU:
+                    // 在"自动 → 设备0 → 设备1 → … → 自动"间循环；切换设备
+                    // 要重建整个 Vulkan 上下文，这里只保存，重启后生效。
+                    gpuSel = (gpuSel + 1 > (int)ctx.gpus.size() - 1) ? -1 : gpuSel + 1;
+                    saveOptions(Options{ctx.vsync, renderDist, gpuSel});
                     break;
                 default:
                     // 存档列表按钮

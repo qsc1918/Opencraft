@@ -85,6 +85,14 @@ struct Box {
     BoxFace face[6];
 };
 
+constexpr int kMaxParts = 8;
+
+// 原版紫颂植株/花的模型写了 "ambientocclusion": false：按整格邻块算 AO 会
+// 在细柱子上糊出莫名其妙的暗角，所以这些模型不做 AO。
+inline bool noAoBlock(uint8_t id) {
+    return id == B_CHORUS_PLANT || id == B_CHORUS_FLOWER || id == B_CHORUS_FLOWER_DEAD;
+}
+
 inline void setFace(Box& b, int f, uint8_t tile, uint8_t u0, uint8_t v0, uint8_t u1, uint8_t v1,
                     bool cull) {
     b.face[f].tile = tile;
@@ -105,6 +113,133 @@ inline bool onBoundary(const Box& b, int f) {
     }
 }
 
+// 原版 element 没写 uv 时由 from/to 推导的默认 UV（FaceBakery 规则）：
+// u/v 各取自哪两个轴由面决定，朝 -X/-Z/-Y 的面 u 反向（从面外侧看 u 向右增）。
+inline void defaultUv(const Box& b, int f, uint8_t& u0, uint8_t& v0, uint8_t& u1, uint8_t& v1) {
+    switch (f) {
+    case F_PX: u0 = (uint8_t)(16 - b.z1); u1 = (uint8_t)(16 - b.z0); break; // east
+    case F_NX: u0 = (uint8_t)b.z0;        u1 = (uint8_t)b.z1;        break; // west
+    case F_PY: u0 = (uint8_t)b.x0;        u1 = (uint8_t)b.x1;        break; // up
+    case F_NY: u0 = (uint8_t)(16 - b.x0); u1 = (uint8_t)(16 - b.x1); break; // down
+    case F_PZ: u0 = (uint8_t)b.x0;        u1 = (uint8_t)b.x1;        break; // south
+    default:   u0 = (uint8_t)(16 - b.x1); u1 = (uint8_t)(16 - b.x0); break; // north
+    }
+    switch (f) {
+    case F_PY: v0 = (uint8_t)b.z0;        v1 = (uint8_t)b.z1;        break;
+    case F_NY: v0 = (uint8_t)b.z1;        v1 = (uint8_t)b.z0;        break;
+    default:   v0 = (uint8_t)(16 - b.y1); v1 = (uint8_t)(16 - b.y0); break;
+    }
+}
+
+// 紫颂植株某面是否"接得上"邻块（原版 ChorusPlantBlock#connectsTo）：
+// 紫颂植株 / 紫颂花；朝下额外认末地石（BlockTags.SUPPORTS_CHORUS_PLANT）。
+inline bool chorusConnects(uint8_t nb, int f) {
+    if (nb == B_CHORUS_PLANT || nb == B_CHORUS_FLOWER || nb == B_CHORUS_FLOWER_DEAD) return true;
+    return f == F_NY && nb == B_END_STONE;
+}
+
+// 紫颂植株：原版 blockstates 是 multipart——某面接上邻块就长出 [4,4,0]->[12,12,4]
+// 的凸起（只画朝外的盖 + 四个侧面，贴内层那面不画），没接上就露出内层
+// [4,4,4]->[12,12,12] 的内壁（#inside）。所以整块看着是一根 8×8 的细柱子。
+inline int buildChorusPlant(Box* out, uint8_t conn) {
+    int n = 0;
+    Box& inner = out[n++];
+    inner = Box{};
+    inner.x0 = 4; inner.y0 = 4; inner.z0 = 4;
+    inner.x1 = 12; inner.y1 = 12; inner.z1 = 12;
+    for (int f = 0; f < 6; f++) inner.face[f].present = false;
+    for (int f = 0; f < 6; f++)
+        if (!(conn & (1 << f))) setFace(inner, f, T_CHORUS_PLANT, 4, 4, 12, 12, false);
+
+    for (int f = 0; f < 6; f++) {
+        if (!(conn & (1 << f))) continue;
+        Box& b = out[n++];
+        b = Box{};
+        int a = f >> 1;                       // 法线轴：0=X,1=Y,2=Z
+        int lo[3] = {4, 4, 4}, hi[3] = {12, 12, 12};
+        if (f == F_PX || f == F_PY || f == F_PZ) { lo[a] = 12; hi[a] = 16; }
+        else                                   { lo[a] = 0;  hi[a] = 4;  }
+        b.x0 = lo[0]; b.y0 = lo[1]; b.z0 = lo[2];
+        b.x1 = hi[0]; b.y1 = hi[1]; b.z1 = hi[2];
+        for (int k = 0; k < 6; k++) b.face[k].present = false;
+        uint8_t u0, v0, u1, v1;
+        defaultUv(b, f, u0, v0, u1, v1);
+        setFace(b, f, T_CHORUS_PLANT, u0, v0, u1, v1, true); // cullface=本面
+        for (int k = 0; k < 6; k++) {
+            if (k == f || k == (f ^ 1)) continue;            // 盖 + 贴内层那面
+            defaultUv(b, k, u0, v0, u1, v1);
+            setFace(b, k, T_CHORUS_PLANT, u0, v0, u1, v1, false);
+        }
+    }
+    return n;
+}
+
+// 紫颂花：原版 models/block/template_chorus_flower.json 的 6 个 element（花杯形，
+// 四角内凹）。#texture=花瓣贴图，#bottom=紫颂植株贴图；模型里没有 cullface。
+inline int buildChorusFlower(Box* out, uint8_t id) {
+    const uint8_t tex = (id == B_CHORUS_FLOWER_DEAD) ? T_CHORUS_FLOWER_DEAD : T_CHORUS_FLOWER;
+    const uint8_t bot = T_CHORUS_PLANT; // #bottom
+    int n = 0;
+    auto elem = [&](int x0, int y0, int z0, int x1, int y1, int z1) -> Box& {
+        Box& b = out[n++];
+        b = Box{};
+        b.x0 = x0; b.y0 = y0; b.z0 = z0;
+        b.x1 = x1; b.y1 = y1; b.z1 = z1;
+        for (int k = 0; k < 6; k++) b.face[k].present = false;
+        return b;
+    };
+    // 顶盖 [2,14,2]->[14,16,14]
+    {
+        Box& b = elem(2, 14, 2, 14, 16, 14);
+        setFace(b, F_PY, tex, 2, 2, 14, 14, false);
+        for (int f : {F_NX, F_PX, F_NZ, F_PZ}) setFace(b, f, bot, 2, 0, 14, 2, false);
+    }
+    // 西壁 [0,2,2]->[2,14,14]
+    {
+        Box& b = elem(0, 2, 2, 2, 14, 14);
+        setFace(b, F_NY, bot, 16, 14, 14, 2, false);
+        setFace(b, F_PY, bot, 0, 2, 2, 14, false);
+        setFace(b, F_NZ, bot, 14, 2, 16, 14, false);
+        setFace(b, F_PZ, bot, 0, 2, 2, 14, false);
+        setFace(b, F_NX, tex, 2, 2, 14, 14, false);
+    }
+    // 北壁 [2,2,0]->[14,14,2]
+    {
+        Box& b = elem(2, 2, 0, 14, 14, 2);
+        setFace(b, F_NY, bot, 14, 2, 2, 0, false);
+        setFace(b, F_PY, bot, 2, 0, 14, 2, false);
+        setFace(b, F_NZ, tex, 2, 2, 14, 14, false);
+        setFace(b, F_NX, bot, 0, 2, 2, 14, false);
+        setFace(b, F_PX, bot, 14, 2, 16, 14, false);
+    }
+    // 南壁 [2,2,14]->[14,14,16]
+    {
+        Box& b = elem(2, 2, 14, 14, 14, 16);
+        setFace(b, F_NY, bot, 14, 16, 2, 14, false);
+        setFace(b, F_PY, bot, 2, 14, 14, 16, false);
+        setFace(b, F_PZ, tex, 2, 2, 14, 14, false);
+        setFace(b, F_NX, bot, 14, 2, 16, 14, false);
+        setFace(b, F_PX, bot, 0, 2, 2, 14, false);
+    }
+    // 东壁 [14,2,2]->[16,14,14]
+    {
+        Box& b = elem(14, 2, 2, 16, 14, 14);
+        setFace(b, F_NY, bot, 2, 14, 0, 2, false);
+        setFace(b, F_PY, bot, 14, 2, 16, 14, false);
+        setFace(b, F_NZ, bot, 0, 2, 2, 14, false);
+        setFace(b, F_PZ, bot, 14, 2, 16, 14, false);
+        setFace(b, F_PX, tex, 2, 2, 14, 14, false);
+    }
+    // 杯身 [2,0,2]->[14,14,14]
+    {
+        Box& b = elem(2, 0, 2, 14, 14, 14);
+        setFace(b, F_PY, bot, 2, 2, 14, 14, false);
+        setFace(b, F_NY, bot, 14, 14, 2, 2, false);
+        for (int f : {F_NX, F_PX, F_NZ, F_PZ}) setFace(b, f, bot, 2, 2, 14, 16, false);
+    }
+    return n;
+}
+
 // ---------------------------------------------------------------------------
 // 末地传送门框架：原版 models/block/end_portal_frame(_filled).json
 //  - element0 [0,0,0]->[16,13,16]：down=end_stone(cullface)、up=frame_top(无 cullface)、
@@ -113,7 +248,9 @@ inline bool onBoundary(const Box& b, int f) {
 //    四侧 uv [4,0,12,3]（无 cullface，绝不因邻居消失）、没有 down 面。
 // 眼块是"居中"的 8×8 柱子、凸出框顶 3/16（对应原版 SHAPE_FULL），不随朝向偏移。
 // ---------------------------------------------------------------------------
-inline int buildParts(uint8_t id, Box* out) {
+inline int buildParts(uint8_t id, Box* out, uint8_t conn) {
+    if (id == B_CHORUS_PLANT) return buildChorusPlant(out, conn);
+    if (id == B_CHORUS_FLOWER || id == B_CHORUS_FLOWER_DEAD) return buildChorusFlower(out, id);
     if (blockIsPortalFrame(id)) {
         Box& b = out[0];
         b = Box{};
@@ -225,8 +362,16 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
 
                 if (!blockIsRenderable(id)) continue;
 
-                Box parts[2];
-                const int partCount = buildParts(id, parts);
+                // 紫颂植株按六面邻块决定"长不长凸起"，先算连接掩码
+                uint8_t conn = 0;
+                if (id == B_CHORUS_PLANT) {
+                    for (int f = 0; f < 6; f++)
+                        if (chorusConnects(view.at(x + kNormal[f][0], y + kNormal[f][1],
+                                                   z + kNormal[f][2]), f))
+                            conn |= (uint8_t)(1 << f);
+                }
+                Box parts[kMaxParts]; // 植株最多 1 个内层 + 6 个凸起
+                const int partCount = buildParts(id, parts, conn);
                 for (int pi = 0; pi < partCount; pi++) {
                     const Box& box = parts[pi];
                     for (int f = 0; f < 6; f++) {
@@ -255,7 +400,10 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                             vt.tex = bf.tile;
                             vt.shade = emissiveBlock(id)
                                           ? 255
-                                          : bakeShade(f, aoForFace(view, x, y, z, f, c), false);
+                                          : bakeShade(f,
+                                                      noAoBlock(id) ? 3
+                                                                    : aoForFace(view, x, y, z, f, c),
+                                                      false);
                             ov.push_back(vt);
                         }
                         oi.push_back(base);

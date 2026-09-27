@@ -30,6 +30,7 @@ enum {
     MENU_BACK = 8,
     MENU_VSYNC = 9,
     MENU_RENDERDIST = 10,
+    MENU_GPU = 11,             // 显卡设备选择（切换后下次启动生效）
     MENU_SAVEANDTITLE = 200,
     MENU_SAVE_FIRST = 100,     // 存档按钮 100, 101, ...
     MENU_DELETE_FIRST = 500,   // 删除按钮 500+i
@@ -43,6 +44,10 @@ struct MenuData {
     int renderDist = 8;             // 渲染距离（区块）
     int renderDistMin = 2, renderDistMax = 32;
     int* renderDistPtr = nullptr;   // 非空时，滑块把新值写回此处
+    // 显卡选择：gpuIndex=-1 表示自动（独显优先），否则为 ctx.gpus 下标
+    std::vector<std::string> gpuNames;
+    int gpuIndex = -1;
+    int gpuActive = -1;             // 本次启动实际使用的设备序号
     int saveCount = 0;
 };
 

@@ -465,8 +465,27 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         float bw = 300, bh = 40;
         float bx = (w - bw) / 2;
         std::string label = std::string("垂直同步：") + (data.vsync ? "开" : "关");
-        addBtn(MENU_VSYNC, bx, 210, bw, bh, label);
-        addSlider(bx, 270, bw, 20, data.renderDistMin, data.renderDistMax, data.renderDist);
+        addBtn(MENU_VSYNC, bx, 190, bw, bh, label);
+        // 显卡选择：点击在"自动 / 各设备"间循环，重启后生效
+        float gbw = 460;
+        float gbx = (w - gbw) / 2;
+        std::string gpuLabel = "显卡：";
+        if (data.gpuIndex < 0 || data.gpuIndex >= (int)data.gpuNames.size())
+            gpuLabel += "自动（优先独显）";
+        else
+            gpuLabel += data.gpuNames[data.gpuIndex];
+        if (data.gpuIndex >= 0 && data.gpuIndex != data.gpuActive)
+            gpuLabel += " ＊"; // 与本次运行不同：提示要重启才切换
+        addBtn(MENU_GPU, gbx, 250, gbw, bh, gpuLabel);
+        // 提示行
+        RECT hr = {(int)gbx, 296, (int)(gbx + gbw), 318};
+        SetTextColor(dc, RGB(190, 190, 190));
+        SetBkMode(dc, TRANSPARENT);
+        SetTextAlign(dc, TA_CENTER);
+        SelectObject(dc, font_);
+        DrawTextW(dc, utf8ToWide("切换显卡后重新启动游戏才会生效").c_str(), -1, &hr,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        addSlider(bx, 340, bw, 20, data.renderDistMin, data.renderDistMax, data.renderDist);
         addBtn(MENU_BACK, bx, h - 90, bw, bh, "返回");
     } else if (screen == Menuscreen::Pause) {
         float bw = 400, bh = 40;

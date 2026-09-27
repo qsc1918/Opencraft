@@ -9,6 +9,15 @@
 
 struct Window;
 
+// 供菜单"显卡选择"展示的物理设备摘要（init 时填充，下标即 --gpu-index 序号）
+struct GpuInfo {
+    std::string name;
+    std::string type;      // 简短中文类型名
+    uint64_t vramMB = 0;
+    bool usable = false;   // 是否支持图形 + 交换链
+    bool discrete = false;
+};
+
 // 完整 Vulkan 上下文：实例、设备、交换链、同步原语。
 struct VkCtx {
     VkInstance instance = VK_NULL_HANDLE;
@@ -46,7 +55,9 @@ struct VkCtx {
 
     bool ok = false;
     bool vsync = true;
-    int desiredGpuIndex = -1; // >=0 时强制用该物理设备序号（--gpu-index）
+    int desiredGpuIndex = -1; // >=0 时强制用该物理设备序号（--gpu-index / options.txt）
+    std::vector<GpuInfo> gpus; // 枚举到的全部物理设备
+    int activeGpuIndex = -1;   // 本次启动实际使用的设备序号
     std::string lastError;
 
     bool init(Window& win, int w, int h);

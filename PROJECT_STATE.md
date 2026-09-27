@@ -3,11 +3,15 @@
 > 本文件是"压缩上下文"式的项目现状说明：换一个 AI/会话接手时，读这一份 + `AGENTS.md`
 > 就能继续干活。**改动项目后请同步更新下面的「当前状态」一节。**
 >
-> 最后更新：修末地这批 bug——`T_ITEM_BASE` 从写死的 37 改为 `T_COUNT`（此前物品图标
-> 把紫颂/铁栏杆/火把的图块覆盖成工具贴图）；末地门激活后挖框架/门方块会整体破碎；
-> 黑曜石柱按原版"同位置 if/else"修正柱身高度（此前 66 以上的柱身被清空循环擦掉）；
-> 柱子/返回传送门/末地平台改为跨区块自足生成（包围盒相交即算、put 裁剪），不再缺角；
-> `podiumOriginY` 改为由种子按竖向插值公式计算，四个宿主区块结果一致。
+> 最后更新：第二批 4 项——①紫颂植株/花按原版 multipart 模型还原（`mesher.cpp` 新增
+> `buildChorusPlant`/`buildChorusFlower` + FaceBakery 默认 UV 推导 `defaultUv`，
+> `parts[]` 扩到 `kMaxParts=8`，三个紫颂方块改 `opaque=false` 且模型不做 AO）；
+> ②视频设置新增"显卡"选择按钮（`MENU_GPU`，`VkCtx::gpus`/`activeGpuIndex` 枚举，
+> options.txt 持久化 `gpuIndex:`，`--gpu-index` 仍可覆盖，越界自动回落，切换重启生效）；
+> ③控制台可输入指令（`src/console.hpp` 后台线程读 stdin，`tp x y z` /
+> `tp overworld|nether|end`（支持中文维度名）/ `where` / `help`，中文输入按 OEM
+> 代码页转 UTF-8）；④`tools/tag_ci.ps1` 自动打 `ci<版本>` 标签并推送（脏工作区/重复
+> 标签有防呆，`-DryRun`/`-Force`）。
 
 ---
 
@@ -40,7 +44,10 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 | 实体 | 末影龙、末影水晶、龙蛋（部分） |
 | 存档 | 自定义二进制 v3，**按维度分段**保存/读取 |
 | 紫颂花生长 | 方块随机刻（`mctick`）复刻 `ChorusFlowerBlock.randomTick` |
-| 火把/铁栏杆/紫颂方块 | 已注册，有贴图 |
+| 火把/铁栏杆/紫颂方块 | 已注册，有贴图；**紫颂植株/花已按原版模型渲染**（multipart 凸起 + 花杯形，见 §4.9） |
+| 视频设置 | 垂直同步、渲染距离滑块、**显卡设备选择**（按钮循环切换，options.txt 保存，重启生效；`--gpu-index` 优先级更高） |
+| 控制台指令 | `tp`（坐标/跨维度）、`where`（坐标+维度）、`help`；后台线程读 stdin，主线程每帧执行（`src/console.hpp`） |
+| 发版辅助 | `tools/tag_ci.ps1`：读 `version.txt` 的 `[current]` 打 `ci<版本>` 标签并推送 |
 
 ### 未完成 / 已知差距
 
@@ -69,7 +76,18 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 
 ### 最近一次验证
 
-- **2026-09-27 末地 bug 批量修复**（详见文件头「最后更新」）：
+- **2026-09-27 第二批 4 项**（详见文件头「最后更新」）：
+  - `cmake --build build` 通过，`portalselftest` / `endprobe` 复测全过；
+  - 紫颂植株/花：主世界高空摆测试台截图（`build/chorus3.png` 全景、`build/chorus4.png`
+    特写）——茎是 8/16 细柱 + 凸起、孤立植株是 8×8 小方块、花是花杯形；
+  - 显卡选择：`--menu-shot build/menu_video.png --menu-screen 5` 显示"显卡：自动（优先
+    独显）"按钮 + "重启生效"提示；本机枚举到核显 + RTX 4070，自动选中 GPU[1]；
+  - 控制台指令：管道输入实跑通过——`help` / `where`（坐标+维度）/ `tp 120.5 70 30.5`
+    （脚底精确落在 y=70）/ `tp nether` / `tp end` / `tp 主世界` / 未知指令报错，
+    中文参数在管道（UTF-8）与真控制台（GBK→UTF-8 转换）两条路径都通；
+  - `tools/tag_ci.ps1 -DryRun`：正确解析出 `ci0.4.0-snapshot-4`；脏工作区被拦
+    （提示先提交或 `-Force`）；标签已存在且指向别的提交时报错提示先升版本号。
+- **2026-09-27 末地 bug 批量修复**：
   - `cmake --build build` 通过；`portalselftest` 全过；
   - `portalflowtest` 新增 2 个用例全过：挖框架 → 环内 end_portal 全碎、挖门方块 → 相连门方块全碎；
   - 截图验证：柱子从岛面立起且顶部接到铁栏杆笼子与火（`build/fix_pillars.png`）、
@@ -257,6 +275,23 @@ final = squeeze(0.64 * (t - 23.4375))
   扩到 41，物品图标把紫颂植株/紫颂花/铁栏杆/火把的贴图覆盖成了工具图标
   （症状：末地的铁栏杆笼子显示成木剑、背包里多出四个"工具方块"）。
 - 新增方块要同时检查 `kTileFiles`/`kTileTint` 数组元素个数与 `T_COUNT` 一致。
+
+### 4.9 紫颂植株/花的模型（原版 multipart）
+
+- **植株** = 1 个内层 cube `[4,4,4]->[12,12,12]`（每个面用 `#inside`，即植株贴图）
+  + 每个连接方向最多 6 个凸起 `[4,4,0]->[12,12,4]`（轴向平移到对应边，盖面 cullface、
+  贴内层那面不画）。连接规则 = `ChorusPlantBlock#connectsTo`：邻块是紫颂植株/紫颂花，
+  朝下额外认末地石。所以一株孤立的植株只是一颗悬空的 8×8 小方块。
+- **花** = `template_chorus_flower` 的 6 个 element（花杯形、四角内凹），`#bottom` 用
+  植株贴图、`#texture` 用花贴图，全部面无 cullface。枯花只是换了贴图。
+- 原版这几个模型写了 `"ambientocclusion": false`：按整格邻块算 AO 会在细柱子上糊出
+  暗角，`noAoBlock()` 对紫颂三个方块直接给满 AO 等级。
+- 原版 element 没写 uv 时由 from/to 推导默认 UV（`defaultUv()`）：north/east/down 的
+  u 是反向的（16-x / 16-z / 16-x），照抄 `kCorner` 那套角点顺序即可对上。
+- 三个紫颂方块在 `BLOCK_DEFS` 里 `opaque=false`：别去剔邻居的面，也别挡光；
+  `solid=true` 保留碰撞。
+- 注意 `buildParts()` 的 `Box parts[]` 大小是 `kMaxParts=8`（植株 1+6，花 6），加新
+  多 element 模型时数一下上限。
 
 ## 5. 常用命令
 
