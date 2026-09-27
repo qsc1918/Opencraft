@@ -1,8 +1,8 @@
 name: Build Windows Release
 
 # 打 ci* 的 tag（ci1.0.0 / ci-1.0.0 之类）时自动构建并发布；也可以在 Actions
-# 页面手动跑：填了 tag_name 就发布（checkout 到该 tag 对应的 commit），
-# 留空则只构建验证，不发布。
+# 页面手动跑：构建的是你在界面上选的那个 ref（分支/tag），填了 tag_name
+# 就把产物发布到该 tag，留空则只构建验证、不发布。
 on:
   push:
     tags:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: '要发布的 tag（如 ci1.0.0）。留空则只构建验证，不发布。'
+        description: '要发布到的 tag（如 ci1.0.0）。留空则只构建验证，不发布。'
         required: false
         default: ''
 
@@ -29,11 +29,9 @@ jobs:
 
     steps:
       - name: Checkout
+        # 用默认行为：推 tag 时 checkout 该 tag，手动跑时 checkout 界面上选的那个 ref。
+        # 不再受 tag_name 影响——tag_name 只决定“发布到哪个 tag 名”。
         uses: actions/checkout@v4
-        with:
-          # 手动跑填了 tag 就 checkout 该 tag 指向的 commit；否则默认
-          # （tag 推送 = 该 tag，手动留空 = 当前分支）
-          ref: ${{ inputs.tag_name || github.ref }}
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
