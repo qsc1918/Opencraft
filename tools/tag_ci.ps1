@@ -70,7 +70,7 @@ if ($existing.Count -gt 0) {
 if ($DryRun) {
     Write-Host "[DryRun] git push $Remote $tag"
 } else {
-    git push $Remote $tag
+    git push $Remote main $tag
     if ($LASTEXITCODE -ne 0) { exit 1 }
     Write-Host "完成：$tag 已推送到 $Remote"
 }
