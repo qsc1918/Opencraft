@@ -9,6 +9,10 @@ layout(location = 1) in uvec4 inMeta; // 依次为 u、v、贴图索引、明暗
 layout(location = 0) out vec2 vUV;
 layout(location = 1) out float vShade;
 layout(location = 2) out float vDist;
+// 贪心合并出的大面 uv 会超出单个图块，片元里要按图块折回才算"平铺"，
+// 所以把图块矩形与是否需要折回一起送过去
+layout(location = 3) flat out vec4 vTileRect;
+layout(location = 4) flat out float vWrap;
 
 layout(push_constant) uniform Pc {
     vec4 origin;
@@ -40,6 +44,9 @@ void main() {
     vec4 r = ubo.tileRect[tex];
     vec2 px = r.xy + tileUV * r.zw / 16.0;
     vUV = px / vec2(ubo.misc.y, ubo.misc.z);
+    vTileRect = r;
+    // 顶点 w 是 mesher 打的平铺标记：1=横向重复、2=纵向重复
+    vWrap = float(inPos.w);
     // 明暗系数按原版语义是"显示空间乘法"（显示值 = 贴图 × 系数）：原版在伽马
     // 空间直接乘字节，线性空间里等价于乘 系数^2.2，否则暗部会被抬亮、失去对比。
     vShade = pow(float(inMeta.w) / 255.0, 2.2);

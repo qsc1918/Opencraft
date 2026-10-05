@@ -361,10 +361,6 @@ inline int buildParts(uint8_t id, Box* out, uint8_t conn) {
     return 1;
 }
 
-inline uint8_t bakeShade(int face, int ao, bool water) {
-    return kShade[face][ao][water ? 1 : 0];
-}
-
 // ---------------------------------------------------------------------------
 // AO：在原版里是"面外侧那一层"（法线方向偏移一格）的角点邻居，
 // 角点朝外的两个方向由该角落在 element 的 min 还是 max 侧决定。
@@ -391,6 +387,204 @@ inline int aoForFace(const MeshView& view, int x, int y, int z, int f, int c) {
     return 3 - ((s1 ? 1 : 0) + (s2 ? 1 : 0) + (dd ? 1 : 0));
 }
 
+inline uint8_t bakeShade(int face, int ao, bool water) {
+    return kShade[face][ao][water ? 1 : 0];
+}
+
+// ---------------------------------------------------------------------------
+// 贪心网格化：把同一朝向、同贴图、同亮度的整方块面合并成一张大矩形。
+// 前提是"合并后必须和逐格出面逐像素一致"，所以一张面只有在**四个角亮度全相等**
+// 时才参与合并（见 canMergeFace）；多 element 模型、自定义 UV 的面走原来的路径。
+// ---------------------------------------------------------------------------
+
+// 每个朝向的面内两条轴、uv 由哪条轴驱动；由 kCorner/kUvCorner 现推，避免手抄表
+struct FaceLayout {
+    int na = 0;               // 法线轴
+    int slotAxis[2] = {0, 0}; // 另外两条轴
+    int uSlot = 0, uFlip = 0; // uv 取 slotAxis[uSlot]，uFlip=1 表示随该轴反向
+    int vSlot = 0, vFlip = 0;
+};
+FaceLayout kLayout[6];
+int kAoIdx[6][4];             // 角点 c 在面内 2x2 里的序号 = bit(slot0) + 2*bit(slot1)
+
+struct LayoutInit {
+    LayoutInit() {
+        for (int f = 0; f < 6; f++) {
+            FaceLayout& L = kLayout[f];
+            L.na = f >> 1;
+            int n = 0;
+            for (int a = 0; a < 3; a++)
+                if (a != L.na) L.slotAxis[n++] = a;
+            for (int comp = 0; comp < 2; comp++) {
+                for (int s = 0; s < 2; s++) {
+                    // 取 uv 大端的两个角点必须落在该轴同一侧、另两个落在对侧，
+                    // 满足这条的轴就是驱动该 uv 分量的轴
+                    int want = -1;
+                    bool ok = true;
+                    for (int c = 0; c < 4; c++) {
+                        int w = kUvCorner[c][comp] ? kCorner[f][c][L.slotAxis[s]]
+                                                   : 1 - kCorner[f][c][L.slotAxis[s]];
+                        if (want < 0) want = w;
+                        else if (want != w) { ok = false; break; }
+                    }
+                    if (!ok || want < 0) continue;
+                    if (comp == 0) { L.uSlot = s; L.uFlip = want ? 0 : 1; }
+                    else           { L.vSlot = s; L.vFlip = want ? 0 : 1; }
+                }
+            }
+            for (int c = 0; c < 4; c++)
+                kAoIdx[f][c] = kCorner[f][c][L.slotAxis[0]] + 2 * kCorner[f][c][L.slotAxis[1]];
+        }
+    }
+} layoutInit;
+
+// 待合并面：tile(8 位) + 亮度(8 位) + 标记，塞进一个 uint32
+enum : uint32_t { kFacePresent = 1u << 16, kFaceUsed = 1u << 17 };
+inline uint32_t packFace(uint8_t tile, uint8_t shade) {
+    return (uint32_t)tile | ((uint32_t)shade << 8) | kFacePresent;
+}
+inline bool facePresent(uint32_t c) { return (c & kFacePresent) != 0; }
+inline bool faceUsed(uint32_t c) { return (c & kFaceUsed) != 0; }
+inline uint8_t faceTile(uint32_t c) { return (uint8_t)(c & 0xFFu); }
+inline uint8_t faceShade(uint32_t c) { return (uint8_t)((c >> 8) & 0xFFu); }
+
+// 一整列 [f][y][z][x] 的待合并面表；thread_local 让每个构网格线程各用一份
+struct GreedyGrid {
+    std::vector<uint32_t> cells;
+    int clearedTo = -1;
+    void reset(int upto) {
+        const size_t perF = (size_t)WORLD_HEIGHT * CHUNK_SIZE * CHUNK_SIZE;
+        if (cells.empty()) cells.assign(perF * 6, 0);
+        // 只清"上次和上上次用到过"的高度，避免每次都 memset 整个 [0,128)
+        int need = upto > clearedTo ? upto : clearedTo;
+        if (need < 0) return;
+        const size_t n = (size_t)(need + 1) * CHUNK_SIZE * CHUNK_SIZE;
+        for (int f = 0; f < 6; f++)
+            memset(cells.data() + (size_t)f * perF, 0, n * sizeof(uint32_t));
+        clearedTo = upto;
+    }
+    uint32_t& at(int f, int x, int y, int z) {
+        return cells[(((size_t)f * WORLD_HEIGHT + y) * CHUNK_SIZE + z) * CHUNK_SIZE + x];
+    }
+};
+thread_local GreedyGrid g_grid;
+
+// 水面只有顶面，一层一张表就够；相邻水面高度不同就不共面，所以 y 也要参与比较
+struct WaterCell {
+    uint8_t tile = 0, shade = 0, y = 0;
+    bool present = false, used = false;
+};
+inline bool sameWater(const WaterCell& a, const WaterCell& b) {
+    return a.present && !a.used && a.tile == b.tile && a.shade == b.shade && a.y == b.y;
+}
+
+// uv 是 uint8（以 1/16 格为单位），合并超过 15 格就溢出 255，按这个上限截断
+const int kMaxMergeBlocks = 15;
+// 顶点 w 分量交给着色器：合并出的大面 uv 会超出单个图块，需要按图块平铺
+enum : int16_t { kWrapU = 1, kWrapV = 2 };
+
+// 输出一张轴对齐矩形：coord=每条轴的起点（1/16 格），span=跨度（法线轴为 0）
+static void emitRect(std::vector<TerrainVertex>& verts, std::vector<uint32_t>& idx, int f,
+                     const int coord[3], const int span[3], uint8_t tile, uint8_t shade) {
+    const FaceLayout& L = kLayout[f];
+    const uint32_t base = (uint32_t)verts.size();
+    const int su = span[L.slotAxis[L.uSlot]];
+    const int sv = span[L.slotAxis[L.vSlot]];
+    for (int c = 0; c < 4; c++) {
+        TerrainVertex vt{};
+        vt.x = (int16_t)(coord[0] + (kCorner[f][c][0] ? span[0] : 0));
+        vt.y = (int16_t)(coord[1] + (kCorner[f][c][1] ? span[1] : 0));
+        vt.z = (int16_t)(coord[2] + (kCorner[f][c][2] ? span[2] : 0));
+        const bool atMaxU = kCorner[f][c][L.slotAxis[L.uSlot]] != 0;
+        const bool atMaxV = kCorner[f][c][L.slotAxis[L.vSlot]] != 0;
+        vt.u = (uint8_t)((L.uFlip ? !atMaxU : atMaxU) ? su : 0);
+        vt.v = (uint8_t)((L.vFlip ? !atMaxV : atMaxV) ? sv : 0);
+        vt.tex = tile;
+        vt.shade = shade;
+        vt.w = (int16_t)((su > 16 ? kWrapU : 0) | (sv > 16 ? kWrapV : 0));
+        verts.push_back(vt);
+    }
+    idx.push_back(base);     idx.push_back(base + 1); idx.push_back(base + 2);
+    idx.push_back(base);     idx.push_back(base + 2); idx.push_back(base + 3);
+}
+
+// 只有"标准整方块 + 整张贴图"的面能安全合并：多 element 模型（火把、紫颂、
+// 末地门框架）与自定义 UV 的面会按原样逐个出。
+inline bool mergeableFace(int f, const Box& box, const BoxFace& bf) {
+    if (box.custom) return false;
+    if (box.x0 || box.y0 || box.z0) return false;
+    if (box.x1 != 16 || box.y1 != 16 || box.z1 != 16) return false;
+    if (!bf.cull || !onBoundary(box, f)) return false;
+    return bf.u0 == 0 && bf.v0 == 0 && bf.u1 == 16 && bf.v1 == 16;
+}
+
+// 四个角的亮度必须全相等才允许合并（合并后整张只剩四个角插值，与原逐格渐变不符）；
+// 自发光方块本来就恒为满亮，天然满足。
+inline bool uniformFaceShade(const MeshView& view, int x, int y, int z, int f, uint8_t id,
+                            uint8_t& out) {
+    if (emissiveBlock(id)) { out = 255; return true; }
+    if (noAoBlock(id))     { out = bakeShade(f, 3, false); return true; }
+    out = bakeShade(f, aoForFace(view, x, y, z, f, 0), false);
+    for (int c = 1; c < 4; c++)
+        if (bakeShade(f, aoForFace(view, x, y, z, f, c), false) != out) return false;
+    return true;
+}
+
+// 某个朝向的所有面做一轮二维贪心：沿法线轴分层，层内在另外两条轴上合并成矩形
+static void mergeFaceLayer(int f, int maxY, std::vector<TerrainVertex>& ov,
+                           std::vector<uint32_t>& oi) {
+    const FaceLayout& L = kLayout[f];
+    const int planes = (L.na == 1) ? (maxY + 1) : CHUNK_SIZE;
+    const int dim0 = (L.slotAxis[0] == 1) ? (maxY + 1) : CHUNK_SIZE;
+    const int dim1 = (L.slotAxis[1] == 1) ? (maxY + 1) : CHUNK_SIZE;
+    auto cellAt = [&](int p, int i0, int i1) -> uint32_t& {
+        int co[3];
+        co[L.na] = p;
+        co[L.slotAxis[0]] = i0;
+        co[L.slotAxis[1]] = i1;
+        return g_grid.at(f, co[0], co[1], co[2]);
+    };
+    for (int p = 0; p < planes; p++) {
+        for (int i1 = 0; i1 < dim1; i1++) {
+            for (int i0 = 0; i0 < dim0; i0++) {
+                uint32_t& c0 = cellAt(p, i0, i1);
+                if (!facePresent(c0) || faceUsed(c0)) continue;
+                const uint32_t key = c0 & (kFacePresent | 0xFFFFu);
+                // 先沿 slot0 尽量延长
+                int w = 1;
+                while (w < kMaxMergeBlocks && i0 + w < dim0 &&
+                       (cellAt(p, i0 + w, i1) & (kFacePresent | kFaceUsed | 0xFFFFu)) == key &&
+                       faceTile(cellAt(p, i0 + w, i1)) == faceTile(c0))
+                    w++;
+                // 再沿 slot1 成行延长
+                int h = 1;
+                while (h < kMaxMergeBlocks && i1 + h < dim1) {
+                    bool row = true;
+                    for (int k = 0; k < w && row; k++) {
+                        uint32_t& cc = cellAt(p, i0 + k, i1 + h);
+                        if (!facePresent(cc) || faceUsed(cc) ||
+                            faceTile(cc) != faceTile(c0) || faceShade(cc) != faceShade(c0))
+                            row = false;
+                    }
+                    if (!row) break;
+                    h++;
+                }
+                for (int b = 0; b < h; b++)
+                    for (int a = 0; a < w; a++)
+                        cellAt(p, i0 + a, i1 + b) |= kFaceUsed;
+                int coord[3] = {0, 0, 0}, span[3] = {0, 0, 0};
+                coord[L.na] = (kNormal[f][L.na] > 0 ? (p + 1) : p) * 16;
+                coord[L.slotAxis[0]] = i0 * 16;
+                coord[L.slotAxis[1]] = i1 * 16;
+                span[L.slotAxis[0]] = w * 16;
+                span[L.slotAxis[1]] = h * 16;
+                emitRect(ov, oi, f, coord, span, faceTile(c0), faceShade(c0));
+            }
+        }
+    }
+}
+
+
 } // 匿名命名空间
 
 ChunkMeshData buildChunkMesh(const MeshView& view) {
@@ -399,8 +593,8 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
     auto& oi = m.opaqueIdx;
     auto& wv = m.waterVerts;
     auto& wi = m.waterIdx;
-    ov.reserve(8192);
-    oi.reserve(12288);
+    ov.reserve(4096);
+    oi.reserve(6144);
     wv.reserve(512);
     wi.reserve(768);
 
@@ -410,6 +604,11 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
         for (int x = 0; x < CHUNK_SIZE; x++)
             for (int y = WORLD_HEIGHT - 1; y > maxY; y--)
                 if (view.at(x, y, z) != B_AIR) { maxY = y; break; }
+
+    g_grid.reset(maxY);
+
+    // 水面只有顶层顶面一层，单独收一张 16x16 的表再合并
+    WaterCell waterPlane[CHUNK_SIZE * CHUNK_SIZE] = {};
 
     for (int y = 0; y <= maxY + 1 && y < WORLD_HEIGHT; y++) {
         for (int z = 0; z < CHUNK_SIZE; z++) {
@@ -421,28 +620,11 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                     // 只出顶面：侧面/底面透过半透明水面看不见，
                     // 还会产生发暗的瑕疵。
                     if (fluidCull(view.at(x, y + 1, z))) continue;
-                    {
-                        const int face = F_PY;
-                        uint32_t base = (uint32_t)wv.size();
-                        for (int c = 0; c < 4; c++) {
-                            TerrainVertex vt;
-                            vt.x = (int16_t)((x + kCorner[face][c][0]) * 16);
-                            vt.y = (int16_t)((y + kCorner[face][c][1]) * 16);
-                            vt.z = (int16_t)((z + kCorner[face][c][2]) * 16);
-                            vt.w = 0;
-                            vt.u = kUvCorner[c][0] ? 16 : 0;
-                            vt.v = kUvCorner[c][1] ? 16 : 0;
-                            vt.tex = (id == B_LAVA) ? T_LAVA : T_WATER;
-                            vt.shade = emissiveBlock(id) ? 255 : bakeShade(face, 3, true);
-                            wv.push_back(vt);
-                        }
-                        wi.push_back(base);
-                        wi.push_back(base + 1);
-                        wi.push_back(base + 2);
-                        wi.push_back(base);
-                        wi.push_back(base + 2);
-                        wi.push_back(base + 3);
-                    }
+                    WaterCell& wc = waterPlane[x + z * CHUNK_SIZE];
+                    wc.present = true;
+                    wc.y = (uint8_t)y;
+                    wc.tile = (uint8_t)((id == B_LAVA) ? T_LAVA : T_WATER);
+                    wc.shade = emissiveBlock(id) ? (uint8_t)255 : bakeShade(F_PY, 3, true);
                     continue;
                 }
 
@@ -470,6 +652,15 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                             cullFace(id, view.at(x + kNormal[f][0], y + kNormal[f][1],
                                                  z + kNormal[f][2])))
                             continue;
+
+                        // 能合并的面先记进该朝向的表，稍后统一做贪心；其余（多 element
+                        // 模型、AO 四角不等、自定义 UV）按原来的方式逐张出。
+                        uint8_t ushade = 0;
+                        if (mergeableFace(f, box, bf) &&
+                            uniformFaceShade(view, x, y, z, f, id, ushade)) {
+                            g_grid.at(f, x, y, z) = packFace(bf.tile, ushade);
+                            continue;
+                        }
 
                         uint32_t base = (uint32_t)ov.size();
                         for (int c = 0; c < 4; c++) {
@@ -513,6 +704,39 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                     }
                 }
             }
+        }
+    }
+    // ---- 贪心合并：六个朝向各来一轮，最后是水面那一层 ----
+    for (int f = 0; f < 6; f++) mergeFaceLayer(f, maxY, ov, oi);
+
+    const FaceLayout& wl = kLayout[F_PY];
+    for (int i1 = 0; i1 < CHUNK_SIZE; i1++) {
+        for (int i0 = 0; i0 < CHUNK_SIZE; i0++) {
+            WaterCell& c0 = waterPlane[i0 + i1 * CHUNK_SIZE];
+            if (!c0.present || c0.used) continue;
+            // 只有同高度的水面才是真正的共面，合并时必须连 y 一起比
+            int w = 1;
+            while (w < kMaxMergeBlocks && i0 + w < CHUNK_SIZE &&
+                   sameWater(waterPlane[i0 + w + i1 * CHUNK_SIZE], c0))
+                w++;
+            int h = 1;
+            while (h < kMaxMergeBlocks && i1 + h < CHUNK_SIZE) {
+                bool row = true;
+                for (int k = 0; k < w && row; k++)
+                    if (!sameWater(waterPlane[i0 + k + (i1 + h) * CHUNK_SIZE], c0)) row = false;
+                if (!row) break;
+                h++;
+            }
+            for (int b = 0; b < h; b++)
+                for (int a = 0; a < w; a++)
+                    waterPlane[i0 + a + (i1 + b) * CHUNK_SIZE].used = true;
+            int coord[3] = {0, 0, 0}, span[3] = {0, 0, 0};
+            coord[wl.na] = (kNormal[F_PY][wl.na] > 0 ? (c0.y + 1) : c0.y) * 16;
+            coord[wl.slotAxis[0]] = i0 * 16;
+            coord[wl.slotAxis[1]] = i1 * 16;
+            span[wl.slotAxis[0]] = w * 16;
+            span[wl.slotAxis[1]] = h * 16;
+            emitRect(wv, wi, F_PY, coord, span, c0.tile, c0.shade);
         }
     }
     return m;
