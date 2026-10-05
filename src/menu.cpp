@@ -243,7 +243,8 @@ void Menu::createMenuTexture(VkCtx& ctx) {
     VkImageCreateInfo ici = {};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+    // GUI 贴图同样是 sRGB 字节：交给硬件解码，交换链再编码，显示值＝贴图原值
+    ici.format = VK_FORMAT_R8G8B8A8_SRGB;
     ici.extent = {(uint32_t)diw_, (uint32_t)dih_, 1};
     ici.mipLevels = 1;
     ici.arrayLayers = 1;
@@ -277,7 +278,7 @@ void Menu::createMenuTexture(VkCtx& ctx) {
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = img_;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vci.format = VK_FORMAT_R8G8B8A8_SRGB;
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCreateImageView(ctx.device, &vci, nullptr, &view_);
 
@@ -364,7 +365,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
                 StretchBlt(dc, x, y, ts, ts, dirtDC_, 0, 0, dirtW_, dirtH_, SRCCOPY);
     }
     btns_.clear();
-    sliderActive_ = false;
+    sliders_.clear();
     int w = diw_, h = dih_;
     int cxr = cx, cyr = cy;
 
@@ -380,14 +381,16 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         btns_.push_back({id, x, y, bw, bh});
     };
 
-    // MC 风格数值滑块（轨道 + 手柄）
-    auto addSlider = [&](float x, float y, float bw, float bh, int minV, int maxV, int val) {
-        sliderActive_ = true;
-        sliderMinX_ = x; sliderMaxX_ = x + bw; sliderY_ = y; sliderGH_ = bh;
-        sliderMinV_ = minV; sliderMaxV_ = maxV;
+    // MC 风格数值滑块（轨道 + 手柄），可同时放多个，拖动返回各自的 id
+    auto addSlider = [&](int id, float x, float y, float bw, float bh,
+                         int minV, int maxV, int* val, const char* label) {
+        sliders_.push_back({id, x, y, bw, bh, minV, maxV, val, label});
         // 轨道：九宫格拉伸，保留圆角
         slice9(dc, sliderDC_, sliderW_, sliderH_, BTN_BORDER, x, y, bw, bh);
-        float frac = (float)(val - minV) / (float)(maxV - minV);
+        int valv = *val;
+        if (valv < minV) valv = minV;
+        if (valv > maxV) valv = maxV;
+        float frac = (float)(valv - minV) / (float)(maxV - minV);
         frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
         float handleX = x + frac * (bw - handleW_);
         float handleY = y + (bh - handleH_) * 0.5f;
@@ -396,7 +399,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         StretchBlt(dc, (int)handleX, (int)handleY, (int)handleW_, (int)handleH_,
                    handleHover ? handleHiDC_ : handleDC_, 0, 0, handleW_, handleH_, SRCCOPY);
         // 轨道下方的数值标签
-        std::string vl = "渲染距离：" + std::to_string(val);
+        std::string vl = std::string(label) + "：" + std::to_string(valv);
         RECT vr = {(int)x, (int)(y + bh + 4), (int)(x + bw), (int)(y + bh + 26)};
         SetTextColor(dc, RGB(255, 255, 255));
         SetBkMode(dc, TRANSPARENT);
@@ -465,9 +468,9 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         float bw = 300, bh = 40;
         float bx = (w - bw) / 2;
         std::string label = std::string("垂直同步：") + (data.vsync ? "开" : "关");
-        addBtn(MENU_VSYNC, bx, 190, bw, bh, label);
+        addBtn(MENU_VSYNC, bx, 150, bw, bh, label);
         // 显卡选择：点击在"自动 / 各设备"间循环，重启后生效
-        float gbw = 460;
+        float gbw = 660;
         float gbx = (w - gbw) / 2;
         std::string gpuLabel = "显卡：";
         if (data.gpuIndex < 0 || data.gpuIndex >= (int)data.gpuNames.size())
@@ -476,16 +479,21 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
             gpuLabel += data.gpuNames[data.gpuIndex];
         if (data.gpuIndex >= 0 && data.gpuIndex != data.gpuActive)
             gpuLabel += " ＊"; // 与本次运行不同：提示要重启才切换
-        addBtn(MENU_GPU, gbx, 250, gbw, bh, gpuLabel);
+        addBtn(MENU_GPU, gbx, 210, gbw, bh, gpuLabel);
         // 提示行
-        RECT hr = {(int)gbx, 296, (int)(gbx + gbw), 318};
+        RECT hr = {(int)gbx, 256, (int)(gbx + gbw), 278};
         SetTextColor(dc, RGB(190, 190, 190));
         SetBkMode(dc, TRANSPARENT);
         SetTextAlign(dc, TA_CENTER);
         SelectObject(dc, font_);
         DrawTextW(dc, utf8ToWide("切换显卡后重新启动游戏才会生效").c_str(), -1, &hr,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        addSlider(bx, 340, bw, 20, data.renderDistMin, data.renderDistMax, data.renderDist);
+        if (data.renderDistPtr)
+            addSlider(MENU_RENDERDIST, bx, 310, bw, 20, data.renderDistMin,
+                      data.renderDistMax, data.renderDistPtr, "渲染距离");
+        if (data.texSharpPtr)
+            addSlider(MENU_TEXSHARP, bx, 380, bw, 20, data.texSharpMin,
+                      data.texSharpMax, data.texSharpPtr, "近景清晰");
         addBtn(MENU_BACK, bx, h - 90, bw, bh, "返回");
     } else if (screen == Menuscreen::Pause) {
         float bw = 400, bh = 40;
@@ -589,23 +597,28 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
     vkEndCommandBuffer(cb);
     if (!ctx.presentImage(imageIndex, f, cb)) { ctx.recreateSwapchain(diw_, dih_); return MENU_NONE; }
 
-    // ---- 渲染距离滑块拖拽交互 ----
-    if (sliderActive_) {
-        bool overSlider = cx >= sliderMinX_ && cx <= sliderMaxX_ &&
-                          cy >= sliderY_ && cy <= sliderY_ + sliderGH_;
-        if (mouseDown && (overSlider || sliderDragging_)) {
-            float frac = (cx - sliderMinX_) / (sliderMaxX_ - sliderMinX_);
-            frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
-            int val = sliderMinV_ + (int)std::lround(frac * (sliderMaxV_ - sliderMinV_));
-            if (val < sliderMinV_) val = sliderMinV_;
-            if (val > sliderMaxV_) val = sliderMaxV_;
-            if (data.renderDistPtr) *data.renderDistPtr = val;
-            sliderDragging_ = true;
-            prevMouseDown_ = mouseDown;
-            return MENU_RENDERDIST;
+    // ---- 滑块拖拽交互（渲染距离 / 近景清晰等）----
+    if (!sliders_.empty()) {
+        for (size_t i = 0; i < sliders_.size(); i++) {
+            const Slider& s = sliders_[i];
+            bool overSlider = cx >= s.x && cx <= s.x + s.w &&
+                              cy >= s.y && cy <= s.y + s.h;
+            if (mouseDown && (overSlider || dragSlider_ == (int)i)) {
+                float frac = (cx - s.x) / (s.w);
+                frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
+                int val = s.minV + (int)std::lround(frac * (s.maxV - s.minV));
+                if (val < s.minV) val = s.minV;
+                if (val > s.maxV) val = s.maxV;
+                if (s.val) *s.val = val;
+                sliderDragging_ = true;
+                dragSlider_ = (int)i;
+                prevMouseDown_ = mouseDown;
+                return s.id;
+            }
         }
     }
     sliderDragging_ = false;
+    dragSlider_ = -1;
 
     if (mouseDown && !prevMouseDown_) {
         // 锁存按下状态：否则同一次按住会在切换后的新界面上

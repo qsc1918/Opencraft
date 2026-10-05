@@ -111,6 +111,7 @@ struct Options {
     bool vsync = false;       // 默认关闭垂直同步
     int renderDist = 8;       // 默认渲染距离（区块）
     int gpuIndex = -1;        // 显卡选择：-1=自动（独显优先），>=0 为物理设备序号
+    int texSharp = 16;        // 近景清晰距离（格）：内锁 mip0 不糊；0=关闭
 };
 
 static std::string optionsPath() { return exeDir() + "\\options.txt"; }
@@ -128,6 +129,9 @@ static Options loadOptions() {
         } else if (line.rfind("gpuIndex:", 0) == 0) {
             int v = std::atoi(line.c_str() + 9);
             if (v >= -1) o.gpuIndex = v;
+        } else if (line.rfind("texSharp:", 0) == 0) {
+            int v = std::atoi(line.c_str() + 9);
+            if (v >= 0 && v <= 64) o.texSharp = v;
         }
     }
     return o;
@@ -139,6 +143,7 @@ static void saveOptions(const Options& o) {
     f << "vsync:" << (o.vsync ? "on" : "off") << "\n";
     f << "renderDist:" << o.renderDist << "\n";
     f << "gpuIndex:" << o.gpuIndex << "\n";
+    f << "texSharp:" << o.texSharp << "\n";
 }
 
 int main(int argc, char** argv) {
@@ -186,6 +191,8 @@ int main(int argc, char** argv) {
     int lastW = 0, lastH = 0;
     int renderDist = (a.renderDistSet ? a.renderDist : opts.renderDist); // 视频设置里可运行时调整
     int gpuSel = opts.gpuIndex; // 显卡选择：-1=自动；菜单里循环切换并保存，重启生效
+    int texSharp = opts.texSharp; // 近景清晰距离（格），视频设置里可运行时调整
+    renderer.setTexSharp((float)texSharp);
 
     // 控制台指令输入线程（tp / where / help）
     ConsoleInput consoleInput;
@@ -671,6 +678,12 @@ int main(int argc, char** argv) {
                 if (i == (a.drive ? 380 : 20)) renderer.requestScreenshot(a.screenshot);
                 Input& in = win.input();
                 if (a.drive) { in.keys['W'] = true; player.cam.pitch = -0.1f; player.cam.markDirty(); }
+                // 截图分支也处理控制台指令：调试时可以先 tp 再截图
+                {
+                    std::string cmdline;
+                    for (int ci = 0; ci < 8 && consoleInput.poll(cmdline); ci++)
+                        runConsoleCommand(cmdline);
+                }
                 player.update(in, *world, 1.0f / 60.0f);
                 world->tickEntities(1.0f / 60.0f);
                 world->update(player.cam.pos.x, player.cam.pos.z, renderDist);
@@ -720,6 +733,9 @@ int main(int argc, char** argv) {
         md.saves = listSaves(savesDir());
         md.vsync = ctx.vsync;
         md.renderDist = renderDist;
+        md.renderDistPtr = &renderDist;
+        md.texSharp = texSharp;
+        md.texSharpPtr = &texSharp;
         md.seedText = "123456";
         for (const GpuInfo& g : ctx.gpus) md.gpuNames.push_back(g.name);
         md.gpuIndex = gpuSel;
@@ -836,13 +852,21 @@ int main(int argc, char** argv) {
                         // 末地传送门框架：按玩家水平朝向取反决定 facing（原版一致）
                         if (blockIsPortalFrame(b))
                             b = portal::frameIdForPlacement(player.cam.yaw);
+                        // 火把按点击面选形态：顶面=地面火把；侧面=墙上火把，
+                        // 头朝面法线方向；底面不放置（原版火把不能朝下挂）
+                        if (b == B_TORCH && hit.hit) {
+                            int nx = px - hit.x, ny = py - hit.y, nz = pz - hit.z;
+                            if (ny == 1)      b = B_TORCH;
+                            else if (ny == -1) b = B_AIR;
+                            else               b = wallTorchId(nx, nz);
+                        }
                         float feet = player.cam.pos.y - player.eyeHeight;
                         bool inside = !(px + 1 <= player.cam.pos.x - player.halfWidth ||
                                         px >= player.cam.pos.x + player.halfWidth ||
                                         py + 1 <= feet || py >= feet + player.height ||
                                         pz + 1 <= player.cam.pos.z - player.halfWidth ||
                                         pz >= player.cam.pos.z + player.halfWidth);
-                        if (!inside) world->setBlock(px, py, pz, b);
+                        if (!inside && b != B_AIR) world->setBlock(px, py, pz, b);
                     }
                 }
                 in_prevL = in.mouse[0];
@@ -882,6 +906,8 @@ int main(int argc, char** argv) {
             md.vsync = ctx.vsync;
             md.renderDist = renderDist;
             md.renderDistPtr = &renderDist;
+            md.texSharp = texSharp;
+            md.texSharpPtr = &texSharp;
             md.titleText = "新建世界";
             for (const GpuInfo& g : ctx.gpus) md.gpuNames.push_back(g.name);
             md.gpuIndex = gpuSel;
@@ -919,17 +945,22 @@ int main(int argc, char** argv) {
                 case MENU_VSYNC:
                     ctx.vsync = !ctx.vsync;
                     ctx.recreateSwapchain(cw, ch);
-                    saveOptions(Options{ctx.vsync, renderDist, gpuSel});
+                    saveOptions(Options{ctx.vsync, renderDist, gpuSel, texSharp});
                     break;
                 case MENU_RENDERDIST:
                     // 滑块已把新值写入 renderDist，这里只需保存。
-                    saveOptions(Options{ctx.vsync, renderDist, gpuSel});
+                    saveOptions(Options{ctx.vsync, renderDist, gpuSel, texSharp});
+                    break;
+                case MENU_TEXSHARP:
+                    // 滑块已把新值写入 texSharp；立即生效并保存。
+                    renderer.setTexSharp((float)texSharp);
+                    saveOptions(Options{ctx.vsync, renderDist, gpuSel, texSharp});
                     break;
                 case MENU_GPU:
                     // 在"自动 → 设备0 → 设备1 → … → 自动"间循环；切换设备
                     // 要重建整个 Vulkan 上下文，这里只保存，重启后生效。
                     gpuSel = (gpuSel + 1 > (int)ctx.gpus.size() - 1) ? -1 : gpuSel + 1;
-                    saveOptions(Options{ctx.vsync, renderDist, gpuSel});
+                    saveOptions(Options{ctx.vsync, renderDist, gpuSel, texSharp});
                     break;
                 default:
                     // 存档列表按钮

@@ -273,26 +273,38 @@ void decorateChorus(uint32_t seed, int cx, int cz, uint8_t* out) {
 void placePodium(uint8_t* out, int baseWX, int baseWZ, int oy) {
     for (int x = -4; x <= 4; x++) {
         for (int z = -4; z <= 4; z++) {
+            double dsq = (double)x * x + (double)z * z;
+            bool rim = dsq < 6.25;                 // closerThan(origin, 2.5)
+            if (!rim && dsq >= 12.25) continue;    // 3.5 格之外不动
             for (int y = oy - 1; y <= oy + 32; y++) {
-                double dsq = (double)x * x + (double)z * z;
-                bool rim = dsq < 6.25;                 // closerThan(origin, 2.5)
-                if (!rim && dsq >= 12.25) continue;    // 3.5 格之外不动
                 if (y < oy)      put(out, baseWX, baseWZ, x, y, z, rim ? B_BEDROCK : B_END_STONE);
                 else if (y > oy) put(out, baseWX, baseWZ, x, y, z, B_AIR);
                 else             put(out, baseWX, baseWZ, x, y, z, rim ? B_END_PORTAL : B_BEDROCK);
             }
+            // 向下补到与地形相接：某些种子的 (0,0) 列表面偏低或柱下有空腔，
+            // 只填到 oy-1 会让祭坛悬空。每列属于恰好一个宿主区块，读到的地形
+            // 与写法都是 chunk 本地的，四个宿主区块结果一致。
+            int lx = x - baseWX, lz = z - baseWZ;
+            if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
+            int yBottom = oy - 2;
+            while (yBottom > 1 && out[lx + (lz << 4) + (yBottom << 8)] == B_AIR) yBottom--;
+            for (int y = yBottom; y <= oy - 2; y++)
+                put(out, baseWX, baseWZ, x, y, z, rim ? B_BEDROCK : B_END_STONE);
         }
     }
     for (int i = 0; i < 4; i++) put(out, baseWX, baseWZ, 0, oy + i, 0, B_BEDROCK);
-    put(out, baseWX, baseWZ, 1, oy + 2, 0, B_WALL_TORCH);
-    put(out, baseWX, baseWZ, -1, oy + 2, 0, B_WALL_TORCH);
+    // 火把挂在中心柱四面，头朝外
+    put(out, baseWX, baseWZ, 1, oy + 2, 0, B_WALL_TORCH_E);
+    put(out, baseWX, baseWZ, -1, oy + 2, 0, B_WALL_TORCH_W);
     put(out, baseWX, baseWZ, 0, oy + 2, 1, B_WALL_TORCH);
-    put(out, baseWX, baseWZ, 0, oy + 2, -1, B_WALL_TORCH);
+    put(out, baseWX, baseWZ, 0, oy + 2, -1, B_WALL_TORCH_N);
 }
 
 // 返回传送门底座 y：从 y=70 向下找 (0,0) 列的第一个实心方块。
 // (0,0) 恰是采样列（fx=fz=0），用竖向 lerp 公式算出的密度与区块 (0,0) 的
 // 生成数组逐格一致——四个宿主区块不读数组也能算出同一个 y（生成与顺序无关）。
+// 一直扫到 y=8：主岛表面高度随种子在 40..64 之间浮动，只扫 64..70 的话
+// 表面偏低的种子会拿 63 兜底，祭坛就悬空了。
 int podiumOriginY(uint32_t seed) {
     const NoiseSet& ns = endNoise(seed);
     double island = islandDensity(*ns.islandShape, 0, 0);
@@ -303,7 +315,7 @@ int podiumOriginY(uint32_t seed) {
         double v1 = endDensity(island, *ns.base3D, 0, cy * 4 + 4, 0);
         return mcLerp((y & 3) * 0.25, v0, v1);
     };
-    for (int y = 70; y > 63; y--) {
+    for (int y = 70; y > 8; y--) {
         if (densAt(y) > 0.0) return y;
     }
     return 63;

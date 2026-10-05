@@ -31,6 +31,9 @@ MC assets文件夹：C:\Users\abc\AppData\Roaming\.minecraft\assets
   和 `src/atlas.cpp` 的 `kTileFiles`/`kTileTint`。
 - 生成代码必须"逐区块自足、与顺序无关"：只写本区块的方块，跨区块的结构要把邻域
   候选算一遍再裁剪（见 `src/endgen.cpp` 的外岛）。
+- **颜色是标准 sRGB 工作流**：交换链与贴图视图都是 sRGB，着色器在线性空间算，
+  显示值＝贴图字节原值。给着色器加"乘性常量"（明暗、色调）要按 `系数^2.2` 用，
+  否则会把暗部抬亮、颜色发灰；细节见 `PROJECT_STATE.md` §4.11。
 
 ## 构建 / 验证 / 打包
 

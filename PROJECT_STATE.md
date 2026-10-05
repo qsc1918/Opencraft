@@ -3,15 +3,18 @@
 > 本文件是"压缩上下文"式的项目现状说明：换一个 AI/会话接手时，读这一份 + `AGENTS.md`
 > 就能继续干活。**改动项目后请同步更新下面的「当前状态」一节。**
 >
-> 最后更新：第二批 4 项——①紫颂植株/花按原版 multipart 模型还原（`mesher.cpp` 新增
-> `buildChorusPlant`/`buildChorusFlower` + FaceBakery 默认 UV 推导 `defaultUv`，
-> `parts[]` 扩到 `kMaxParts=8`，三个紫颂方块改 `opaque=false` 且模型不做 AO）；
-> ②视频设置新增"显卡"选择按钮（`MENU_GPU`，`VkCtx::gpus`/`activeGpuIndex` 枚举，
-> options.txt 持久化 `gpuIndex:`，`--gpu-index` 仍可覆盖，越界自动回落，切换重启生效）；
-> ③控制台可输入指令（`src/console.hpp` 后台线程读 stdin，`tp x y z` /
-> `tp overworld|nether|end`（支持中文维度名）/ `where` / `help`，中文输入按 OEM
-> 代码页转 UTF-8）；④`tools/tag_ci.ps1` 自动打 `ci<版本>` 标签并推送（脏工作区/重复
-> 标签有防呆，`-DryRun`/`-Force`）。
+> 最后更新：**整条渲染管线改成标准 sRGB 工作流**（详见 §4.11）——此前图集是
+> `UNORM`、交换链是 `SRGB`，贴图字节被当线性值用、输出时又被硬件编码一次，
+> 所有方块都"发灰偏亮"。现在图集/菜单贴图用 `R8G8B8A8_SRGB` 视图采样（硬件解码
+> → 线性），着色器在线性空间算，交换链再编码回去，**开阔地顶面的显示值逐字节
+> 等于贴图原值**。配套：①着色器里所有"乘性常量"（面亮度、日照明暗、水色）按
+> `系数^2.2` 使用（原版是在伽马空间乘字节）；②面亮度表改回原版固定值
+> （顶 1.0 / 底 0.5 / 南北 0.8 / 东西 0.6），并删掉了那个从来没生效过的"太阳方向"
+> 项（`kNormal` 是 `int[3]` 却被 `reinterpret_cast` 成 `Vec3`，点积恒为 0）；
+> ③末地门合成改用**原版层参数 + 盒式平均**（原版靠 textureProj 的 mip 把星图
+> 平均掉，之前用二值掩膜点采样所以只剩零星亮点、整体偏暗），实测 (5.6,14.8,25.6)
+> 对齐原版参考 (7,16,25)；④顺手修了 `water.vert` 还停留在图集改造**之前**的旧
+> 布局（用 `misc.z/w` 当格数/单元尺寸）——水面一直采错 UV，之前几乎是黑的。
 
 ---
 
@@ -33,7 +36,7 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 
 | 模块 | 状态 |
 |------|------|
-| 渲染（Vulkan + 手写管线） | 可用；地形/水/天空/UI/菜单管线，图集 + mipmap |
+| 渲染（Vulkan + 手写管线） | 可用；地形/水/天空/UI/菜单管线，图集 + mipmap；**标准 sRGB 工作流**（sRGB 贴图视图 + 线性着色 + sRGB 交换链，见 §4.11） |
 | 区块系统 | 16×128×16 区块列，多线程生成 + 网格化，按维度分开存储 |
 | 主世界生成 | 简易噪声（高度图 + 洞穴 + 矿石 + 树 + 水），非原版，待翻新 |
 | **下界生成** | **已按 26.2 原版机制重写**：`nether/base_3d_noise` + slide 密度、基岩地板/天花板渐变、y=32 岩浆海、下界荒地群系表面规则 |
@@ -45,8 +48,10 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 | 存档 | 自定义二进制 v3，**按维度分段**保存/读取 |
 | 紫颂花生长 | 方块随机刻（`mctick`）复刻 `ChorusFlowerBlock.randomTick` |
 | 火把/铁栏杆/紫颂方块 | 已注册，有贴图；**紫颂植株/花已按原版模型渲染**（multipart 凸起 + 花杯形，见 §4.9） |
-| 视频设置 | 垂直同步、渲染距离滑块、**显卡设备选择**（按钮循环切换，options.txt 保存，重启生效；`--gpu-index` 优先级更高） |
+| 视频设置 | 垂直同步、渲染距离滑块、显卡设备选择（重启生效）、**近景清晰距离滑块**（默认 16 格，0=关；options.txt `texSharp:` 实时生效） |
 | 控制台指令 | `tp`（坐标/跨维度）、`where`（坐标+维度）、`help`；后台线程读 stdin，主线程每帧执行（`src/console.hpp`） |
+| 火把 | 原版细杆模型 + 朝向：地面火把 + 墙上火把 4 向（B_WALL_TORCH 基准朝南 + W/N/E），玩家按点击面选形态 |
+| 纹理 | 末地门/火焰用原版贴图；图集按原生分辨率排版（材质包友好）；**颜色与原版对齐**：开阔地顶面显示值＝贴图字节原值；近景（默认 16 格）内锁 mip0 最近邻，远景 mip+各向异性 |
 | 发版辅助 | `tools/tag_ci.ps1`：读 `version.txt` 的 `[current]` 打 `ci<版本>` 标签并推送 |
 
 ### 未完成 / 已知差距
@@ -60,8 +65,8 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
   `stone_depth` / `surface noise`；视觉效果接近但细节不完全一致。
 - 外岛/紫颂的 feature 随机种子用固定盐而不是原版的全局 feature index（`setFeatureSeed`），
   结构长相与原版一致但**具体位置与原版不同种子不一致**。
-- 火把/墙火把是普通全方块（没有原版的细杆模型，也没有朝向），铁栏杆也没有连接模型
-  （只有 id 与贴图）；返回传送门柱上的四个火把朝向因此不完全正确。
+- 火把/墙火把**已按原版模型渲染并支持朝向**（2026-09-30）；铁栏杆还是没有连接模型
+  （只有 id 与贴图）。
   （贴图本身已修好：`T_ITEM_BASE` 跟随 `T_COUNT`，不再被物品图标覆盖。）
 - 方块碰撞箱仍是整格：末地门框架在原版是 13/16 高、有眼时再加中间的 8×8 柱，
   站在框上会比原版高 3/16（渲染轮廓已按原版形状画）。
@@ -76,7 +81,54 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 
 ### 最近一次验证
 
-- **2026-09-27 第二批 4 项**（详见文件头「最后更新」）：
+- **2026-10-01 sRGB 工作流改造**（详见 §4.11）：
+  - 图集/菜单贴图改 `R8G8B8A8_SRGB` 视图；`terrain.vert`/`water.vert`/`water.frag`
+    的乘性常量取 2.2 次幂；`mesher.cpp` 面亮度改原版固定值并删掉失效的太阳项；
+  - **逐字节验证**：把纹理直接当颜色输出，石头顶面渲染值 127/116/143/104 与
+    `stone.png` 字节一一对应；带完整光照后顶面区域均值 125.49 vs 贴图 125.55
+    （`build/flat_stone2.png`）；
+  - 末地门合成改盒式平均 + 原版层参数：渲染均值 **(5.6,14.8,25.6)**，原版参考
+    (7,16,25)（`build/srgb3_portal.png`）；
+  - 顺手修 `water.vert` 的旧图集布局（水面 UV 一直采错，之前水面几乎全黑）：
+    `build/res_inv.png` → `build/srgb2_inv.png` 对比可见水变成正常蓝色；
+  - 方块条对比 `build/res_blocks3.png` → `build/srgb2_blocks.png`（石头由灰白变正灰）；
+  - portalselftest / portalflowtest / endprobe 全过。
+- **2026-10-01 火把裂缝 / 末地门原版星空**：
+  - `kTileFiles` 里 `end_portal.png` 原先是**填错下标**（T_END_PORTAL 一直走
+    程序化占位，png 落到了 T_END_GATEWAY）——这才是"传送门不是原版材质"的根因；
+  - 末地门改为建图集时预合成原版 17 层星空（`compositeEndPortal`：end_sky×
+    COLORS[0] 打底 + 16 层"星空掩膜×固定色"叠加）+ **反向 sRGB 预补偿**
+    （交换链是 sRGB，线性值会被伽马编码，暗贴图会被洗亮）；
+  - 着色器 UV 去掉半像素偏移（子矩形面会采到相邻透明纹素 → 火把裂缝）；
+  - 实测：末地门平均 RGB (17,19,30)、82% 暗部像素，与原版参考 (12,22,29)/86%
+    一致（`build/srgb_portal2.png`）；火把柱面连续无裂缝（`build/fix3_torch.png`）；
+    火焰整片、墙上火把 22.5° 外倾（`build/srgb_portal2.png`）；
+    portalselftest / portalflowtest / endprobe 全过。
+- **2026-10-01 图集原生分辨率改造**：
+  - `Atlas` 从"32px 固定网格"改为"每 tile 独立矩形 + 书架式打包"，着色器经
+    UBO `tileRect[128]` 查表取 UV（terrain.vert）；地形 UBO 扩到 `sizeof(TerrainUbo)`
+    （tileRect 放最后，水/天空等其他 UBO 布局不受影响）；
+  - end_portal 256×256 原样入图集，传送门呈现高清星空（`build/res_portal.png`）；
+  - 16 种方块横排实拍无 UV 错位/渗色（`build/res_blocks3.png`）、
+    火焰/火把/祭坛全部正常（`build/res_torch.png`）、背包图标正常
+    （`build/res_inv.png`）；portalselftest / portalflowtest 全过。
+- **2026-10-01 修复**（火细线 / 火把 22.5° / 传送门星空）：
+  - `cmake --build build` 通过，portalselftest / portalflowtest / endprobe 全过；
+  - 火焰十字面片实拍恢复整片原版火焰（`build/fix2_torch.png`）；
+  - 墙上火把按原版 22.5° 外倾、贴墙而立（`build/fix2_torch.png` 顶部、
+    `build/fix2_portal.png` 祭坛柱四面）；地面火把近拍与原版 UV 逐像素一致
+    （`build/fix2_floor.png`）；
+  - 末地门贴图改为盒式均值+增益的连续暗星空（`build/fix2_portal.png`）。
+- **2026-09-30 第三批**（详见文件头「最后更新」）：
+  - `cmake --build build` 通过，portalselftest / portalflowtest / endprobe 复测全过；
+  - **近景清晰**：Intel UHD 770（`--gpu-index 0`）实拍对比 `texSharp:0` vs `16`
+    （`build/graze_off.png` / `build/graze_on.png`）——掠射角下旧路径中近景发糊，
+    新路径近处像素清晰、远景不变；视频设置滑块正常（`build/menu_video3.png`）；
+  - **祭坛不悬空**：种子 12345 / 424242 / 777 从高处实拍（`build/podium3_s*.png`）
+    祭坛均落在地表，传送门贴图为原版星点（`build/podium_close.png`）；
+  - **火把**：高空测试台实拍（`build/torch_test2.png`）——地面火把细杆、
+    四向墙上火把贴墙伸出且头朝外、火为十字面片 + 原版贴图。
+- **2026-09-27 第二批 4 项**：
   - `cmake --build build` 通过，`portalselftest` / `endprobe` 复测全过；
   - 紫颂植株/花：主世界高空摆测试台截图（`build/chorus3.png` 全景、`build/chorus4.png`
     特写）——茎是 8/16 细柱 + 凸起、孤立植株是 8×8 小方块、花是花杯形；
@@ -292,6 +344,58 @@ final = squeeze(0.64 * (t - 23.4375))
   `solid=true` 保留碰撞。
 - 注意 `buildParts()` 的 `Box parts[]` 大小是 `kMaxParts=8`（植株 1+6，花 6），加新
   多 element 模型时数一下上限。
+- 火把/火：地面火把 = `[7,0,7]->[9,10,9]` 杆（原版 template_torch 逐字转写，
+  侧面 [7,6,9,16] 本来就含顶部焰心行，不是错位）；墙上火把 = 原版 22.5° 斜杆，
+  走 `Box::custom` 自定义 8 角点（竖杆绕 z 转 -22.5° 再按朝向绕块中心转 y），
+  UV 与地面火把一致；火 = 两片 1px 十字面片，**必须画薄板的一对大面**
+  （板A 画 F_NX/F_PX、板B 画 F_NZ/F_PZ），画成薄边整片火就只剩细线。
+- 原版贴图进图集的尺寸规则（atlas.cpp）：16×N 动画条取首帧（fire_0）；
+  非正方形裁左上角正方形；末地门走专用合成（见 §4.11），不参与通用降采样。
+
+### 4.10 近景清晰纹理（texSharp）
+
+- 采样路径有两条：`atlasSampler_`（mip+各向异性，远景）与 `atlasNearSampler_`
+  （锁 mip0 最近邻，近景）。片元着色器按 `vDist` 选：`texSharp.x`（默认 16 格，
+  options.txt `texSharp:`）内走清晰采样，之后 6 格线性过渡回 mip 采样；
+  `texSharp.x<=0` 时全走 mip（功能关）。
+- 背景：部分核显驱动（实机 Intel UHD 770 复现）开各向异性后在近处也选高 mip，
+  方块近看发糊；两条采样路径 + 距离切换在任何驱动上都保证近景清晰。
+- 超尺寸原版贴图进图集的规则（atlas.cpp，2026-10-01 起图集按原生分辨率排版）：
+  图集不再固定 16×16 网格——每个 tile 按png 原生尺寸独立排版（书架式打包，
+  `Atlas::Rect` 记录像素矩形），着色器经 UBO `tileRect[]` 查表取 UV，材质包换成
+  32×32/64×64 或混入高清图都不用改代码。动画条（fire_0 16×512）取首帧；
+  程序化贴图按材质包主流分辨率生成。
+
+### 4.11 sRGB 工作流（颜色不对先看这里）
+
+- **交换链是 `B8G8R8A8_SRGB`**（`vk.cpp selectSwapFormat` 优先选它）。这意味着
+  着色器写出的值被硬件当成**线性**、输出时做一次 sRGB 编码。
+- 所以贴图必须用 **sRGB 视图**采样：图集图（`atlasImage_`/`atlasView_`）与菜单图
+  （`menu.cpp` 的 `img_`/`view_`）都是 `VK_FORMAT_R8G8B8A8_SRGB`。字节是"显示色"，
+  采样时硬件解码成线性 → 着色器算 → 交换链再编码 → **显示值＝贴图字节原值**。
+- **乘性常量要取 2.2 次幂**：原版（以及本引擎原来那套常量）是"显示空间乘法"
+  （显示值 = 贴图 × 系数）。线性空间里要得到同样结果必须乘 `系数^2.2`——
+  所以 `terrain.vert`/`water.vert` 里 `vShade = pow(inMeta.w/255, 2.2)`，
+  `water.frag` 的水色 `pow(vec3(0.40,0.62,1.10), vec3(2.2))`。
+- **加性/结果型常量不用改**：天空色、雾色、水下色调是"算出来的颜色"，
+  直接输出即可（显示值 = encode(常量)，改前改后一致）。
+- 面亮度表（`mesher.cpp kFaceBright`）用原版固定值：顶 1.0、底 0.5、南北 0.8、
+  东西 0.6，配合上面的 2.2 次幂 → 开阔地顶面显示值 = 贴图原值。**不要再加"太阳
+  方向"项**：原来那行 `reinterpret_cast<const Vec3*>(&kNormal[f][0])` 把 `int[3]`
+  当 float 读，点积恒为 0，等于所有面固定乘 0.775（死代码，已删）。
+- 排版系数：`kAoBright` 仍是 {0.42,0.64,0.82,1.0}（原版 AO 更狠，这里刻意温和）。
+- 末地门（`compositeEndPortal`）也按这个语义：**输出字节 = 原版着色器算出的显示色**，
+  不要再做"反向 sRGB 预补偿"（那是 UNORM 时代为抵消双重编码打的补丁，现在是负负
+  得负）。合成方式：底色 `end_sky×COLORS[0]` + 16 层"星图 × COLORS[i]"，
+  层变换照抄原版 `end_portal_layer()`（SCALE_TRANSLATE 0.5x+0.25 → 平移 17/i 与
+  `(2+i/1.5)·GameTime·1.5`（静态取 0.35 相位）→ 旋转 (i²·4321+i·9)·2° → 缩放
+  `2·(4.5-i/4)`），每层在覆盖范围里做 **4×4 盒式平均**（原版是 textureProj + mip，
+  点采样只会零星命中 0.5% 的亮星，整体比原版暗一倍）。
+- 排查套路（本次就是这么做出来的）：把可疑量当颜色输出（`outColor = vec4(vShade,…)`
+  或 UV / tileRect），截图后用 `tools/pxsample.py` 读像素；注意交换链会做一次
+  sRGB 编码，**读到的字节要 `decode` 回线性再判断**。判断"贴图有没有走对"最快的
+  办法是把纹理直接当颜色输出，与 png 字节逐字节对比（stone 的 127/116/143/104 能
+  一一对上就说明整条往返是准的）。
 
 ## 5. 常用命令
 

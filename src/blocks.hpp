@@ -58,8 +58,13 @@ enum Block : uint8_t {
     B_CHORUS_FLOWER_DEAD = 41, // 原版 AGE 5：不再生长
     B_IRON_BARS = 42,
     B_TORCH = 43,
+    // 墙上火把：没有状态位，朝向展开成 4 个 id（同末地门框架的做法）。
+    // facing = 火把头指向（离开墙面的方向）：基准 44 朝南，西/北/东顺次展开。
     B_WALL_TORCH = 44,
-    B_COUNT = 45,
+    B_WALL_TORCH_W = 45,
+    B_WALL_TORCH_N = 46,
+    B_WALL_TORCH_E = 47,
+    B_COUNT = 48,
 };
 
 // 图集图块 id（建图集时分配）。
@@ -180,6 +185,9 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
     /*B_IRON_BARS*/ {"opencraft:iron_bars",      "铁栏杆",   false, true,  0, 0,  T_IRON_BARS, T_IRON_BARS, T_IRON_BARS},
     /*B_TORCH    */ {"opencraft:torch",          "火把",     false, false, 14, 0,  T_TORCH,   T_TORCH,   T_TORCH  },
     /*B_WALL_TORCH*/ {"opencraft:wall_torch",    "墙上的火把", false, false, 14, 0, T_TORCH,   T_TORCH,   T_TORCH  },
+    /*B_WALL_TORCH_W*/ {"opencraft:wall_torch_west","墙上的火把", false, false, 14, 0, T_TORCH, T_TORCH, T_TORCH},
+    /*B_WALL_TORCH_N*/ {"opencraft:wall_torch_north","墙上的火把", false, false, 14, 0, T_TORCH, T_TORCH, T_TORCH},
+    /*B_WALL_TORCH_E*/ {"opencraft:wall_torch_east","墙上的火把", false, false, 14, 0, T_TORCH, T_TORCH, T_TORCH},
 };
 static_assert(sizeof(BLOCK_DEFS) / sizeof(BLOCK_DEFS[0]) == B_COUNT,
               "BLOCK_DEFS 必须按 Block id 顺序逐一列出，新增方块要同步补在这里");
@@ -215,6 +223,31 @@ inline uint8_t frameId(int facing, bool eye) {
     static const uint8_t kEye[4] = {B_END_PORTAL_FRAME_EYE, B_END_PORTAL_FRAME_EYE_W,
                                     B_END_PORTAL_FRAME_EYE_N, B_END_PORTAL_FRAME_EYE_E};
     return eye ? kEye[facing & 3] : kPlain[facing & 3];
+}
+
+// ---- 墙上火把：朝向查询 / 由指向向量取 id（朝向语义与 frameFacingDir 一致）----
+inline bool blockIsWallTorch(uint8_t id) {
+    return id == B_WALL_TORCH || id == B_WALL_TORCH_W ||
+           id == B_WALL_TORCH_N || id == B_WALL_TORCH_E;
+}
+
+// 朝向 = 火把头离开墙面的方向：南(+Z)/西(-X)/北(-Z)/东(+X)；地面火把返回 -1
+inline int blockWallTorchFacing(uint8_t id) {
+    switch (id) {
+    case B_WALL_TORCH_W: return FRAME_WEST;
+    case B_WALL_TORCH_N: return FRAME_NORTH;
+    case B_WALL_TORCH_E: return FRAME_EAST;
+    case B_WALL_TORCH:   return FRAME_SOUTH;
+    default:             return -1;
+    }
+}
+
+// (dx,dz) = 火把头指向 → 方块 id
+inline uint8_t wallTorchId(int dx, int dz) {
+    if (dx > 0) return B_WALL_TORCH_E;
+    if (dx < 0) return B_WALL_TORCH_W;
+    if (dz < 0) return B_WALL_TORCH_N;
+    return B_WALL_TORCH;
 }
 
 // 朝向 (dx,dz) 单位向量：南=+Z、西=-X、北=-Z、东=+X

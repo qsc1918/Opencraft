@@ -31,6 +31,7 @@ enum {
     MENU_VSYNC = 9,
     MENU_RENDERDIST = 10,
     MENU_GPU = 11,             // 显卡设备选择（切换后下次启动生效）
+    MENU_TEXSHARP = 12,        // 近景清晰距离滑块
     MENU_SAVEANDTITLE = 200,
     MENU_SAVE_FIRST = 100,     // 存档按钮 100, 101, ...
     MENU_DELETE_FIRST = 500,   // 删除按钮 500+i
@@ -44,6 +45,10 @@ struct MenuData {
     int renderDist = 8;             // 渲染距离（区块）
     int renderDistMin = 2, renderDistMax = 32;
     int* renderDistPtr = nullptr;   // 非空时，滑块把新值写回此处
+    // 近景清晰距离（格）：此距离内方块不做 mip 模糊；0=关闭
+    int texSharp = 16;
+    int texSharpMin = 0, texSharpMax = 48;
+    int* texSharpPtr = nullptr;
     // 显卡选择：gpuIndex=-1 表示自动（独显优先），否则为 ctx.gpus 下标
     std::vector<std::string> gpuNames;
     int gpuIndex = -1;
@@ -95,11 +100,17 @@ private:
     HBITMAP dirtBmp_ = nullptr, btnBmp_ = nullptr, btnHiBmp_ = nullptr, fieldBmp_ = nullptr;
     HBITMAP sliderBmp_ = nullptr, handleBmp_ = nullptr, handleHiBmp_ = nullptr;
 
-    // 渲染距离滑块状态（几何每帧刷新）
-    bool sliderActive_ = false;
+    // 滑块状态（每帧重建，可同时有多个：渲染距离/近景清晰）
+    struct Slider {
+        int id;                // 拖动时返回的按钮 id
+        float x, y, w, h;
+        int minV, maxV;
+        int* val;              // 写回目标
+        const char* label;     // 数值标签前缀
+    };
+    std::vector<Slider> sliders_;
     bool sliderDragging_ = false;
-    float sliderMinX_ = 0, sliderMaxX_ = 0, sliderY_ = 0, sliderGH_ = 0;
-    int sliderMinV_ = 2, sliderMaxV_ = 32;
+    int  dragSlider_ = -1;     // 正在拖动的滑块下标
 
     // Vulkan 资源
     VkImage    img_ = VK_NULL_HANDLE;

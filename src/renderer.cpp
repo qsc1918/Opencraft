@@ -158,6 +158,18 @@ static VkPipeline makePipeline(VkCtx& ctx, VkRenderPass rp, VkPipelineLayout lay
     return r == VK_SUCCESS ? p : VK_NULL_HANDLE;
 }
 
+// 地形 UBO 的 C++ 镜像：布局必须与 shaders/terrain.vert 里的 Ubo 完全一致
+// （每个块 16 字节对齐，tileRect 放最后）。
+struct TerrainUbo {
+    Mat4 viewProj;
+    float camX, camY, camZ, underwater;  // underwater=1 表示相机在水下
+    float fogStart, fogEnd, skyR, skyG;
+    float skyB, atlasPx, atlasPy, reservedMisc;
+    float dayLight, sunX, sunY, sunZ;
+    float sharpNear, sharpFar, reserved0, reserved1;
+    float tileRect[kAtlasMaxTiles][4];   // xy=图集内原点, zw=宽高（像素）
+};
+
 // ---------------------------------------------------------------------------
 // 初始化 / 销毁
 // ---------------------------------------------------------------------------
@@ -195,10 +207,12 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     vkCreatePipelineLayout(ctx.device, &pl, nullptr, &skyLayout_);
 
     // --- 每帧缓冲（主机可见，仅映射一次） ---
+    // 地形 UBO 要装下 tileRect[]（每图块 4 float），比原来的 96 字节大得多
+    const VkDeviceSize kTerrainUboSize = sizeof(TerrainUbo);
     for (int i = 0; i < VkCtx::MAX_FRAMES_IN_FLIGHT; i++) {
-        createBuffer(ctx, 256, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        createBuffer(ctx, kTerrainUboSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, terrainUBO_[i]);
-        vkMapMemory(ctx.device, terrainUBO_[i].m, 0, 256, 0, &terrainUBOMap_[i]);
+        vkMapMemory(ctx.device, terrainUBO_[i].m, 0, kTerrainUboSize, 0, &terrainUBOMap_[i]);
         createBuffer(ctx, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, skyUBO_[i]);
         vkMapMemory(ctx.device, skyUBO_[i].m, 0, 64, 0, &skyUBOMap_[i]);
@@ -209,10 +223,11 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
 
     // --- 描述符集 ---
     VkDescriptorImageInfo tii = {atlasSampler_, atlasView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkDescriptorImageInfo nii = {atlasNearSampler_, atlasView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkDescriptorImageInfo uii = {atlasSampler_, atlasView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     for (int i = 0; i < VkCtx::MAX_FRAMES_IN_FLIGHT; i++) {
-        VkDescriptorBufferInfo tbi = {terrainUBO_[i].b, 0, 256};
-        VkWriteDescriptorSet w1[2] = {};
+        VkDescriptorBufferInfo tbi = {terrainUBO_[i].b, 0, sizeof(TerrainUbo)};
+        VkWriteDescriptorSet w1[3] = {};
         w1[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w1[0].dstSet = terrainSet_[i];
         w1[0].dstBinding = 0;
@@ -225,7 +240,13 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
         w1[1].descriptorCount = 1;
         w1[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         w1[1].pImageInfo = &tii;
-        vkUpdateDescriptorSets(ctx.device, 2, w1, 0, nullptr);
+        w1[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w1[2].dstSet = terrainSet_[i];
+        w1[2].dstBinding = 2;
+        w1[2].descriptorCount = 1;
+        w1[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w1[2].pImageInfo = &nii;
+        vkUpdateDescriptorSets(ctx.device, 3, w1, 0, nullptr);
 
         VkDescriptorBufferInfo sbi = {skyUBO_[i].b, 0, 64};
         VkWriteDescriptorSet w2 = {};
@@ -322,7 +343,9 @@ void Renderer::createAtlasTexture(VkCtx& ctx) {
     VkImageCreateInfo ici = {};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+    // 贴图字节是 sRGB 编码的显示色，采样时必须让硬件解码成线性再进着色器，
+    // 否则会被当作线性值直接送去 sRGB 交换链，再编码一次 → 整体偏亮（发灰）。
+    ici.format = VK_FORMAT_R8G8B8A8_SRGB;
     ici.extent = {(uint32_t)w, (uint32_t)h, 1};
     ici.mipLevels = mips;
     ici.arrayLayers = 1;
@@ -452,7 +475,7 @@ void Renderer::createAtlasTexture(VkCtx& ctx) {
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = atlasImage_;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vci.format = VK_FORMAT_R8G8B8A8_SRGB;
     vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     vci.subresourceRange.levelCount = mips;
     vci.subresourceRange.layerCount = 1;
@@ -475,15 +498,30 @@ void Renderer::createAtlasTexture(VkCtx& ctx) {
     // 再往下就会把邻格颜色混进来，所以 LOD 封顶。
     sm.maxLod = (float)(mips > 5 ? 4 : (mips - 1));
     vkCreateSampler(ctx.device, &sm, nullptr, &atlasSampler_);
+
+    // 近景清晰采样器：锁死 mip 0、纯最近邻。部分核显驱动开各向异性后在
+    // 近处也会选到高 mip，方块看起来发糊；近距离改走这个采样器。
+    VkSamplerCreateInfo ns = {};
+    ns.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    ns.magFilter = VK_FILTER_NEAREST;
+    ns.minFilter = VK_FILTER_NEAREST;
+    ns.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    ns.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    ns.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    ns.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    ns.minLod = 0.0f;
+    ns.maxLod = 0.0f;
+    vkCreateSampler(ctx.device, &ns, nullptr, &atlasNearSampler_);
 }
 
 void Renderer::createDescriptors(VkCtx& ctx) {
     VkDescriptorSetLayoutBinding b0 = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT};
     VkDescriptorSetLayoutBinding b1 = {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
-    VkDescriptorSetLayoutBinding bs[2] = {b0, b1};
+    VkDescriptorSetLayoutBinding b2 = {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
+    VkDescriptorSetLayoutBinding bs[3] = {b0, b1, b2};
     VkDescriptorSetLayoutCreateInfo li = {};
     li.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    li.bindingCount = 2;
+    li.bindingCount = 3;
     li.pBindings = bs;
     vkCreateDescriptorSetLayout(ctx.device, &li, nullptr, &terrainDSL_);
 
@@ -542,13 +580,7 @@ void Renderer::updateTerrainUBO(VkCtx& ctx, const Camera& cam, float renderDist,
     float dayLight = clampf(std::cos(sunAngle), 0.0f, 1.0f);
     dayLight = 0.35f + 0.65f * dayLight;
 
-    struct UboData {
-        Mat4 viewProj;
-        float camX, camY, camZ, underwater;  // underwater=1 表示相机在水下
-        float fogStart, fogEnd, skyR, skyG;
-        float skyB, atlasPx, tilesX, tilePx;
-        float dayLight, sunX, sunY, sunZ;
-    } u;
+    TerrainUbo u;
     u.viewProj = vp;
     u.camX = cam.pos.x; u.camY = cam.pos.y; u.camZ = cam.pos.z;
     bool underwater = world_ &&
@@ -565,11 +597,24 @@ void Renderer::updateTerrainUBO(VkCtx& ctx, const Camera& cam, float renderDist,
     u.skyG = dimType.skyColorG / 255.0f;
     u.skyB = dimType.skyColorB / 255.0f;
     u.atlasPx = (float)atlas_.width;
-    u.tilesX = (float)atlas_.tilesX;
-    u.tilePx = (float)atlas_.cellSize; // shader 按 cell 布局算 tile 原点（含 8px 边距）
+    u.atlasPy = (float)atlas_.height;
+    u.reservedMisc = 0.0f;
+    // 每个图块在图集里的矩形（原生分辨率，不再固定 16x16 网格）
+    for (int t = 0; t < kAtlasMaxTiles; t++) {
+        const Atlas::Rect& r = atlas_.rect[t];
+        u.tileRect[t][0] = (float)r.x;
+        u.tileRect[t][1] = (float)r.y;
+        u.tileRect[t][2] = (float)(r.w > 0 ? r.w : atlas_.baseTile);
+        u.tileRect[t][3] = (float)(r.h > 0 ? r.h : atlas_.baseTile);
+    }
     u.dayLight = dayLight;
     u.sunX = sunDir.x; u.sunY = sunDir.y; u.sunZ = sunDir.z;
-    memcpy(terrainUBOMap_[slot], &u, sizeof(UboData));
+    // 近景清晰区间：near 内锁 mip0，near..near+6 平滑过渡回 mip 采样；
+    // near<=0 时两个值都为 0 → 片元里 t 恒为 1，全程走 mip 采样（关闭该功能）。
+    u.sharpNear = texSharpNear_;
+    u.sharpFar = texSharpNear_ > 0.0f ? texSharpNear_ + 6.0f : 0.0f;
+    u.reserved0 = u.reserved1 = 0.0f;
+    memcpy(terrainUBOMap_[slot], &u, sizeof(TerrainUbo));
 
     struct SkyUbo { float hx, hy, hz, ha; float zx, zy, zz, za; } s;
     // 天空色按维度区分（下界/末地无昼夜循环，颜色固定）
@@ -1291,6 +1336,7 @@ void Renderer::shutdown(VkCtx& ctx) {
     if (uiLayout_) vkDestroyPipelineLayout(ctx.device, uiLayout_, nullptr);
     if (atlasView_) vkDestroyImageView(ctx.device, atlasView_, nullptr);
     if (atlasSampler_) vkDestroySampler(ctx.device, atlasSampler_, nullptr);
+    if (atlasNearSampler_) vkDestroySampler(ctx.device, atlasNearSampler_, nullptr);
     if (atlasImage_) vkDestroyImage(ctx.device, atlasImage_, nullptr);
     if (atlasMem_) vkFreeMemory(ctx.device, atlasMem_, nullptr);
 }

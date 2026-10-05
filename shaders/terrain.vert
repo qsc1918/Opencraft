@@ -1,5 +1,8 @@
 #version 450
 
+// 图块数量上限，必须与 atlas.hpp 的 kAtlasMaxTiles、UBO 里的 tileRect 一致
+#define kMaxTiles 128
+
 layout(location = 0) in ivec4 inPos;
 layout(location = 1) in uvec4 inMeta; // 依次为 u、v、贴图索引、明暗
 
@@ -15,8 +18,10 @@ layout(set = 0, binding = 0) uniform Ubo {
     mat4 viewProj;
     vec4 camPos;
     vec4 fogParams; // x 雾起, y 雾止, z 天红, w 天绿
-    vec4 misc;      // x 天蓝, y 图集边长, z 横向格数, w 单元像素
+    vec4 misc;      // x 天蓝, y 图集宽, z 图集高, w 备用
     vec4 day;       // x 日照 0..1, yzw 太阳方向
+    vec4 texSharp;  // x 近景清晰距离(格), y 过渡结束距离, zw 备用
+    vec4 tileRect[kMaxTiles]; // 每个图块的矩形：xy=图集内原点(px), zw=宽高(px)
 } ubo;
 
 void main() {
@@ -27,10 +32,16 @@ void main() {
 
     int tex = int(inMeta.z);
     vec2 tileUV = vec2(float(inMeta.x), float(inMeta.y));
-    // 图集按 32 像素单元排布：在单元内偏移 8 像素，留边框防采样渗色
-    vec2 tileIdx = vec2(float(tex % int(ubo.misc.z)), float(tex / int(ubo.misc.z)));
-    vec2 px = tileIdx * ubo.misc.w + vec2(ubo.misc.w * 0.25) + tileUV + 0.5;
-    vUV = px / ubo.misc.y;
-    vShade = float(inMeta.w) / 255.0;
+    // 贴图分辨率按图块各自记录：uv 0..16 是"贴图内归一化坐标"，
+    // 乘以该图块的像素尺寸后落在图集里（支持任意分辨率材质包）。
+    // 注意：不要把 uv 平移到纹素中心（+0.5）。uv 0..16 是"贴图边界到边界"的
+    // 归一化坐标，加半像素会让子矩形（如火把只有 2 纹素宽的侧面）整体偏移
+    // 半个纹素，边缘采到透明纹素就成了一条裂缝。
+    vec4 r = ubo.tileRect[tex];
+    vec2 px = r.xy + tileUV * r.zw / 16.0;
+    vUV = px / vec2(ubo.misc.y, ubo.misc.z);
+    // 明暗系数按原版语义是"显示空间乘法"（显示值 = 贴图 × 系数）：原版在伽马
+    // 空间直接乘字节，线性空间里等价于乘 系数^2.2，否则暗部会被抬亮、失去对比。
+    vShade = pow(float(inMeta.w) / 255.0, 2.2);
     vDist = length(wp - ubo.camPos.xyz);
 }

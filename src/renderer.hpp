@@ -61,6 +61,8 @@ public:
     bool inventoryOpen() const { return invOpen_; }
     void setInventoryPage(int page) { invPage_ = page; }  // 0=方块 1=物品
     void setCursor(float x, float y) { cursorX_ = x; cursorY_ = y; }
+    // 近景清晰距离（格）：此距离内的方块不做 mip/各向异性模糊，0=关
+    void setTexSharp(float nearDist) { texSharpNear_ = nearDist; }
 
 private:
     bool createPipelines(VkCtx& ctx);
@@ -100,6 +102,11 @@ private:
     VkDeviceMemory atlasMem_ = VK_NULL_HANDLE;
     VkImageView atlasView_ = VK_NULL_HANDLE;
     VkSampler atlasSampler_ = VK_NULL_HANDLE;
+    VkSampler atlasNearSampler_ = VK_NULL_HANDLE; // 近景清晰采样器（不走 mip）
+
+    // 近景清晰距离：>0 时 vDist 之内走 atlasNearSampler_，过渡 6 格后回到
+    // 常规 mip 采样（核显驱动对各向异性的 mip 选择偏激进，近处方块会糊）。
+    float texSharpNear_ = 16.0f;
 
     Buffer2 terrainUBO_[VkCtx::MAX_FRAMES_IN_FLIGHT];
     void* terrainUBOMap_[VkCtx::MAX_FRAMES_IN_FLIGHT] = {};

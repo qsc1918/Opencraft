@@ -45,17 +45,17 @@ inline bool fluidCull(uint8_t nb) {
 }
 
 const float kAoBright[4] = {0.42f, 0.64f, 0.82f, 1.0f};
-const float kFaceBright[6] = {0.80f, 0.80f, 1.0f, 0.55f, 0.80f, 0.80f};
-const Vec3 kSun(0.42f, 0.82f, 0.32f);
+// 面亮度取原版固定值（原版没有方向性太阳项，只有这张固定表）：
+// 顶面 1.0、底面 0.5、南北 0.8、东西 0.6。着色器按"显示空间乘法"应用
+// （线性空间乘 系数^2.2），所以开阔地顶面的显示值就等于贴图原值。
+const float kFaceBright[6] = {0.60f, 0.60f, 1.0f, 0.50f, 0.80f, 0.80f};
 
 // 预计算亮度查表：kShade[面][AO][是否水面]
 uint8_t kShade[6][4][2];
 struct ShadeInit { ShadeInit() {
     for (int f = 0; f < 6; f++) {
-        const Vec3& nrm = *reinterpret_cast<const Vec3*>(&kNormal[f][0]);
-        float sun = 0.55f + 0.45f * std::max(0.0f, dot(nrm, kSun) * 0.5f + 0.5f);
         for (int a = 0; a < 4; a++) {
-            float br = kFaceBright[f] * kAoBright[a] * sun;
+            float br = kFaceBright[f] * kAoBright[a];
             kShade[f][a][0] = (uint8_t)(std::min(1.0f, std::max(0.0f, br)) * 255.0f);
             float bw = br * 0.82f;
             kShade[f][a][1] = (uint8_t)(std::min(1.0f, std::max(0.0f, bw)) * 255.0f);
@@ -83,6 +83,11 @@ struct BoxFace {
 struct Box {
     int x0 = 0, y0 = 0, z0 = 0, x1 = 16, y1 = 16, z1 = 16;
     BoxFace face[6];
+    // 自定义 8 角点（1/16 格，可越出 0..16）：斜 22.5° 的墙上火把等
+    // 非轴对齐几何用。下标 = ix*4 + iy*2 + iz（ix/iy/iz ∈ {0,1}，
+    // 0 取 min 侧、1 取 max 侧，与 kCorner 的标志位一致）。
+    bool custom = false;
+    float cv[8][3] = {};
 };
 
 constexpr int kMaxParts = 8;
@@ -248,9 +253,90 @@ inline int buildChorusFlower(Box* out, uint8_t id) {
 //    四侧 uv [4,0,12,3]（无 cullface，绝不因邻居消失）、没有 down 面。
 // 眼块是"居中"的 8×8 柱子、凸出框顶 3/16（对应原版 SHAPE_FULL），不随朝向偏移。
 // ---------------------------------------------------------------------------
+// 火把（原版 models/block/template_torch.json 的轴对齐还原）：
+// 一根 2×2×10 的小杆立在方块中心，顶面是焰心、四侧是杆身竖条。
+inline int buildTorch(Box* out) {
+    Box& b = out[0];
+    b = Box{};
+    b.x0 = 7; b.y0 = 0; b.z0 = 7;
+    b.x1 = 9; b.y1 = 10; b.z1 = 9;
+    for (int f = 0; f < 6; f++) b.face[f].present = false;
+    setFace(b, F_NY, T_TORCH, 7, 13, 9, 15, true);  // 原版 cullface=down
+    setFace(b, F_PY, T_TORCH, 7, 6, 9, 8, false);   // 焰心
+    for (int f : {F_PX, F_NX, F_PZ, F_NZ})
+        setFace(b, f, T_TORCH, 7, 6, 9, 16, false); // 杆身
+    return 1;
+}
+
+// 墙上火把：原版 models/block/template_torch_wall.json——竖杆
+// [-1,3.5,7]->[1,13.5,9] 绕 z 轴在 (0,3.5,8) 转 -22.5°（下端插在墙上、
+// 上端外倾），再按朝向绕块中心 (8,8) 转 y。几何不是轴对齐的，
+// 走 Box::custom 自定义角点；UV 与地面火把完全一致（贴图随几何一起转）。
+inline int buildWallTorch(Box* out, int facing) {
+    const float c22 = 0.9238795f;   // cos(-22.5°)
+    const float s22 = -0.3826834f;  // sin(-22.5°)
+    const float ox = 0.0f, oy = 3.5f;
+    Box& b = out[0];
+    b = Box{};
+    b.custom = true;
+    for (int ix = 0; ix < 2; ix++)
+        for (int iy = 0; iy < 2; iy++)
+            for (int iz = 0; iz < 2; iz++) {
+                float x = ix ? 1.0f : -1.0f;
+                float y = iy ? 13.5f : 3.5f;
+                float z = iz ? 9.0f : 7.0f;
+                // 绕 z 轴 -22.5°（原点 (0,3.5)）
+                float rx = ox + (x - ox) * c22 - (y - oy) * s22;
+                float ry = oy + (x - ox) * s22 + (y - oy) * c22;
+                // 绕块中心 (8,8) 把外倾方向 (+X) 转到朝向
+                float ax = rx - 8.0f, az = z - 8.0f;
+                float fx, fz;
+                switch (facing) {
+                case FRAME_EAST:  fx = ax;   fz = az;   break;
+                case FRAME_SOUTH: fx = -az;  fz = ax;   break;
+                case FRAME_WEST:  fx = -ax;  fz = -az;  break;
+                default:          fx = az;   fz = -ax;  break; // 北
+                }
+                float* p = b.cv[ix * 4 + iy * 2 + iz];
+                p[0] = fx + 8.0f;
+                p[1] = ry;
+                p[2] = fz + 8.0f;
+            }
+    for (int f = 0; f < 6; f++) b.face[f].present = false;
+    setFace(b, F_NY, T_TORCH, 7, 13, 9, 15, false);
+    setFace(b, F_PY, T_TORCH, 7, 6, 9, 8, false);   // 焰心
+    for (int f : {F_PX, F_NX, F_PZ, F_NZ})
+        setFace(b, f, T_TORCH, 7, 6, 9, 16, false); // 杆身
+    return 1;
+}
+
+// 火（原版 fire_floor 是 4 片斜面，这里用轴对齐十字双面片近似）：
+// 两片互相垂直的 1px 薄板，各画自己的一对"大面"（±法线方向），
+// 薄边不画。画错面的话整片火只剩 1px 细线。
+inline int buildFire(Box* out) {
+    Box& a = out[0];
+    a = Box{};
+    a.x0 = 7; a.y0 = 0; a.z0 = 0;
+    a.x1 = 8; a.y1 = 16; a.z1 = 16;
+    for (int f = 0; f < 6; f++) a.face[f].present = false;
+    setFace(a, F_NX, T_FIRE, 0, 0, 16, 16, false); // x=7 大面
+    setFace(a, F_PX, T_FIRE, 0, 0, 16, 16, false); // x=8 大面
+    Box& c = out[1];
+    c = Box{};
+    c.z0 = 7; c.y0 = 0; c.x0 = 0;
+    c.z1 = 8; c.y1 = 16; c.x1 = 16;
+    for (int f = 0; f < 6; f++) c.face[f].present = false;
+    setFace(c, F_NZ, T_FIRE, 0, 0, 16, 16, false); // z=7 大面
+    setFace(c, F_PZ, T_FIRE, 0, 0, 16, 16, false); // z=8 大面
+    return 2;
+}
+
 inline int buildParts(uint8_t id, Box* out, uint8_t conn) {
     if (id == B_CHORUS_PLANT) return buildChorusPlant(out, conn);
     if (id == B_CHORUS_FLOWER || id == B_CHORUS_FLOWER_DEAD) return buildChorusFlower(out, id);
+    if (id == B_TORCH) return buildTorch(out);
+    if (blockIsWallTorch(id)) return buildWallTorch(out, blockWallTorchFacing(id));
+    if (id == B_FIRE) return buildFire(out);
     if (blockIsPortalFrame(id)) {
         Box& b = out[0];
         b = Box{};
@@ -388,12 +474,24 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                         uint32_t base = (uint32_t)ov.size();
                         for (int c = 0; c < 4; c++) {
                             TerrainVertex vt;
-                            int cx16 = kCorner[f][c][0] ? box.x1 : box.x0;
-                            int cy16 = kCorner[f][c][1] ? box.y1 : box.y0;
-                            int cz16 = kCorner[f][c][2] ? box.z1 : box.z0;
-                            vt.x = (int16_t)(x * 16 + cx16);
-                            vt.y = (int16_t)(y * 16 + cy16);
-                            vt.z = (int16_t)(z * 16 + cz16);
+                            int16_t vx, vy, vz;
+                            if (box.custom) {
+                                // 斜 22.5° 墙上火把等自定义角点几何（1/16 格浮点，
+                                // 就近取整到引擎的 1/16 格整数网格）
+                                const float* p = box.cv[kCorner[f][c][0] * 4 +
+                                                        kCorner[f][c][1] * 2 +
+                                                        kCorner[f][c][2]];
+                                vx = (int16_t)lroundf(p[0]);
+                                vy = (int16_t)lroundf(p[1]);
+                                vz = (int16_t)lroundf(p[2]);
+                            } else {
+                                vx = kCorner[f][c][0] ? box.x1 : box.x0;
+                                vy = kCorner[f][c][1] ? box.y1 : box.y0;
+                                vz = kCorner[f][c][2] ? box.z1 : box.z0;
+                            }
+                            vt.x = (int16_t)(x * 16 + vx);
+                            vt.y = (int16_t)(y * 16 + vy);
+                            vt.z = (int16_t)(z * 16 + vz);
                             vt.w = 0;
                             vt.u = kUvCorner[c][0] ? bf.u1 : bf.u0;
                             vt.v = kUvCorner[c][1] ? bf.v1 : bf.v0;
