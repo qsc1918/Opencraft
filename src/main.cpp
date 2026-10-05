@@ -693,8 +693,17 @@ int main(int argc, char** argv) {
             }
             {
                 int ready = 0;
-                world->forEachChunk([&](std::shared_ptr<Chunk>& c, int, int) { if (c->state.load() >= 2) ready++; });
-                fprintf(stderr, "[main] screenshot: %d chunks meshed\n", ready);
+                size_t verts = 0, tris = 0;
+                world->forEachChunk([&](std::shared_ptr<Chunk>& c, int, int) {
+                    if (c->state.load() < 2) return;
+                    ready++;
+                    verts += (c->opaqueVertBytes + c->waterVertBytes) / sizeof(TerrainVertex);
+                    tris += (c->opaqueCount + c->waterCount) / 3;
+                });
+                // 顶点/三角形总数是"GPU 上要处理多少几何"的直接指标，
+                // draws 是最后一帧真正提交的不透明绘制次数（剔除效果的体现）。
+                fprintf(stderr, "[main] screenshot: %d chunks meshed, %zu verts, %zu tris, %d draws\n",
+                        ready, verts, tris, renderer.debugDraws());
             }
             menu.shutdown(ctx);
             renderer.shutdown(ctx);

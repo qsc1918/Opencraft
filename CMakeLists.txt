@@ -164,6 +164,13 @@ target_include_directories(endprobe PRIVATE src)
 add_executable(portalselftest tools/portalselftest.cpp)
 target_include_directories(portalselftest PRIVATE src)
 
+# 网格化自检（面剔除、贪心合并的几何合法性；只依赖 mesher/blocks）
+add_executable(meshtest
+  tools/meshtest.cpp
+  src/mesher.cpp
+)
+target_include_directories(meshtest PRIVATE src)
+
 # 传送门流程自检（末地门激活 + 下界门目的地生成/回程，链接 World）
 add_executable(portalflowtest
   tools/portalflowtest.cpp
