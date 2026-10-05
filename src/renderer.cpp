@@ -831,6 +831,9 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
             if (c->needsUpload.exchange(false)) {
                 std::lock_guard<std::mutex> lk(c->meshLock);
                 ChunkMeshData local = c->mesh;
+                c->geomMinY = local.geomMinY;
+                c->geomMaxY = local.geomMaxY;
+                c->geomValid = local.geomValid;
                 uploadPart(ctx, *c, true, local.opaqueVerts, local.opaqueIdx);
                 uploadPart(ctx, *c, false, local.waterVerts, local.waterIdx);
             }
@@ -1017,13 +1020,16 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
 
     const float camX = cam.pos.x, camY = cam.pos.y, camZ = cam.pos.z;
     const float f2 = fogEndWorld_ * fogEndWorld_;
-    auto chunkCulled = [&](int cx, int cz) {
+    auto chunkCulled = [&](const Chunk& c, int cx, int cz) {
         float minX = cx * (float)CHUNK_SIZE, minZ = cz * (float)CHUNK_SIZE;
         float maxX = minX + CHUNK_SIZE, maxZ = minZ + CHUNK_SIZE;
-        if (!fr.testAABB(minX, 0, minZ, maxX, WORLD_HEIGHT, maxZ)) return true;
+        // 网格实际覆盖的 y 范围比整柱 0..128 紧得多：悬空平台/洞窟不会被撑大
+        float loY = 0.0f, hiY = (float)WORLD_HEIGHT;
+        if (c.geomValid) { loY = (float)c.geomMinY; hiY = (float)c.geomMaxY + 1.0f; }
+        if (!fr.testAABB(minX, loY, minZ, maxX, hiY, maxZ)) return true;
         if (f2 > 0.0f) {
             float nx = clampf(camX, minX, maxX);
-            float ny = clampf(camY, 0.0f, (float)WORLD_HEIGHT);
+            float ny = clampf(camY, loY, hiY);
             float nz = clampf(camZ, minZ, maxZ);
             float dx = nx - camX, dy = ny - camY, dz = nz - camZ;
             if (dx * dx + dy * dy + dz * dz > f2) return true;
@@ -1037,7 +1043,7 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
     visible.reserve(512);
     for (auto& si : snapshot_) {
         if (si.c->state.load() < 2) continue;
-        if (chunkCulled(si.cx, si.cz)) continue;
+        if (chunkCulled(*si.c, si.cx, si.cz)) continue;
         visible.push_back({si.c, si.cx, si.cz});
     }
 

@@ -605,6 +605,14 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
             for (int y = WORLD_HEIGHT - 1; y > maxY; y--)
                 if (view.at(x, y, z) != B_AIR) { maxY = y; break; }
 
+    // 记录真正出了几何的 y 范围，给视锥剔除当紧密 AABB（悬空的洞窟/高空平台
+    // 不会被整柱 0..128 的盒子撑大）
+    int loY = INT_MAX, hiY = INT_MIN;
+    auto markGeomY = [&](int y) {
+        if (y < loY) loY = y;
+        if (y > hiY) hiY = y;
+    };
+
     g_grid.reset(maxY);
 
     // 水面只有顶层顶面一层，单独收一张 16x16 的表再合并
@@ -622,6 +630,7 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                     if (fluidCull(view.at(x, y + 1, z))) continue;
                     WaterCell& wc = waterPlane[x + z * CHUNK_SIZE];
                     wc.present = true;
+                    markGeomY(y);
                     wc.y = (uint8_t)y;
                     wc.tile = (uint8_t)((id == B_LAVA) ? T_LAVA : T_WATER);
                     wc.shade = emissiveBlock(id) ? (uint8_t)255 : bakeShade(F_PY, 3, true);
@@ -659,9 +668,11 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                         if (mergeableFace(f, box, bf) &&
                             uniformFaceShade(view, x, y, z, f, id, ushade)) {
                             g_grid.at(f, x, y, z) = packFace(bf.tile, ushade);
+                            markGeomY(y);
                             continue;
                         }
 
+                        markGeomY(y);
                         uint32_t base = (uint32_t)ov.size();
                         for (int c = 0; c < 4; c++) {
                             TerrainVertex vt;
@@ -708,6 +719,11 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
     }
     // ---- 贪心合并：六个朝向各来一轮，最后是水面那一层 ----
     for (int f = 0; f < 6; f++) mergeFaceLayer(f, maxY, ov, oi);
+    if (loY != INT_MAX) {
+        m.geomMinY = (uint16_t)loY;
+        m.geomMaxY = (uint16_t)hiY;
+        m.geomValid = true;
+    }
 
     const FaceLayout& wl = kLayout[F_PY];
     for (int i1 = 0; i1 < CHUNK_SIZE; i1++) {

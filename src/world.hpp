@@ -46,6 +46,9 @@ struct ChunkMeshData {
     std::vector<uint32_t>      opaqueIdx;
     std::vector<TerrainVertex> waterVerts;
     std::vector<uint32_t>      waterIdx;
+    // 本区块实际有几何的 y 范围（视锥剔除用紧密 AABB，不再按整柱 0..128 测）
+    uint16_t geomMinY = 0, geomMaxY = 0;
+    bool     geomValid = false;
 };
 
 struct Chunk {
@@ -66,6 +69,8 @@ struct Chunk {
     uint64_t waterAlloc = 0;
     uint64_t opaqueVertBytes = 0; // 顶点数据字节数（索引缓冲区偏移）
     uint64_t waterVertBytes = 0;
+    uint16_t geomMinY = 0, geomMaxY = 0;  // 网格实际覆盖的 y 范围（紧密视锥 AABB）
+    bool     geomValid = false;
     void*    opaqueMap = nullptr; // 常驻映射指针（HOST_COHERENT，无需手动刷新）
     void*    waterMap = nullptr;
 };
