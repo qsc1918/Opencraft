@@ -1113,7 +1113,9 @@ bool Renderer::updateOcclusion(const Camera& cam) {
             const int ownerSec = st[3] == 5 ? ns : s;
             const int ownerDir = st[3] == 5 ? 4 : st[3];
             const uint64_t bit = chunkFaceBit(ownerSec, ownerDir);
-            reach(ndx, ndz, ns, (pass & bit) != 0);   // 调试：不用 selfOp
+            // 穿不过去也要标"看得见"：那一侧的表面本身就是可见的（洞壁）；
+            // 只有能穿过去才继续往外传
+            reach(ndx, ndz, ns, (pass & bit) != 0);
         }
     }
     occValid_ = true;
