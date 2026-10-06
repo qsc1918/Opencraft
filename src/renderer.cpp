@@ -837,7 +837,6 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
                 c->geomMaxY = local.geomMaxY;
                 c->geomValid = local.geomValid;
                 c->facePass = local.facePass;
-                c->faceSelfOp = local.faceSelfOp;
                 uploadPart(ctx, *c, true, local.opaqueVerts, local.opaqueIdx);
                 uploadPart(ctx, *c, false, local.waterVerts, local.waterIdx);
             }
@@ -1043,15 +1042,12 @@ bool Renderer::updateOcclusion(const Camera& cam) {
 
     occIdx_.assign((size_t)occSpanCx_ * occSpanCz_, -1);
     occPass_.assign((size_t)occSpanCx_ * occSpanCz_, ~0ull);  // 未加载一律当"能穿过"（保守）
-    occSelfOp_.assign((size_t)occSpanCx_ * occSpanCz_, 0);
     occVisit_.assign(total, 0);
     for (size_t i = 0; i < snapshot_.size(); i++) {
         const int dx = snapshot_[i].cx - minCx, dz = snapshot_[i].cz - minCz;
         occIdx_[(size_t)dx * occSpanCz_ + dz] = (int)i;
-        if (snapshot_[i].c->state.load() >= 2) {
+        if (snapshot_[i].c->state.load() >= 2)
             occPass_[(size_t)dx * occSpanCz_ + dz] = snapshot_[i].c->facePass;
-            occSelfOp_[(size_t)dx * occSpanCz_ + dz] = snapshot_[i].c->faceSelfOp;
-        }
     }
 
     auto secIdx = [&](int dx, int dz, int s) {
@@ -1117,12 +1113,7 @@ bool Renderer::updateOcclusion(const Camera& cam) {
             const int ownerSec = st[3] == 5 ? ns : s;
             const int ownerDir = st[3] == 5 ? 4 : st[3];
             const uint64_t bit = chunkFaceBit(ownerSec, ownerDir);
-            if (pass & bit) {
-                reach(ndx, ndz, ns, true);        // 视线能穿过，继续往外传
-            } else if (!(occSelfOp_[ci2] & bit)) {
-                reach(ndx, ndz, ns, false);       // 穿不过，但那一侧的表面看得见
-            }
-            // 剩下的情况：我方这侧整面实心，连邻居的表面都看不见
+            reach(ndx, ndz, ns, (pass & bit) != 0);   // 调试：不用 selfOp
         }
     }
     occValid_ = true;

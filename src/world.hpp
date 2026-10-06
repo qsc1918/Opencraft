@@ -51,8 +51,7 @@ struct ChunkMeshData {
     bool     geomValid = false;
     // 遮挡剔除：16³ 分段之间共享面的可见性（位号 = 段号*5 + 面号，
     // 面号 0..3 = +X/-X/+Z/-Z，4 = 与上一段之间）
-    uint64_t facePass = 0;    // 置位 = 有格子两边都不是不透明，视线能穿过去
-    uint64_t faceSelfOp = 0;  // 置位 = 我方那一侧整面不透明（邻居的表面同样看不见）
+    uint64_t facePass = 0;    // 置位 = 面上有格子两边都不是不透明，视线能穿过去
 };
 
 struct Chunk {
@@ -77,8 +76,7 @@ struct Chunk {
     bool     geomValid = false;
     // 遮挡剔除：16³ 分段之间共享面的可见性（位号 = 段号*5 + 面号，
     // 面号 0..3 = +X/-X/+Z/-Z，4 = 与上一段之间）
-    uint64_t facePass = 0;    // 置位 = 有格子两边都不是不透明，视线能穿过去
-    uint64_t faceSelfOp = 0;  // 置位 = 我方那一侧整面不透明（邻居的表面同样看不见）
+    uint64_t facePass = 0;    // 置位 = 面上有格子两边都不是不透明，视线能穿过去
     void*    opaqueMap = nullptr; // 常驻映射指针（HOST_COHERENT，无需手动刷新）
     void*    waterMap = nullptr;
 };
