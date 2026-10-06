@@ -673,9 +673,12 @@ int main(int argc, char** argv) {
             }
         }
         if (!a.screenshot.empty()) {
-            int totalFrames = a.drive ? 400 : 30;
+            // --frames 也控制截图模式的帧数：下界/末地生成慢，30 帧常常还没加载完
+            int totalFrames = a.frames > 0 ? a.frames : (a.drive ? 400 : 30);
+            // 截图放在最后：世界要等生成/构网格跑完，拍早了画面会缺区块
+            int shotAt = a.frames > 0 ? totalFrames - 10 : (a.drive ? 380 : 20);
             for (int i = 0; i < totalFrames && win.pump(); i++) {
-                if (i == (a.drive ? 380 : 20)) renderer.requestScreenshot(a.screenshot);
+                if (i == shotAt) renderer.requestScreenshot(a.screenshot);
                 Input& in = win.input();
                 if (a.drive) { in.keys['W'] = true; player.cam.pitch = -0.1f; player.cam.markDirty(); }
                 // 截图分支也处理控制台指令：调试时可以先 tp 再截图
