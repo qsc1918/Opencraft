@@ -282,7 +282,9 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     waterPipe_ = makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
                               "water.vert.spv", "water.frag.spv",
                               &terrBinding, terrAttrs, 1, 2,
-                              VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_BACK_BIT,
+                              // 水面只有顶层一张面（网格化时就剔掉了侧面/底面），
+                              // 从水下抬头看的这张面是背面，开背面剔除会整片消失
+                              VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
                               true, true, false);
 
     skyPipe_ = makePipeline(ctx, ctx.renderPass, skyLayout_, shaderDir,
