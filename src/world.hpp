@@ -49,6 +49,10 @@ struct ChunkMeshData {
     // 本区块实际有几何的 y 范围（视锥剔除用紧密 AABB，不再按整柱 0..128 测）
     uint16_t geomMinY = 0, geomMaxY = 0;
     bool     geomValid = false;
+    // 遮挡剔除：16³ 分段之间共享面的可见性（位号 = 段号*5 + 面号，
+    // 面号 0..3 = +X/-X/+Z/-Z，4 = 与上一段之间）
+    uint64_t facePass = 0;    // 置位 = 有格子两边都不是不透明，视线能穿过去
+    uint64_t faceSelfOp = 0;  // 置位 = 我方那一侧整面不透明（邻居的表面同样看不见）
 };
 
 struct Chunk {
@@ -71,6 +75,10 @@ struct Chunk {
     uint64_t waterVertBytes = 0;
     uint16_t geomMinY = 0, geomMaxY = 0;  // 网格实际覆盖的 y 范围（紧密视锥 AABB）
     bool     geomValid = false;
+    // 遮挡剔除：16³ 分段之间共享面的可见性（位号 = 段号*5 + 面号，
+    // 面号 0..3 = +X/-X/+Z/-Z，4 = 与上一段之间）
+    uint64_t facePass = 0;    // 置位 = 有格子两边都不是不透明，视线能穿过去
+    uint64_t faceSelfOp = 0;  // 置位 = 我方那一侧整面不透明（邻居的表面同样看不见）
     void*    opaqueMap = nullptr; // 常驻映射指针（HOST_COHERENT，无需手动刷新）
     void*    waterMap = nullptr;
 };
@@ -105,6 +113,15 @@ struct MeshView {
         blocks[(x + 1) + (z + 1) * 18 + y * 18 * 18] = v;
     }
 };
+
+// ---- 遮挡剔除的位定义（mesher 填、renderer 用）----
+// 把世界切成 16^3 分段后，两个相邻分段之间能不能看见，取决于它们共享的那张
+// 16x16 面：只要面上每对贴面方块至少有一个不透明，视线就一定穿不过去。
+// 每个分段 8 位：0..3 = +X/-X/+Z/-Z 四个侧面被挡死，4 = 与上一段（y 更高）之间
+// 的水平面被挡死。位为 0 一律按"能看见"处理，所以默认值 0 永远保守。
+inline uint64_t chunkFaceBit(int sec, int dir) {
+    return (uint64_t)1 << (sec * 5 + dir);
+}
 
 // 每维度存储：区块表、缓存、任务追踪集合（共享同一个 worker 池）
 struct DimStorage {

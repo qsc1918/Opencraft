@@ -172,4 +172,16 @@ private:
     // 世界区块的裸指针快照，复用以避免每帧拷贝 shared_ptr。
     std::vector<World::ChunkInfo> snapshot_;
     std::vector<TerrainVertex> entityVerts_;  // 每帧构建的实体盒模型顶点
+
+    // ---- 遮挡剔除（以 16³ 分段为单位的可见性洪泛）----
+    // 只有"整个分段全是不透明方块"才挡视线：有缝隙就可能看得见，
+    // 判定永远保守，只会多画不会漏画。
+    bool updateOcclusion(const Camera& cam);
+    bool chunkOccluded(int cx, int cz) const;
+    bool occValid_ = false;
+    std::vector<int>     occIdx_;     // (cx,cz) -> snapshot 下标，-1=未加载
+    std::vector<uint64_t> occPass_;    // 每区块：哪些面视线能穿过
+    std::vector<uint64_t> occSelfOp_;  // 每区块：哪些面我方那侧整面不透明
+    std::vector<uint8_t> occVisit_;   // 洪泛结果
+    int occMinCx_ = 0, occMinCz_ = 0, occSpanCx_ = 0, occSpanCz_ = 0;
 };

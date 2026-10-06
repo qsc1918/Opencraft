@@ -834,6 +834,8 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
                 c->geomMinY = local.geomMinY;
                 c->geomMaxY = local.geomMaxY;
                 c->geomValid = local.geomValid;
+                c->facePass = local.facePass;
+                c->faceSelfOp = local.faceSelfOp;
                 uploadPart(ctx, *c, true, local.opaqueVerts, local.opaqueIdx);
                 uploadPart(ctx, *c, false, local.waterVerts, local.waterIdx);
             }
@@ -1013,6 +1015,128 @@ void Renderer::drawEntities(VkCtx& ctx, const Camera& cam) {
 
 // drawEntities 的调用点应放在 drawChunks 结束大括号之后
 
+// ---------------------------------------------------------------------------
+// 遮挡剔除：把世界切成 16x16x16 的分段做可见性洪泛。
+// 两个相邻分段之间能不能看见，看它们共享的那张 16x16 面有没有被完全不透明
+// 地挡死（位定义见 world.hpp）。到不了的分段一定被挡死，画了也看不见；
+// 判定永远保守 —— 邻居没加载/没构网格都按"能看见"处理，只会多画不会漏画。
+// ---------------------------------------------------------------------------
+bool Renderer::updateOcclusion(const Camera& cam) {
+    occValid_ = false;
+    if (snapshot_.empty()) return false;
+
+    int minCx = INT_MAX, maxCx = INT_MIN, minCz = INT_MAX, maxCz = INT_MIN;
+    for (auto& si : snapshot_) {
+        if (si.cx < minCx) minCx = si.cx;
+        if (si.cx > maxCx) maxCx = si.cx;
+        if (si.cz < minCz) minCz = si.cz;
+        if (si.cz > maxCz) maxCz = si.cz;
+    }
+    minCx--; minCz--; maxCx++; maxCz++;   // 外扩一圈：边界外按"能看见"处理
+    occMinCx_ = minCx; occMinCz_ = minCz;
+    occSpanCx_ = maxCx - minCx + 1;
+    occSpanCz_ = maxCz - minCz + 1;
+    const size_t perChunk = 8;
+    const size_t total = (size_t)occSpanCx_ * occSpanCz_ * perChunk;
+
+    occIdx_.assign((size_t)occSpanCx_ * occSpanCz_, -1);
+    occPass_.assign((size_t)occSpanCx_ * occSpanCz_, ~0ull);  // 未加载一律当"能穿过"（保守）
+    occSelfOp_.assign((size_t)occSpanCx_ * occSpanCz_, 0);
+    occVisit_.assign(total, 0);
+    for (size_t i = 0; i < snapshot_.size(); i++) {
+        const int dx = snapshot_[i].cx - minCx, dz = snapshot_[i].cz - minCz;
+        occIdx_[(size_t)dx * occSpanCz_ + dz] = (int)i;
+        if (snapshot_[i].c->state.load() >= 2) {
+            occPass_[(size_t)dx * occSpanCz_ + dz] = snapshot_[i].c->facePass;
+            occSelfOp_[(size_t)dx * occSpanCz_ + dz] = snapshot_[i].c->faceSelfOp;
+        }
+    }
+
+    auto secIdx = [&](int dx, int dz, int s) {
+        return (size_t)(dx * occSpanCz_ + dz) * 8 + s;
+    };
+    // 相机所在分段及 26 邻域都是起点：卡在方块里也得能看见外面
+    const int camDx = (int)std::floor(cam.pos.x / CHUNK_SIZE) - minCx;
+    const int camDz = (int)std::floor(cam.pos.z / CHUNK_SIZE) - minCz;
+    int camSec = (int)std::floor(cam.pos.y / 16.0f);
+    if (camSec < 0) camSec = 0;
+    if (camSec > 7) camSec = 7;
+
+    // occVisit_ 位 0 = "可能看得见"、位 1 = "已入队（还能继续往外传）"。
+    // 挡死的面指的是"视线穿不过去"，但那一侧的表面依然看得见（洞壁就是这么来的），
+    // 所以相邻分段一律标可见，只有能穿过去才继续往里传。
+    std::vector<int> queue;
+    queue.reserve(256);
+    auto reach = [&](int dx, int dz, int s, bool passable) {
+        if (dx < 0 || dx >= occSpanCx_ || dz < 0 || dz >= occSpanCz_ || s < 0 || s > 7) return;
+        uint8_t& v = occVisit_[secIdx(dx, dz, s)];
+        if (!(v & 1)) v |= 1;
+        if (passable && !(v & 2)) { v |= 2; queue.push_back((int)secIdx(dx, dz, s)); }
+    };
+    auto push = [&](int dx, int dz, int s) { reach(dx, dz, s, true); };
+    for (int ddx = -1; ddx <= 1; ddx++)
+        for (int ddz = -1; ddz <= 1; ddz++)
+            for (int ds = -1; ds <= 1; ds++)
+                push(camDx + ddx, camDz + ddz, camSec + ds);
+    // 贴着"没加载"区域的分区一律当可见：视线可能从加载区外绕进来，
+    // 少了这一步，流式加载没跑完时就会把还看得见的区块剔掉。
+    static const int kNeigh[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};
+    for (int dx = 0; dx < occSpanCx_; dx++)
+        for (int dz = 0; dz < occSpanCz_; dz++) {
+            if (occIdx_[(size_t)dx * occSpanCz_ + dz] < 0) continue;
+            for (auto& nb : kNeigh) {
+                int ndx = dx + nb[0], ndz = dz + nb[1];
+                bool loaded = ndx >= 0 && ndx < occSpanCx_ && ndz >= 0 && ndz < occSpanCz_ &&
+                              occIdx_[(size_t)ndx * occSpanCz_ + ndz] >= 0;
+                if (loaded) continue;
+                for (int s = 0; s < 8; s++) push(dx, dz, s);
+                break;
+            }
+        }
+
+    // 走一步要看"离开的那个分段"的共享面有没有被挡死
+    static const int kStep[6][4] = {
+        {1, 0, 0, 0}, {-1, 0, 0, 1}, {0, 0, 1, 2}, {0, 0, -1, 3}, {0, 1, 0, 4}, {0, -1, 0, 5},
+    };
+    while (!queue.empty()) {
+        int cur = queue.back(); queue.pop_back();
+        const int s = cur & 7;
+        const int rest = cur >> 3;
+        const int dx = rest / occSpanCz_;
+        const int dz = rest - dx * occSpanCz_;
+        const size_t ci2 = (size_t)dx * occSpanCz_ + dz;
+        const uint64_t pass = occPass_[ci2];
+        for (auto& st : kStep) {
+            const int ns = s + st[1];
+            if (ns < 0 || ns > 7) continue;
+            int ndx = dx + st[0], ndz = dz + st[2];
+            if (ndx < 0 || ndx >= occSpanCx_ || ndz < 0 || ndz >= occSpanCz_) continue;
+            // 向下走时共享面归下面那一段管，其它方向归当前这段管
+            const int ownerSec = st[3] == 5 ? ns : s;
+            const int ownerDir = st[3] == 5 ? 4 : st[3];
+            const uint64_t bit = chunkFaceBit(ownerSec, ownerDir);
+            if (pass & bit) {
+                reach(ndx, ndz, ns, true);        // 视线能穿过，继续往外传
+            } else if (!(occSelfOp_[ci2] & bit)) {
+                reach(ndx, ndz, ns, false);       // 穿不过，但那一侧的表面看得见
+            }
+            // 剩下的情况：我方这侧整面实心，连邻居的表面都看不见
+        }
+    }
+    occValid_ = true;
+    return true;
+}
+
+// 某区块的任一分段可达即视为可见
+bool Renderer::chunkOccluded(int cx, int cz) const {
+    if (!occValid_) return false;
+    const int dx = cx - occMinCx_, dz = cz - occMinCz_;
+    if (dx < 0 || dx >= occSpanCx_ || dz < 0 || dz >= occSpanCz_) return false;
+    const uint8_t* v = &occVisit_[((size_t)dx * occSpanCz_ + dz) * 8];
+    for (int s = 0; s < 8; s++) if (v[s] & 1) return false;
+    return true;
+}
+
 void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
     Frustum fr;
     fr.extract(cachedVP_);
@@ -1038,12 +1162,14 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
     };
 
     // 从 render() 里的快照收集可见区块，无需加锁。
+    updateOcclusion(cam);
     struct VisChunk { Chunk* c; int cx; int cz; };
     std::vector<VisChunk> visible;
     visible.reserve(512);
     for (auto& si : snapshot_) {
         if (si.c->state.load() < 2) continue;
         if (chunkCulled(*si.c, si.cx, si.cz)) continue;
+        if (chunkOccluded(si.cx, si.cz)) continue;
         visible.push_back({si.c, si.cx, si.cz});
     }
 

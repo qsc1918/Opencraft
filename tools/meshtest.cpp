@@ -219,6 +219,45 @@ int main() {
         checkEq(measureOpen(m.waterVerts, m.waterIdx).area, 16 * 16, "水面覆盖面积不变");
     }
 
+    printf("== 遮挡剔除：分段共享面的可见性 ==\n");
+    {
+        MeshView v;
+        v.blocks.fill(B_AIR);
+        // 连四周邻居一起填满：每个分段的六个面两边全是不透明
+        fillBox(v, -1, 0, -1, 16, WORLD_HEIGHT - 1, 16, B_STONE);
+        FaceVisibility vis = buildFaceMask(v, WORLD_HEIGHT - 1);
+        bool allPassZero = vis.pass == 0;
+        bool allSelfOp = true;
+        for (int s = 0; s < 8; s++) {
+            for (int d = 0; d < 4; d++)
+                if (!(vis.selfOp & chunkFaceBit(s, d))) allSelfOp = false;
+            if (s < 7 && !(vis.selfOp & chunkFaceBit(s, 4))) allSelfOp = false;
+        }
+        check(allPassZero, "整块实心：没有任何一面能穿过");
+        check(allSelfOp, "整块实心：每个面的我方一侧都不透明（墙后可剔）");
+    }
+    {
+        MeshView v;
+        v.blocks.fill(B_AIR);
+        fillBox(v, -1, 0, -1, 16, WORLD_HEIGHT - 1, 16, B_STONE);
+        // 在第 3 段（y=48..63）的 +X 面上开一个洞：那面就能穿过、也不再是整面实心
+        v.set(15, 55, 3, B_AIR);
+        v.set(16, 55, 3, B_AIR);
+        FaceVisibility vis = buildFaceMask(v, WORLD_HEIGHT - 1);
+        check((vis.pass & chunkFaceBit(3, 0)) != 0, "墙上开洞：+X 面可以穿过");
+        check((vis.selfOp & chunkFaceBit(3, 0)) == 0, "墙上开洞：+X 面我方一侧不再是整面实心");
+        check((vis.pass & chunkFaceBit(2, 0)) == 0, "没开洞的其他段仍然穿不过");
+    }
+    {
+        MeshView v;
+        v.blocks.fill(B_AIR);
+        // 只有 y=0 一层石头：最低那段的底面（与世界下界之间）应当算"能穿过"
+        fillBox(v, 0, 0, 0, 15, 0, 15, B_STONE);
+        FaceVisibility vis = buildFaceMask(v, 0);
+        check((vis.pass & chunkFaceBit(1, 4)) != 0, "上面那段与这段之间是空的：能穿过");
+        check((vis.selfOp & chunkFaceBit(0, 4)) == 0, "这段顶面之上是空气：不算整面实心");
+    }
+
     printf("\n%s（失败 %d 项）\n", g_fail == 0 ? "全部通过" : "有失败用例", g_fail);
     return g_fail == 0 ? 0 : 1;
 }

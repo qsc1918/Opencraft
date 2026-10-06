@@ -587,6 +587,60 @@ static void mergeFaceLayer(int f, int maxY, std::vector<TerrainVertex>& ov,
 
 } // 匿名命名空间
 
+// 统计每个 16^3 分段共享面的可见性（位定义见 world.hpp）：
+//   pass    —— 面上存在一对"两边都不是不透明"的格子，视线能穿过去
+//   selfOp  —— 我方那一侧整面都是不透明，说明视线还没到面就被自己挡住，
+//              那邻居的表面同样看不见（"墙背后"就是这么剔掉的）
+// 邻居没加载时按空气算 → pass 置位（保守）；世界上下界外没有方块，同上。
+FaceVisibility buildFaceMask(const MeshView& view, int maxY) {
+    FaceVisibility vis;
+    const int secTop = maxY >> 4;               // 上面的分段全是空气，不用算
+    for (int s = 0; s <= secTop; s++) {
+        const int y0 = s * 16;
+        auto scan = [&](int face) {
+            bool anyPass = false;
+            bool allSelf = true;
+            for (int k = 0; k < 16 && !(anyPass && !allSelf); k++) {
+                for (int j = 0; j < 16 && !(anyPass && !allSelf); j++) {
+                    uint8_t a = B_AIR, b = B_AIR;
+                    int y = y0 + k;
+                    switch (face) {
+                    case 0: a = view.at(15, y, j);  b = view.at(16, y, j);  break; // +X
+                    case 1: a = view.at(0, y, j);   b = view.at(-1, y, j);  break; // -X
+                    case 2: a = view.at(j, y, 15);  b = view.at(j, y, 16);  break; // +Z
+                    case 3: a = view.at(j, y, 0);   b = view.at(j, y, -1);  break; // -Z
+                    default:a = view.at(j, y, 0);   b = view.at(j, y, -1);  break; // -Z
+                    }
+                    if (!blockIsOpaque(a) && !blockIsOpaque(b)) anyPass = true;
+                    if (!blockIsOpaque(a)) allSelf = false;
+                }
+            }
+            if (anyPass) vis.pass |= chunkFaceBit(s, face);
+            if (allSelf) vis.selfOp |= chunkFaceBit(s, face);
+        };
+        for (int face = 0; face < 4; face++) scan(face);
+        if (s < 7) {                             // 与上一段之间的水平面
+            const int yb = y0 + 16;
+            bool anyPass = false, allSelf = true;
+            for (int z = 0; z < 16 && !(anyPass && !allSelf); z++)
+                for (int x = 0; x < 16 && !(anyPass && !allSelf); x++) {
+                    uint8_t a = view.at(x, yb - 1, z), b = view.at(x, yb, z);
+                    if (!blockIsOpaque(a) && !blockIsOpaque(b)) anyPass = true;
+                    if (!blockIsOpaque(a)) allSelf = false;
+                }
+            if (anyPass) vis.pass |= chunkFaceBit(s, 4);
+            if (allSelf) vis.selfOp |= chunkFaceBit(s, 4);
+        }
+    }
+    // maxY 之上的分段全是空气（主循环没扫到），一律按"能穿过"记：
+    // 记成穿不过会把天空当成墙，隔着山丘的区块就被误剔了
+    for (int s = secTop + 1; s < 8; s++) {
+        for (int d = 0; d < 4; d++) vis.pass |= chunkFaceBit(s, d);
+        if (s < 7) vis.pass |= chunkFaceBit(s, 4);
+    }
+    return vis;
+}
+
 ChunkMeshData buildChunkMesh(const MeshView& view) {
     ChunkMeshData m;
     auto& ov = m.opaqueVerts;
@@ -719,11 +773,15 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
     }
     // ---- 贪心合并：六个朝向各来一轮，最后是水面那一层 ----
     for (int f = 0; f < 6; f++) mergeFaceLayer(f, maxY, ov, oi);
+    // 主循环只扫到 maxY，上面的分段全是空气，必须清掉
     if (loY != INT_MAX) {
         m.geomMinY = (uint16_t)loY;
         m.geomMaxY = (uint16_t)hiY;
         m.geomValid = true;
     }
+    FaceVisibility vis = buildFaceMask(view, maxY);
+    m.facePass = vis.pass;
+    m.faceSelfOp = vis.selfOp;
 
     const FaceLayout& wl = kLayout[F_PY];
     for (int i1 = 0; i1 < CHUNK_SIZE; i1++) {
