@@ -1,4 +1,5 @@
 #include "mctick.hpp"
+#include "blockupdate.hpp"
 #include "blocks.hpp"
 #include "world.hpp"
 #include <cmath>
@@ -41,45 +42,10 @@ bool allNeighborsEmpty(const World& w, int x, int y, int z, int ignoreDx, int ig
     return true;
 }
 
-bool flowerCanSurvive(const World& w, int x, int y, int z) {
-    uint8_t below = w.getBlock(x, y - 1, z);
-    if (below != B_CHORUS_PLANT && below != B_END_STONE) {
-        if (below != B_AIR) return false;
-        bool one = false;
-        static const int off[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
-        for (const auto& o : off) {
-            uint8_t nb = w.getBlock(x + o[0], y, z + o[1]);
-            if (nb == B_CHORUS_PLANT) {
-                if (one) return false;
-                one = true;
-            } else if (nb != B_AIR) {
-                return false;
-            }
-        }
-        return one;
-    }
-    return true;
-}
-
-bool plantCanSurvive(const World& w, int x, int y, int z) {
-    uint8_t below = w.getBlock(x, y - 1, z);
-    bool aboveAndBelow = w.getBlock(x, y + 1, z) != B_AIR && below != B_AIR;
-    static const int off[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
-    for (const auto& o : off) {
-        int nx = x + o[0], nz = z + o[1];
-        if (w.getBlock(nx, y, nz) == B_CHORUS_PLANT) {
-            if (aboveAndBelow) return false;
-            uint8_t b2 = w.getBlock(nx, y - 1, nz);
-            if (b2 == B_CHORUS_PLANT || b2 == B_END_STONE) return true;
-        }
-    }
-    return below == B_CHORUS_PLANT || below == B_END_STONE;
-}
-
 // 原版 ChorusFlowerBlock.randomTick 的等价实现（age 只区分活/死，
 // 死花是独立 id，所以 currentAge 用 0..4 表示活着、5 表示枯萎）。
 bool tickChorusFlower(World& w, int x, int y, int z) {
-    if (!flowerCanSurvive(w, x, y, z)) { w.setBlock(x, y, z, B_AIR); return true; }
+    if (!bu::chorusFlowerCanSurvive(w, x, y, z)) { w.setBlock(x, y, z, B_AIR, bu::U_NO_NC); return true; }
 
     int above = y + 1;
     if (w.getBlock(x, above, z) != B_AIR || above > WORLD_MAX_Y) return false;
@@ -105,8 +71,8 @@ bool tickChorusFlower(World& w, int x, int y, int z) {
     }
 
     if (growUpwards && allNeighborsEmpty(w, x, above, z, 99, 99) && w.getBlock(x, y + 2, z) == B_AIR) {
-        w.setBlock(x, y, z, B_CHORUS_PLANT);
-        w.setBlock(x, above, z, B_CHORUS_FLOWER);
+        w.setBlock(x, y, z, B_CHORUS_PLANT, bu::U_NO_NC);
+        w.setBlock(x, above, z, B_CHORUS_FLOWER, bu::U_NO_NC);
         return true;
     }
 
@@ -121,13 +87,13 @@ bool tickChorusFlower(World& w, int x, int y, int z) {
         if (w.getBlock(tx, y, tz) != B_AIR) continue;
         if (w.getBlock(tx, y - 1, tz) != B_AIR) continue;
         if (!allNeighborsEmpty(w, tx, y, tz, -d[0], -d[1])) continue;
-        w.setBlock(tx, y, tz, B_CHORUS_FLOWER);
+        w.setBlock(tx, y, tz, B_CHORUS_FLOWER, bu::U_NO_NC);
         branched = true;
     }
     if (branched) {
-        w.setBlock(x, y, z, B_CHORUS_PLANT);
+        w.setBlock(x, y, z, B_CHORUS_PLANT, bu::U_NO_NC);
     } else {
-        w.setBlock(x, y, z, B_CHORUS_FLOWER_DEAD);
+        w.setBlock(x, y, z, B_CHORUS_FLOWER_DEAD, bu::U_NO_NC);
     }
     return true;
 }

@@ -82,12 +82,12 @@ private:
     void uploadAndDraw(VkCtx& ctx);
     int  hitTest(float cx, float cy) const;
 
-    // GDI 资源
+    // GDI 资源（只用 void* 存，这样非 Windows 也能过编译；实际只有 Win32 实现会用）
     void* dibBits_ = nullptr;      // 屏幕 DIB 像素缓冲
-    HBITMAP dibBmp_ = nullptr;
-    HDC     dibDC_ = nullptr;
+    void* dibBmp_ = nullptr;
+    void* dibDC_ = nullptr;
     int     diw_ = 0, dih_ = 0;
-    HFONT   font_ = nullptr;
+    void* font_ = nullptr;
 
     // 已加载贴图（RGBA 与绘制用 DIB/HDC）
     std::vector<uint8_t> dirtRGBA_;
@@ -95,10 +95,22 @@ private:
     std::vector<uint8_t> sliderRGBA_, handleRGBA_, handleHiRGBA_;
     int dirtW_ = 0, dirtH_ = 0, btnW_ = 0, btnH_ = 0;
     int sliderW_ = 0, sliderH_ = 0, handleW_ = 0, handleH_ = 0;
-    HDC dirtDC_ = nullptr, btnDC_ = nullptr, btnHiDC_ = nullptr, fieldDC_ = nullptr;
-    HDC sliderDC_ = nullptr, handleDC_ = nullptr, handleHiDC_ = nullptr;
-    HBITMAP dirtBmp_ = nullptr, btnBmp_ = nullptr, btnHiBmp_ = nullptr, fieldBmp_ = nullptr;
-    HBITMAP sliderBmp_ = nullptr, handleBmp_ = nullptr, handleHiBmp_ = nullptr;
+    // 一行一个声明：`void* a = nullptr, b = nullptr;` 在 MSVC 下会被
+    // 当成函数声明（最令人烦恼的解析），别那么写。
+    void* dirtDC_ = nullptr;
+    void* btnDC_ = nullptr;
+    void* btnHiDC_ = nullptr;
+    void* fieldDC_ = nullptr;
+    void* sliderDC_ = nullptr;
+    void* handleDC_ = nullptr;
+    void* handleHiDC_ = nullptr;
+    void* dirtBmp_ = nullptr;
+    void* btnBmp_ = nullptr;
+    void* btnHiBmp_ = nullptr;
+    void* fieldBmp_ = nullptr;
+    void* sliderBmp_ = nullptr;
+    void* handleBmp_ = nullptr;
+    void* handleHiBmp_ = nullptr;
 
     // 滑块状态（每帧重建，可同时有多个：渲染距离/近景清晰）
     struct Slider {

@@ -1,6 +1,5 @@
 #include "player.hpp"
 #include "world.hpp"
-#include <windows.h>
 #include <algorithm>
 #include <cmath>
 
@@ -30,7 +29,7 @@ void Player::update(Input& in, World& world, float dt) {
     if (dt > 0.05f) dt = 0.05f;
 
     // 切换飞行：双击空格（创造模式，同原版）
-    bool space = in.keys[VK_SPACE];
+    bool space = in.keys[KEY_SPACE];
     spaceTapTimer_ += dt;
     if (space && !spaceHeld_) {
         if (spaceTapTimer_ < 0.3f) {
@@ -67,13 +66,13 @@ void Player::update(Input& in, World& world, float dt) {
     const float flySpeed = 20.0f;
 
     if (flying) {
-        float speed = flySpeed * (in.keys[VK_SHIFT] ? 0.35f : 1.0f);
+        float speed = flySpeed * (in.keys[KEY_SHIFT] ? 0.35f : 1.0f);
         float k = 1.0f - std::exp(-14.0f * dt);
         vel.x += (mv.x * speed - vel.x) * k;
         vel.z += (mv.z * speed - vel.z) * k;
         float ty = 0;
-        if (in.keys[VK_SPACE]) ty = 1;
-        if (in.keys[VK_SHIFT]) ty = -1;
+        if (in.keys[KEY_SPACE]) ty = 1;
+        if (in.keys[KEY_SHIFT]) ty = -1;
         vel.y += (ty * speed - vel.y) * k;
         onGround = false;
     } else {
@@ -85,7 +84,7 @@ void Player::update(Input& in, World& world, float dt) {
         float maxFall = inLava ? -1.2f : (inWater ? -2.5f : -40.0f);
         vel.y -= gravity * dt;
         if (vel.y < maxFall) vel.y = maxFall;
-        if (in.keys[VK_SPACE] && (onGround || inFluid)) {
+        if (in.keys[KEY_SPACE] && (onGround || inFluid)) {
             vel.y = inFluid ? (inLava ? 3.2f : 4.0f) : 8.5f;
             onGround = false;
         }
@@ -133,11 +132,10 @@ void Player::update(Input& in, World& world, float dt) {
 }
 
 void Player::syncEntity() {
-    ent.id = 1;                    // 玩家 ID 固定（不由 World 管理）
-    ent.kind = EntityKind::Generic;
-    ent.type = &ENTITY_PLAYER;
-    ent.pos = Vec3(cam.pos.x, cam.pos.y - eyeHeight, cam.pos.z); // 眼睛 → 脚部中心
-    ent.vel = vel;
-    ent.yaw = cam.yaw;
-    ent.pitch = cam.pitch;
+    if (!ent) return;              // 还没进世界（主菜单阶段）
+    ent->pos = Vec3(cam.pos.x, cam.pos.y - eyeHeight, cam.pos.z); // 眼睛 → 脚部中心
+    ent->vel = vel;
+    ent->yaw = cam.yaw;
+    ent->pitch = cam.pitch;
+    ent->onGround = onGround;
 }

@@ -1,16 +1,12 @@
 #include "version.hpp"
 #include "generated/version_gen.hpp"   // 编译时自动生成：版本名 + 时间戳
-#include <windows.h>
+#include "platform.hpp"
 #include <fstream>
 #include <string>
 
 // exe 所在目录，version.txt 与 exe 放在一起
 static std::string exeDir() {
-    char buf[MAX_PATH];
-    GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    std::string p(buf);
-    size_t pos = p.find_last_of("\\/");
-    return pos == std::string::npos ? "." : p.substr(0, pos);
+    return platform::exeDir();
 }
 
 // 取 version.txt 中 [current] 行的版本名；失败返回空串
@@ -32,7 +28,7 @@ static std::string readVersionName(const std::string& path) {
 
 const std::string& version::name() {
     static const std::string n = [] {
-        std::string v = readVersionName(exeDir() + "\\version.txt");
+        std::string v = readVersionName(platform::join(platform::exeDir(), "version.txt"));
         if (v.empty()) v = readVersionName("version.txt");
         return v.empty() ? std::string(OPENCRAFT_VERSION_NAME) : v;
     }();

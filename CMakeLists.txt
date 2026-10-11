@@ -8,29 +8,57 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Vulkan SDK：优先用环境变量；没有就在默认安装目录里挑版本号最大的那个
-# （不能写死版本号：CI runner 和别的机器装的版本不一样）
-set(VK "$ENV{VULKAN_SDK}")
-if(NOT VK OR NOT EXISTS "${VK}/Include/vulkan/vulkan.h")
-  file(GLOB _vk_candidates "C:/VulkanSDK/*")
-  set(_vk_best "")
-  foreach(_d ${_vk_candidates})
-    if(EXISTS "${_d}/Include/vulkan/vulkan.h")
-      set(_vk_best "${_d}")
+# ---------------------------------------------------------------------------
+# Vulkan 头文件与着色器编译器的定位
+#   Windows：优先 VULKAN_SDK 环境变量，否则在 C:/VulkanSDK/<版本> 里挑版本号最大的
+#   Linux  ：优先 VULKAN_SDK，其次 find_package(Vulkan)（libvulkan-dev 装在
+#            /usr/include/vulkan），再次直接用 /usr/include
+# 着色器编译器：优先 glslc（Vulkan SDK 自带），退化到 glslangValidator
+# （Ubuntu/Debian 的 glslang-tools 提供，参数不同但都能编 .vert/.frag）
+# ---------------------------------------------------------------------------
+set(VK_INCLUDE_DIR "")
+
+if(WIN32)
+  set(VK "$ENV{VULKAN_SDK}")
+  if(NOT VK OR NOT EXISTS "${VK}/Include/vulkan/vulkan.h")
+    file(GLOB _vk_candidates "C:/VulkanSDK/*")
+    set(_vk_best "")
+    foreach(_d ${_vk_candidates})
+      if(EXISTS "${_d}/Include/vulkan/vulkan.h")
+        set(_vk_best "${_d}")
+      endif()
+    endforeach()
+    set(VK "${_vk_best}")
+  endif()
+  if(NOT VK)
+    message(FATAL_ERROR "找不到 Vulkan SDK：请设置 VULKAN_SDK 环境变量，或把 SDK 装到 C:/VulkanSDK/<版本>")
+  endif()
+  set(VK_INCLUDE_DIR "${VK}/Include")
+  message(STATUS "Vulkan SDK: ${VK}")
+else()
+  if(DEFINED ENV{VULKAN_SDK} AND EXISTS "$ENV{VULKAN_SDK}/include/vulkan/vulkan.h")
+    set(VK_INCLUDE_DIR "$ENV{VULKAN_SDK}/include")
+  else()
+    find_package(Vulkan QUIET)
+    if(Vulkan_FOUND)
+      set(VK_INCLUDE_DIR "${Vulkan_INCLUDE_DIRS}")
+    elseif(EXISTS "/usr/include/vulkan/vulkan.h")
+      set(VK_INCLUDE_DIR "/usr/include")
     endif()
-  endforeach()
-  set(VK "${_vk_best}")
+  endif()
+  if(NOT VK_INCLUDE_DIR)
+    message(FATAL_ERROR "找不到 Vulkan 头文件：装 libvulkan-dev（Debian/Ubuntu）或设置 VULKAN_SDK")
+  endif()
+  message(STATUS "Vulkan 头文件: ${VK_INCLUDE_DIR}")
 endif()
-if(NOT VK)
-  message(FATAL_ERROR "找不到 Vulkan SDK：请设置 VULKAN_SDK 环境变量，或把 SDK 装到 C:/VulkanSDK/<版本>")
-endif()
-message(STATUS "Vulkan SDK: ${VK}")
 
 # 平台宏：两套编译器都要，所以放全局
 #  NOMINMAX           windows.h 默认定义 min/max 宏，会破坏 std::max/std::min
 #                     （GCC/MinGW 头文件顺序碰巧躲过，MSVC 下是 error C2589）
 #  _USE_MATH_DEFINES  MSVC 默认不定义 M_PI
-add_compile_definitions(NOMINMAX _USE_MATH_DEFINES)
+if(WIN32)
+  add_compile_definitions(NOMINMAX _USE_MATH_DEFINES)
+endif()
 
 # 编译选项：MSVC 与 GCC/Clang 两套写法。原来只写了 GCC 那套，
 # 导致 CI 上（windows-latest 用 cl.exe）配置阶段就失败。
@@ -48,17 +76,31 @@ else()
   add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
 endif()
 
+# 窗口后端二选一；platform.cpp 只有非 Windows 才编（Win32 直接用系统 API）
+if(WIN32)
+  set(PLATFORM_SOURCES src/window_win32.cpp src/platform.cpp)
+else()
+  set(PLATFORM_SOURCES src/window_x11.cpp src/platform.cpp)
+endif()
+
 add_executable(opencraft
   src/main.cpp
-  src/window.cpp
+  ${PLATFORM_SOURCES}
   src/vk.cpp
   src/png.cpp
+  src/png_decode.cpp
   src/atlas.cpp
   src/noise.cpp
   src/mcnoise.cpp
   src/endgen.cpp
   src/nethergen.cpp
   src/mctick.cpp
+  src/blockupdate.cpp
+  src/mobs.cpp
+  src/mobai.cpp
+  src/mobpath.cpp
+  src/mobmodel.cpp
+  src/mobspawn.cpp
   src/generator.cpp
   src/world.cpp
   src/mesher.cpp
@@ -77,12 +119,21 @@ add_executable(opencraft
 # volk 走仓库内的 third_party/volk，不用 SDK 的：SDK 里是 Include/Volk（大写），
 # 原来写的 Include/volk 只在大小写不敏感的文件系统上侥幸命中，CI 上直接找不到
 # volk.h（fatal error C1083）。自带一份也让本地与 CI 行为一致。
-target_include_directories(opencraft PRIVATE src third_party/volk ${CMAKE_CURRENT_BINARY_DIR} ${VK}/Include)
+target_include_directories(opencraft PRIVATE src third_party/volk ${CMAKE_CURRENT_BINARY_DIR} ${VK_INCLUDE_DIR})
 target_compile_definitions(opencraft PRIVATE VK_NO_PROTOTYPES)
 # 优化等级交给 CMake 的 Release 配置（MSVC 是 /O2，GCC 是 -O3）；
 # 原来写死的 -O3 和 -march=native 在 MSVC 下是错误参数，-march=native 还会让
 # CI 编出的二进制依赖 runner 的指令集、在玩家机器上非法指令崩溃。
-target_link_libraries(opencraft PRIVATE user32 gdi32 ole32 oleaut32)
+if(WIN32)
+  # user32/gdi32：窗口与菜单。ole32/oleaut32 原来给 WIC 读 PNG 用，
+  # 现在 PNG 读写都是自带的（png_decode.cpp / png.cpp），已不再需要。
+  target_link_libraries(opencraft PRIVATE user32 gdi32)
+else()
+  # X11 窗口 + Vulkan Xlib surface；dl/pthread 是动态加载器与线程要的
+  find_package(X11 REQUIRED)
+  target_include_directories(opencraft PRIVATE ${X11_INCLUDE_DIR})
+  target_link_libraries(opencraft PRIVATE ${X11_LIBRARIES} ${CMAKE_DL_LIBS} pthread)
+endif()
 
 # 版本号：编译时读 version.txt 的 [current]，再拼上当前时间戳
 set(GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -107,13 +158,29 @@ set_source_files_properties(src/version.cpp PROPERTIES OBJECT_DEPENDS ${VERSION_
 # glslc 不能写死成 ${VK}/Bin/glslc.exe：CI 上 SDK 布局一变就找不到工具，
 # 而且报错信息会很难懂。先用 SDK 的 Bin，再退回 PATH。
 set(SPV ${CMAKE_CURRENT_BINARY_DIR}/shaders)
-find_program(GLSLC NAMES glslc glslc.exe HINTS "${VK}/Bin" DOC "glslc 着色器编译器")
-if(NOT GLSLC)
-  message(FATAL_ERROR "找不到 glslc：请安装 Vulkan SDK（需要 ${VK}/Bin/glslc.exe）")
+if(WIN32)
+  find_program(GLSLC NAMES glslc glslc.exe HINTS "${VK}/Bin" DOC "glslc 着色器编译器")
+else()
+  # Linux 上别去找 glslc.exe：WSL 里 PATH 会带进 Windows 的 SDK，找到也跑不起来
+  find_program(GLSLC NAMES glslc DOC "glslc 着色器编译器")
 endif()
-message(STATUS "glslc: ${GLSLC}")
+if(GLSLC)
+  message(STATUS "着色器编译器: ${GLSLC} (glslc)")
+  set(SHADER_CC "${GLSLC}")
+  set(SHADER_ARGS -O -o)
+else()
+  # glslang-tools（Debian/Ubuntu）：要 -V 才会生成 SPIR-V
+  find_program(GLSLANG NAMES glslangValidator DOC "glslangValidator（glslc 的替代）")
+  if(NOT GLSLANG)
+    message(FATAL_ERROR "找不到着色器编译器：装 Vulkan SDK（含 glslc）或 glslang-tools")
+  endif()
+  message(STATUS "着色器编译器: ${GLSLANG} (glslangValidator)")
+  set(SHADER_CC "${GLSLANG}")
+  set(SHADER_ARGS -V -o)
+endif()
 set(SHADER_FILES
   terrain.vert terrain.frag
+  entity.vert entity.frag
   water.vert water.frag
   ui.vert ui.frag
   sky.vert sky.frag
@@ -123,9 +190,9 @@ set(SPV_TARGETS "")
 foreach(s ${SHADER_FILES})
   add_custom_command(
     OUTPUT ${SPV}/${s}.spv
-    COMMAND ${GLSLC} -O -o ${SPV}/${s}.spv ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${s}
+    COMMAND ${SHADER_CC} ${SHADER_ARGS} ${SPV}/${s}.spv ${CMAKE_CURRENT_SOURCE_DIR}/shaders/${s}
     DEPENDS shaders/${s}
-    COMMENT "glslc ${s}"
+    COMMENT "编译着色器 ${s}"
   )
   list(APPEND SPV_TARGETS ${SPV}/${s}.spv)
 endforeach()
@@ -152,9 +219,13 @@ add_custom_command(TARGET opencraft POST_BUILD
 )
 
 # ---- 附带的小工具（打包安装包要用）----
-# 资源提取工具：控制台程序，从玩家的 minecraft.jar 提取贴图
-add_executable(extract_assets tools/extract_assets.cpp)
-target_link_libraries(extract_assets PRIVATE comdlg32)
+# 资源提取工具：从玩家的 minecraft.jar 提取贴图。
+# 它用 Windows 文件对话框选 jar、并调 tar.exe，所以只在 Windows 上构建；
+# Linux 用 tools/extract_assets.py（纯标准库，跨平台）。
+if(WIN32)
+  add_executable(extract_assets tools/extract_assets.cpp)
+  target_link_libraries(extract_assets PRIVATE comdlg32)
+endif()
 
 # 末地生成调试工具：打印高度剖面与方块统计（开发用，不入包）
 add_executable(endprobe tools/endprobe.cpp src/endgen.cpp src/mcnoise.cpp)
@@ -171,6 +242,21 @@ add_executable(meshtest
 )
 target_include_directories(meshtest PRIVATE src)
 
+# 方块更新自检（PP 更新传播 / 计划刻 / 下落的方块，链接 World）
+add_executable(blockupdatetest
+  tools/blockupdatetest.cpp
+  src/blockupdate.cpp
+  src/world.cpp
+  src/generator.cpp
+  src/endgen.cpp
+  src/nethergen.cpp
+  src/mcnoise.cpp
+  src/noise.cpp
+  src/mesher.cpp
+  src/platform.cpp
+)
+target_include_directories(blockupdatetest PRIVATE src)
+
 # 传送门流程自检（末地门激活 + 下界门目的地生成/回程，链接 World）
 add_executable(portalflowtest
   tools/portalflowtest.cpp
@@ -181,13 +267,16 @@ add_executable(portalflowtest
   src/nethergen.cpp
   src/mcnoise.cpp
   src/noise.cpp
+  src/blockupdate.cpp
   src/mesher.cpp
+  src/platform.cpp
 )
 target_include_directories(portalflowtest PRIVATE src)
-target_link_libraries(portalflowtest PRIVATE user32)
 
 # ---- 打包自解压安装包（7-Zip SFX）----
-# 需要仓库根目录有 7-Zip\（本地产物，不入库）；默认每次构建后自动打包
+# 需要仓库根目录有 7-Zip\（本地产物，不入库）；默认每次构建后自动打包。
+# 这套链路依赖 Windows 的 PowerShell 与 7z.exe，所以只 在 Windows 上建。
+if(WIN32)
 option(OPENCRAFT_AUTO_PACKAGE "每次构建后自动打包安装包" ON)
 
 add_custom_target(package_7z
@@ -216,3 +305,4 @@ if(OPENCRAFT_AUTO_PACKAGE)
   add_custom_target(package_auto ALL)
   add_dependencies(package_auto package_7z_auto)
 endif()
+endif()  # WIN32：打包链路（7z SFX + PowerShell）

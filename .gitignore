@@ -1,5 +1,8 @@
 # 构建输出
 /build/
+/build-linux/
+/build-mingw/
+/build-dbg/
 
 # 游戏资源（从 Minecraft 提取，按 Mojang EULA 不随仓库分发）
 /assets/

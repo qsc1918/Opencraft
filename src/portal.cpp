@@ -1,4 +1,5 @@
 #include "portal.hpp"
+#include "blockupdate.hpp"
 #include "world.hpp"
 #include <algorithm>
 #include <array>
@@ -126,7 +127,7 @@ bool tryLightNetherPortal(World& w, int fx, int fy, int fz) {
         for (int j = 0; j < best.h; j++) {
             int px = best.x0 + dx * i, pz = best.z0 + dz * i, py = best.y0 + j;
             if (w.getBlock(px, py, pz) != B_NETHER_PORTAL)
-                w.setBlock(px, py, pz, B_NETHER_PORTAL);
+                w.setBlock(px, py, pz, B_NETHER_PORTAL, bu::U_NO_ALL);
         }
     return true;
 }
@@ -171,8 +172,8 @@ bool tryPlaceEyeOfEnder(World& w, int fx, int fy, int fz) {
         for (int rz = -4; rz <= 4; rz++)
             w.forceGenerateChunk(blockToChunkCoord(fx + rx), blockToChunkCoord(fz + rz));
 
-    // 变成有眼框架（保留原朝向）
-    w.setBlock(fx, fy, fz, frameId(blockFrameFacing(b), true));
+    // 变成有眼框架（保留原朝向）。原版插眼与生成末地传送门都不产生 NC 更新
+    w.setBlock(fx, fy, fz, frameId(blockFrameFacing(b), true), bu::U_NO_NC);
 
     // 检测：以 (fx,fz) 为环上某格，反推 5×5 方环的左上角基准
     for (int relX = 0; relX < 5; relX++) {
@@ -187,7 +188,7 @@ bool tryPlaceEyeOfEnder(World& w, int fx, int fy, int fz) {
                     for (int j = 1; j <= 3; j++) {
                         int px = x0 + i, pz = z0 + j;
                         if (w.getBlock(px, fy, pz) != B_END_PORTAL)
-                            w.setBlock(px, fy, pz, B_END_PORTAL);
+                            w.setBlock(px, fy, pz, B_END_PORTAL, bu::U_NO_NC);
                     }
                 return true;
             }

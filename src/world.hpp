@@ -1,4 +1,5 @@
 #pragma once
+#include "blockupdate.hpp"
 #include "blocks.hpp"
 #include "dimensions.hpp"
 #include "entity.hpp"
@@ -150,12 +151,14 @@ public:
 
     // 读方块（主线程，当前维度）；未生成的区块按空气处理。
     uint8_t getBlock(int x, int y, int z) const;
-    // 玩家改方块（当前维度）；真正改变才返回 true。
-    bool setBlock(int x, int y, int z, uint8_t id);
+    // 改方块（当前维度）；真正改变才返回 true。
+    // flags 见 bu::U_*：默认会按原版流程产生 NC 更新 + PP 更新；
+    // 结构/传送门这类批量写入应传 bu::U_NO_ALL。
+    bool setBlock(int x, int y, int z, uint8_t id, uint32_t flags = 0);
 
     // 跨维度读写方块（传送门用；不改 currentDim_）。
     uint8_t getBlockInDim(DimensionId dim, int x, int y, int z) const;
-    bool setBlockInDim(DimensionId dim, int x, int y, int z, uint8_t id);
+    bool setBlockInDim(DimensionId dim, int x, int y, int z, uint8_t id, uint32_t flags = 0);
 
     std::shared_ptr<Chunk> chunkAt(int cx, int cz) const;
 
@@ -190,10 +193,16 @@ public:
     uint32_t seed;
 
     // ---- 实体管理（主线程模拟；渲染线程只读）----
+    // 内部按 TICK_DT 固定步长推进（实体/AI/方块更新都是按刻的），
+    // 到达整刻时依次跑实体 tick 与计划刻。
     Entity* spawnEntity(std::unique_ptr<Entity> e);
     const std::vector<std::unique_ptr<Entity>>& entities() const { return entities_; }
     void tickEntities(float dt);
     Entity* raycastEntity(Vec3 origin, Vec3 dir, float maxDist, Vec3* hit = nullptr);
+
+    // ---- 方块更新（blockupdate 模块用；见 blockupdate.hpp）----
+    std::vector<bu::TickEntry>& blockTicks() { return blockTicks_; }
+    uint32_t nextTickOrder() { return tickOrder_++; }
 
     std::function<void(Chunk&)> onDestroyChunk;
 
@@ -228,4 +237,9 @@ private:
 
     std::vector<std::unique_ptr<Entity>> entities_;
     EntityId nextEntityId_ = 1;
+
+    // 方块更新的计划刻队列与插入序号
+    std::vector<bu::TickEntry> blockTicks_;
+    uint32_t tickOrder_ = 0;
+    float tickAcc_ = 0.0f;   // 累积到整刻才推进（TICK_DT）
 };

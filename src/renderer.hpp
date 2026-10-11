@@ -48,6 +48,8 @@ public:
 
     void requestScreenshot(const std::string& path) { pendingShot_ = path; }
     void setTimeOfDay(float t) { timeOfDay_ = t; }
+    // 当前时刻 0..1（0=正午 0.5=午夜），生物的白天燃烧判定要用
+    float timeOfDay() const { return timeOfDay_; }
 
     int selectedSlot() const { return selectedSlot_; }
     uint8_t selectedBlock() const;
@@ -63,6 +65,8 @@ public:
     void setCursor(float x, float y) { cursorX_ = x; cursorY_ = y; }
     // 近景清晰距离（格）：此距离内的方块不做 mip/各向异性模糊，0=关
     void setTexSharp(float nearDist) { texSharpNear_ = nearDist; }
+    // 第三人称：开着才画玩家自己的模型（第一人称画了就是头的内壁）
+    void setThirdPerson(bool on) { thirdPerson_ = on; }
 
 private:
     bool createPipelines(VkCtx& ctx);
@@ -172,6 +176,10 @@ private:
     // 世界区块的裸指针快照，复用以避免每帧拷贝 shared_ptr。
     std::vector<World::ChunkInfo> snapshot_;
     std::vector<TerrainVertex> entityVerts_;  // 每帧构建的实体盒模型顶点
+    // 每个实体一段顶点：push constant 用它的位置当原点
+    struct EntityDraw { Vec3 origin; uint32_t first, count; };
+    std::vector<EntityDraw> entityDraws_;
+    bool thirdPerson_ = false;
 
     // ---- 遮挡剔除（以 16³ 分段为单位的可见性洪泛）----
     // 只有"整个分段全是不透明方块"才挡视线：有缝隙就可能看得见，

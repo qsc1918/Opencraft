@@ -70,6 +70,21 @@ static const AssetEntry kAssets[] = {
     {"assets/minecraft/textures/gui/sprites/widget/slider_highlighted.png",   "gui/slider_highlighted.png"},
     {"assets/minecraft/textures/gui/sprites/widget/slider_handle.png",        "gui/slider_handle.png"},
     {"assets/minecraft/textures/gui/sprites/widget/slider_handle_highlighted.png", "gui/slider_handle_highlighted.png"},
+    // 实体贴图（assets/entity/）：生物皮肤按原版模型的 texOffs 逐面取子矩形，
+    // 所以一个像素都不能裁（保留 64×64 / 64×32 的原始比例）。
+    {"assets/minecraft/textures/entity/pig/pig_temperate.png",       "entity/pig.png"},
+    {"assets/minecraft/textures/entity/cow/cow_temperate.png",       "entity/cow.png"},
+    {"assets/minecraft/textures/entity/sheep/sheep.png",              "entity/sheep.png"},
+    {"assets/minecraft/textures/entity/sheep/sheep_wool.png",         "entity/sheep_wool.png"},
+    {"assets/minecraft/textures/entity/chicken/chicken_temperate.png", "entity/chicken.png"},
+    {"assets/minecraft/textures/entity/zombie/zombie.png",            "entity/zombie.png"},
+    {"assets/minecraft/textures/entity/skeleton/skeleton.png",        "entity/skeleton.png"},
+    {"assets/minecraft/textures/entity/creeper/creeper.png",          "entity/creeper.png"},
+    {"assets/minecraft/textures/entity/spider/spider.png",            "entity/spider.png"},
+    {"assets/minecraft/textures/entity/blaze/blaze.png",              "entity/blaze.png"},
+    {"assets/minecraft/textures/entity/enderman/enderman.png",        "entity/enderman.png"},
+    {"assets/minecraft/textures/entity/player/wide/steve.png",        "entity/steve.png"},
+    {"assets/minecraft/textures/entity/projectiles/arrow.png",        "entity/arrow.png"},
 };
 
 static std::string pickJarFile() {
@@ -97,7 +112,7 @@ static std::string outputRoot() {
 static bool runTar(const std::string& jar, const std::string& outDir) {
     std::string cmd = "tar -xf \"" + jar + "\" -C \"" + outDir
                       + "\" assets/minecraft/textures/block assets/minecraft/textures/gui/sprites/widget"
-                        " assets/minecraft/textures/item 2>nul";
+                        " assets/minecraft/textures/item assets/minecraft/textures/entity 2>nul";
     return system(cmd.c_str()) == 0;
 }
 

@@ -2,6 +2,8 @@
 #include "camera.hpp"
 #include "dimensions.hpp"
 #include "entity.hpp"
+#include "platform.hpp"
+#include "mobs.hpp"
 #include "window.hpp"
 
 class World;
@@ -12,13 +14,16 @@ class World;
 //   cam.pos  = 眼睛位置（渲染相机）
 //   ent.pos  = 脚部中心（MC 实体 Pos 语义），由 syncEntity() 与 cam 保持同步
 struct Player {
-    Entity ent;       // 默认构造；由 syncEntity 填充 type/kind/id（每帧同步）
+    // 玩家就是实体（MC Player extends LivingEntity）：ent 指向注册进 World 的
+    // 那一个，生物靠它找目标、攻击它。每帧由 syncEntity 同步位置/速度/朝向。
+    PlayerEntity* ent = nullptr;
     Camera cam;
     Vec3 vel{0, 0, 0};
     bool flying = false;
     bool onGround = false;
     bool inWater = false;
     DimensionId dim = DIM_OVERWORLD;  // 当前所在维度
+    Vec3 spawnPos{8.5f, 80.0f, 8.5f}; // 出生点（死亡后回这里）
     float height = ENTITY_PLAYER.height;          // 1.8（碰撞箱高）
     float halfWidth = ENTITY_PLAYER.width * 0.5f; // 0.3（碰撞箱半宽）
     float eyeHeight = ENTITY_PLAYER.eyeHeight;    // 1.62（眼高）

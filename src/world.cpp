@@ -1,7 +1,7 @@
 #include "world.hpp"
 #include "generator.hpp"
 #include "mesher.hpp"
-#include <windows.h>
+#include "platform.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -74,7 +74,7 @@ uint8_t World::getBlockInDim(DimensionId dim, int x, int y, int z) const {
     return c->blocks[chunkIndex(lx, y, lz)];
 }
 
-bool World::setBlockInDim(DimensionId dim, int x, int y, int z, uint8_t id) {
+bool World::setBlockInDim(DimensionId dim, int x, int y, int z, uint8_t id, uint32_t flags) {
     if (y < WORLD_MIN_Y || y >= WORLD_HEIGHT) return false;
     int cx = blockToChunkCoord(x), cz = blockToChunkCoord(z);
     auto c = chunkAtInDim(dim, cx, cz);
@@ -97,6 +97,8 @@ bool World::setBlockInDim(DimensionId dim, int x, int y, int z, uint8_t id) {
         queue_.push(WorldTask{true, dim, cx, cz, prio, c});
         queueCV_.notify_one();
     }
+    // 方块更新只在当前维度传播：跨维度写入是传送门/调试用的内部操作
+    if (dim == currentDim_) bu::onBlockChanged(*this, x, y, z, flags);
     return true;
 }
 
@@ -134,7 +136,7 @@ uint8_t World::getBlock(int x, int y, int z) const {
     return c->blocks[chunkIndex(lx, y, lz)];
 }
 
-bool World::setBlock(int x, int y, int z, uint8_t id) {
+bool World::setBlock(int x, int y, int z, uint8_t id, uint32_t flags) {
     if (y < WORLD_MIN_Y || y >= WORLD_HEIGHT) return false;
     int cx = blockToChunkCoord(x), cz = blockToChunkCoord(z);
     auto c = chunkAt(cx, cz);
@@ -153,6 +155,7 @@ bool World::setBlock(int x, int y, int z, uint8_t id) {
     markDirty(cx - 1, cz);
     markDirty(cx, cz + 1);
     markDirty(cx, cz - 1);
+    bu::onBlockChanged(*this, x, y, z, flags);
     return true;
 }
 
@@ -399,7 +402,7 @@ void World::meshChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chu
 void World::workerLoop() {
     // 生成/构网格是纯 CPU 重活：降到低优先级，避免和渲染主线程抢核
     // （刚进入新维度时的卡顿/未响应主要就是这个）
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    platform::setThreadPriorityLow();
     WorldTask t;
     while (popTask(t)) {
         if (t.isMesh)
@@ -420,7 +423,21 @@ Entity* World::spawnEntity(std::unique_ptr<Entity> e) {
 }
 
 void World::tickEntities(float dt) {
-    for (auto& e : entities_) e->tick(*this, dt);
+    // 实体/AI/方块更新都是按刻的：把可变 dt 累积成整刻再推进，
+    // 这样下落的方块、计划刻的行为与帧率无关。
+    tickAcc_ += dt;
+    if (tickAcc_ < TICK_DT) return;
+    int steps = (int)(tickAcc_ / TICK_DT);
+    if (steps > 5) steps = 5;   // 卡顿时限制补刻数量
+    tickAcc_ -= (float)steps * TICK_DT;
+
+    for (int s = 0; s < steps; s++) {
+        // 下标遍历：tick 里可能生成新实体（如下落的方块）
+        for (size_t i = 0; i < entities_.size(); i++) {
+            if (entities_[i] && !entities_[i]->dead) entities_[i]->tick(*this, TICK_DT);
+        }
+        bu::runScheduledTicks(*this);
+    }
     entities_.erase(std::remove_if(entities_.begin(), entities_.end(),
                                    [](const std::unique_ptr<Entity>& e) { return e->dead; }),
                     entities_.end());

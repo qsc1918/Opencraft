@@ -3,18 +3,11 @@
 > 本文件是"压缩上下文"式的项目现状说明：换一个 AI/会话接手时，读这一份 + `AGENTS.md`
 > 就能继续干活。**改动项目后请同步更新下面的「当前状态」一节。**
 >
-> 最后更新：**整条渲染管线改成标准 sRGB 工作流**（详见 §4.11）——此前图集是
-> `UNORM`、交换链是 `SRGB`，贴图字节被当线性值用、输出时又被硬件编码一次，
-> 所有方块都"发灰偏亮"。现在图集/菜单贴图用 `R8G8B8A8_SRGB` 视图采样（硬件解码
-> → 线性），着色器在线性空间算，交换链再编码回去，**开阔地顶面的显示值逐字节
-> 等于贴图原值**。配套：①着色器里所有"乘性常量"（面亮度、日照明暗、水色）按
-> `系数^2.2` 使用（原版是在伽马空间乘字节）；②面亮度表改回原版固定值
-> （顶 1.0 / 底 0.5 / 南北 0.8 / 东西 0.6），并删掉了那个从来没生效过的"太阳方向"
-> 项（`kNormal` 是 `int[3]` 却被 `reinterpret_cast` 成 `Vec3`，点积恒为 0）；
-> ③末地门合成改用**原版层参数 + 盒式平均**（原版靠 textureProj 的 mip 把星图
-> 平均掉，之前用二值掩膜点采样所以只剩零星亮点、整体偏暗），实测 (5.6,14.8,25.6)
-> 对齐原版参考 (7,16,25)；④顺手修了 `water.vert` 还停留在图集改造**之前**的旧
-> 布局（用 `misc.z/w` 当格数/单元尺寸）——水面一直采错 UV，之前几乎是黑的。
+> 最后更新：**2026-10-06 三块大改动** ——
+> ① **方块更新系统**（PP/NC 更新传播 + 计划刻 + 下落的方块，`src/blockupdate.*`）；
+> ② **实体与生物**（玩家成为实体 + 猪牛羊鸡/僵尸骷髅苦力怕蜘蛛/烈焰人末影人，
+>    原版模型与贴图，`src/mobs.*` `src/mobmodel.*` `src/mobspawn.*`）；
+> ③ **Linux 兼容**（X11 后端 + 自带 PNG 编解码 + 平台抽象层，Windows/Linux 同一份代码）。
 
 ---
 
@@ -54,7 +47,10 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 | 纹理 | 末地门/火焰用原版贴图；图集按原生分辨率排版（材质包友好）；**颜色与原版对齐**：开阔地顶面显示值＝贴图字节原值；近景（默认 16 格）内锁 mip0 最近邻，远景 mip+各向异性 |
 | 发版辅助 | `tools/tag_ci.ps1`：读 `version.txt` 的 `[current]` 打 `ci<版本>` 标签并推送 |
 | **剔除与网格化（2026-10-06 一轮性能改造）** | 逐项见 §4.12：邻接面剔除（原有）、**贪心网格化**（新增，顶点数 −47%~−64%）、视锥剔除改用网格实际 y 范围、遮挡剔除（16³ 分段保守洪泛）、背面剔除（水面改双面） |
-| 开发自检 | `meshtest`（网格化/合并/遮挡面判定）、`endprobe`、`portalselftest`、`portalflowtest`；`tools/imgdiff.py` 逐像素比对两张截图，用来确认优化没改变画面 |
+| 开发自检 | `meshtest`（网格化/合并/遮挡面判定）、`endprobe`、`portalselftest`、`portalflowtest`、**`blockupdatetest`（方块更新 15 项）**；`tools/imgdiff.py` 逐像素比对两张截图 |
+| **方块更新（2026-10-06）** | PP/NC 更新按原版顺序与 DFS 传播 + 计划刻队列（`src/blockupdate.*`）：沙子/沙砾/龙蛋失去支撑变**下落的方块实体**、火把/墙火把/紫颂/火的支撑检查；世界生成写入不产生更新（原版行为） |
+| **实体与生物（2026-10-06 / 10-11）** | 玩家是实体（`PlayerEntity` 注册进 World，可被攻击/死亡回生点）；猪牛羊鸡、僵尸骷髅苦力怕蜘蛛、烈焰人末影人共 10 种，按**原版模型**（texOffs 逐面取子矩形）渲染；**AI 已按原版架构移植**（`mobai.*` + `mobpath.*`：GoalSelector/Goal、MoveControl/LookControl/JumpControl、GroundPathNavigation + A* 寻路）；刷新按原版规则（亮度、方块、维度、24~128 格、被动 10 / 敌对 70 上限），烈焰人因没有下界要塞不自然刷新 |
+| **Linux 兼容（2026-10-06）** | X11 窗口 + Vulkan Xlib surface + 平台抽象层（`src/platform.*` `src/window_x11.cpp`）；PNG 读写换成自带的（`png_decode.cpp`/`png.cpp`，不再依赖 WIC）；已实测在 WSL Ubuntu 上编译 + 无头运行（Xvfb + lavapipe），画面与 Windows 版一致 |
 
 ### 未完成 / 已知差距
 
@@ -79,9 +75,33 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 - 末地门激活用的是"12 框同 Y、都有眼、朝向都指向环心"这条等价规则，而不是原版
   `BlockPattern.find` 的 24 种朝向枚举；玩家正常摆法（站环心朝外放）与原版一致，
   但原版理论上还能凑出的几种畸形摆法（如框排/列朝向混搭）这里不激活。
-- 存档不存方块状态/实体，只存 uint8 方块 id 数组。
+- 存档不存方块状态/实体，只存 uint8 方块 id 数组（生物、掉落方块、箱子/熔炉这类方块实体都没做）。
+- **下界要塞未做**，所以烈焰人/凋灵骷髅不会自然刷新（实体与 AI 都在，`--summon blaze` 可手动放）。
+- **菜单只有 Windows 版**（GDI 实现）；Linux 上启动直接进世界，Esc 退出（见 README「Linux」）。
+- AI 还缺的 Goal：繁殖/跟随父母/吃草/开门破门、爬墙（蜘蛛）、上下船、坐船/骑乘；
+  寻路没有门/铁栏杆等特殊节点（铁栏杆按 FENCE 处理）、没有"挖开阻挡"（BreachGoal）。
 
 ### 最近一次验证
+
+- **2026-10-06 方块更新 / 生物 / Linux**（本轮）：
+  - `blockupdatetest` 15 项全过（沙子下落与落地、整列坍塌、火把/墙火把失去支撑、
+    紫颂悬空被破坏、生成写入不产生更新）；`portalselftest`/`portalflowtest`/`meshtest` 全过。
+  - 生物：`--testbed --zoo` 一排生物实拍（`build/zoo_win.png`）——牛/羊/鸡/猪/僵尸/骷髅/
+    苦力怕/蜘蛛贴图与比例都对；自然刷新实测（`--pos 200,80,200`）：白天 4 只被动生物、
+    夜里 61 只敌对生物，亮度与方块规则符合原版。
+  - PNG 解码器换成自带的之后，与原 WIC 路径**逐像素相同**（同一场景 0 像素差异，
+    `tools/imgdiff.py`）。
+  - Linux（WSL Ubuntu 24.04）：`cmake -G Ninja -S . -B build-linux` 编译通过，
+    `blockupdatetest`/`portalselftest`/`meshtest`/`portalflowtest`/`endprobe` 全过；
+    Xvfb + lavapipe 无头运行出图，与 Windows 同场景对比：石台场景 6% 像素不同
+    （全部 ≤8 色阶，平均 RGB 142.16 vs 142.15），差异来自软件光栅化器而非代码。
+  - 踩到的坑：① mobmodel 的 uv 一开始按**顶点序号**取（`uu[i]`），而 4 个角点被 6 个
+    顶点复用，越界 2 个元素——Release 下直接段错误，Debug/-Og 看不出来。必须按
+    **角点下标** `uu[kIdx[i]]` 取。② 图集路径原来用 `"\"` 拼接，Linux 上一张贴图都
+    读不到（画面全白、图集高度从 800 掉到 256）；Windows 也接受 `/`，统一改掉了。
+    ③ Xlib 有个 typedef `Window` 和本工程的窗口类同名，包含 Xlib 前要用
+    `#define Window XWindow` 临时改名；且 Xlib 头会定义 `None/Status/Success` 等宏，
+    绝不能从 `vk.hpp` 这种 widely-included 的头里包含。
 
 - **2026-10-06 剔除与网格化一轮改造**（详见 §4.12）：
   - 顶点/三角形（`--screenshot` 结尾的统计）：主世界 163.4 万 → 58.1 万（−64%）、
@@ -229,6 +249,15 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 | `mcnoise.hpp/.cpp` | **原版噪声复刻**：`McCnRandom`(LegacyRandomSource)、`McImprovedNoise`、`McSimplexNoise`、`McPerlinNoise`、`McBlendedNoise` |
 | `noise.hpp/.cpp` | 早期简易 value noise（主世界还在用） |
 | `mesher.hpp/.cpp` | 区块网格化：逐面 cullface、AO、多 element 方块模型（末地门框架）、12 字节顶点 |
+| `blockupdate.hpp/.cpp` | **方块更新**：PP/NC 更新传播（顺序 + DFS + 上限）、计划刻队列、受重力方块与附着类方块的接收行为；`mctick.hpp/.cpp` 里的紫颂存活判断也搬到这里共用 |
+| `mobs.hpp/.cpp` | 生物基类 `Mob`（每整刻 = 原版 serverAiStep + travel：goals → navigation → move/jump/look 控制器 → 移动输入 → 重力/阻力）与 10 种生物、弹射物（箭/小火球）、玩家实体 `PlayerEntity`；另有近似光照 `mobs::lightAt`（供刷怪判定） |
+| `mobai.hpp/.cpp` | **原版 AI 架构**：`ai::GoalSelector`/`Goal`、`MoveControl`（rotlerp 转身 + setSpeed→zza）、`LookControl`、`JumpControl`、`PathNavigation`（跟随/卡住检测），以及 FloatGoal/PanicGoal/RandomStrollGoal/WaterAvoidingRandomStrollGoal/LookAtPlayerGoal/RandomLookAroundGoal/MeleeAttackGoal |
+| `mobpath.hpp/.cpp` | **原版寻路**：Node/Target/BinaryHeap/Path/PathFinder（A*，h×1.5、walkedDistance、maxVisitedNodes）+ `WalkNodeEvaluator`（PathType、跳跃/下落节点、对角邻居） |
+| `mobmodel.hpp/.cpp` + `mobmodel_data.inc` | 原版实体模型数据（part 层级 / cube 包围盒 / texOffs / mirror）与盒模型生成；数据抄自 `docs/mob_models.md` |
+| `mobspawn.hpp/.cpp` | 生物刷新（原版规则：亮度、方块、维度、距离、数量上限）与 `summon` |
+| `platform.hpp/.cpp` | 平台抽象：键位枚举、`exeDir`、线程优先级、控制台输入线程 |
+| `window_win32.cpp` / `window_x11.cpp` | 两个窗口后端（同一 `Window` 接口） |
+| `png_decode.cpp` / `png.cpp` | 自带的 PNG 解码（含 inflate）与编码（截图用），不依赖 WIC/zlib |
 | `mctick.hpp/.cpp` | 方块随机刻（紫颂花生长） |
 | `portal.hpp/.cpp` | 下界门框架识别与点燃、末地门方环识别与激活、门破碎、**下界门目的地找/造门** |
 | `raycast.hpp/.cpp` | 方块射线检测 |
@@ -415,6 +444,94 @@ final = squeeze(0.64 * (t - 23.4375))
   办法是把纹理直接当颜色输出，与 png 字节逐字节对比（stone 的 127/116/143/104 能
   一一对上就说明整条往返是准的）。
 
+### 4.13 方块更新（PP / NC / 计划刻）
+
+- 入口只有 `World::setBlock`（带 `bu::U_*` 标志），生成器直接写 `Chunk::blocks`
+  不经过它 —— 所以世界生成时悬空的沙子不会自己掉（原版行为，方块更新.txt 明说）。
+- 传播顺序：NC 更新核 **西、东、下、上、北、南**；PP 更新 **西、东、北、南、下、上**；
+  深度优先（栈里每帧只推一个方向，新产生的更新先入 pending 再压栈），
+  总量超 `kMaxUpdates`(65536) 后不再新增。
+- 接收方只实现了本工程已有方块会受影响的部分：
+  受重力（沙子/沙砾/龙蛋 → 1 刻后变 `FallingBlock` 实体）、附着（火把/墙火把/紫颂/火）。
+  红石与流体没做，所以 `receiveNC` 目前是空的（结构留着，加红石时只补它）。
+- 计划刻队列在 `World::blockTicks()`，由 `World::tickEntities` 在整刻时执行。
+- **踩过的坑**：`FallingBlock` 落地时如果目标格是火把之类非固体方块，原版会掉落为物品；
+  本工程还没有物品实体，所以这种情况直接消失（会"少一块"，是已知差距）。
+
+### 4.14 生物 AI 与物理（2026-10-11 起是原版移植）
+
+**每整刻的执行顺序**（`Mob::tick`，逐条对应原版）
+
+```
+serverAiStep：goalSelector.tick() → navigation.tick() → moveControl.tick()
+              → jumpControl.tick() → lookControl.tick() → aiExtra()
+travel：applyInput(zza*=0.98) → moveRelative → move(碰撞/摔落) → 重力/阻力
+```
+
+- **Goal 系统**（`src/mobai.*`）：优先级 + `Flag{MOVE,LOOK,JUMP,TARGET}` 互斥锁，
+  与 Java 版 `GoalSelector` 同构；各生物的 `registerGoals()` 抄同名方法的表
+  （猪羊：Float 0 / Panic 1.25 / Stroll 6 / LookAt 7 / RandomLook 8）。
+- **速度的坑（务必记住）**：原版 `Mob.setSpeed(s)` **同时**把前进输入 `zza` 设为 s，
+  而地面加速度 = `speed * zza` = **speed²**（摩擦 0.6 时稳态位移 ≈ 2.2·speed²
+  格/刻，猪 0.25 → ≈2.8 m/s）。只写 `speed` 不写 `zza` 的话生物会"转身但不走路"。
+- **MoveControl**：每刻朝目标点 `rotlerp` 转身（上限 90°/刻，所以不会出现"倒着走"），
+  距离够近（yd > maxUpStep=0.6 且水平 < 1 格）就跳。
+- **LookControl / BodyRotationControl**：`yHeadRot` 是头部绝对朝向，渲染时取
+  `yHeadRot - yaw` 并 clamp ±50°（getMaxHeadYRot）；**模型空间 ry 正方向与世界 yaw
+  相反，所以传进 `MobAnimState::headYaw` 时要取负**（否则头永远扭向另一边）。
+  生物的 `pitch`（正=低头）由 LookControl 写，模型 rx 正方向正好也是低头。
+- **寻路**（`src/mobpath.*`）：A* + `WalkNodeEvaluator`。`getPathTypeOfMob` 收集实体
+  包围盒覆盖的格子类型后，**必须按 PathType 的枚举顺序**取"最大扣分"（原版是 EnumSet
+  的迭代顺序）—— 按空间遍历顺序取最后一个是错的：OPEN(1) 排在 WALKABLE(2) 前面，
+  站在地上的生物会被判成"悬空"，起点邻居一个都找不到，A* 直接失败。
+- PathType 与方块对应：空气/火把=OPEN，实心地面之上=WALKABLE，水=WATER(8)、
+  岩浆/火=负分、铁栏杆=FENCE(不可通行)、树叶=LEAVES(不可通行)。
+- 调试：`OPENCRAFT_MOB_DEBUG=1`（每 20 刻打 mob 状态）、`OPENCRAFT_PATH_DEBUG=1`
+  （起点/邻居）、`OPENCRAFT_STROLL_DEBUG=1`（游走 goal 找点与结果）。
+- **性能**：寻路很贵（一次 A* 最多 512 节点，每节点十几次类型查询）。两条已经踩过的优化：
+  ① 单格 PathType 必须缓存（`getCachedCellType`，否则每格要重复扫 9 邻域，
+  70 只怪时帧时间 ~19ms → ~10ms）；② 离玩家 48 格以外的生物不跑 AI（只留物理）。
+  实测 6 区块视距 + 72 只怪：2500 帧 24.6s（≈10ms/帧）。
+- 模型 UV 展开的那套坑见下一节（面-角点配对、贴图旋转 90° 的教训）。
+
+### 4.15 实体模型与贴图（UV 展开）
+
+- 实体管线的 uv 是 **0..255 映射整张贴图**（`shaders/entity.vert` 里 `/256`），
+  不是地形那套 0..16 —— 因为生物要按原版 texOffs 精确取到 1 像素。
+- **面的 uv 必须按角点位置推导**（`buildMobMesh` 里逐面算 su/sv），不能拿一套
+  固定的 {u0,u1,u1,u0} 模式去套所有面的角点顺序：`kFace` 各面的 c0→c1 方向
+  不统一（-X/+Z/顶三个面 c0→c1 沿的是 y 或别的轴），套模板等于把贴图旋转
+  90° —— 袖子横条变竖条、腿的鞋底变竖灰条、躯干下摆变紫竖条。
+  排查手段：把 mesh dump 成文本、用 Python 软件光栅化同一张贴图，
+  软件渲染正确 ⇒ 问题在 GPU 采样路径；软件渲染同样错 ⇒ 问题在几何/uv 生成。
+- 展开图约定（同原版 Box）：一行 [西|北|东|南] 连排，相邻面共享边；
+  所以 -X 面 u 朝 -z 增、+Z 面 u 随 x 减（从背面看不镜像）；顶/底面 u 沿 x、v 沿 z。
+- 模型换算（`docs/mob_models.md` §1.2）：模型像素 → 相对脚部的方块偏移
+  `wx=(mx·cos r − mz·sin r)/16, wy=1.501−my/16, wz=(−mx·sin r − mz·cos r)/16`
+  （r = 实体 yaw；模型 y 轴朝下，y=24 是脚底）。
+- 图集里实体贴图**必须保留原始宽高**（64×64 / 64×32），一旦被裁成正方形，
+  所有 `texOffs` 都会错位。
+- 生物贴图要一起进 `tools/extract_assets.*` 的清单（`assets/entity/*.png`）。
+- **羊分两层**（与原版 `SheepModel` + `SheepFurModel` 一致）：基础层用
+  `sheep.png`；羊毛覆盖层用 `sheep_wool.png`，靠 `MobCube.tile` 逐 cube 覆盖
+  模型贴图：头 6×6×6 def0.6（z0=-4，比基础头短 2 格，脸才露得出来）、
+  身体 8×16×6 def1.75、腿 4×6×4 def0.5（只包上段）。
+
+### 4.16 平台抽象（Windows / Linux）
+
+- 键位统一用 `platform.hpp` 的 `Key`（取值与 Win32 虚拟键码一致，字母数字就是 ASCII，
+  所以 `in.keys['W']` 两边通用）。**不要在游戏代码里写 `VK_*`**。
+- 窗口只有 `Window` 一个类，两个后端：`src/window_win32.cpp` / `src/window_x11.cpp`，
+  由 CMake 按平台挑一个。
+- 路径拼接用 `platform::join()`；**图集里统一用 `/`**（Windows 也接受），
+  用 `"\"` 拼的路径在 Linux 上一张贴图都读不到。
+- Xlib 有个 typedef `Window` 与本工程同名，包含 Xlib 之前要
+  `#define Window XWindow` … `#undef Window`；而且 Xlib 会定义 `None/Status/Success`
+  等宏，**不要从 `vk.hpp` 这种到处被 include 的头里包含 Xlib**。
+- PNG 读写都是自带的（`png_decode.cpp` / `png.cpp`）：不依赖 WIC、zlib、libpng，
+  两个平台行为一致（已用 99 张贴图与独立参考解码器逐张比对过）。
+- 菜单（GDI）只在 Windows 编译；Linux 上 `main.cpp` 直接进世界。
+
 ### 4.12 剔除与网格化（改性能前必读）
 
 按 `TODO.txt` 的顺序逐项做了一遍，落点都在 `src/mesher.cpp`（网格化）与
@@ -468,6 +585,7 @@ build/opencraft.exe --dim nether --seed 12345 --pos 0,70,0      --yaw 0.7    --p
 
 # 生成自检
 build/endprobe.exe 12345 7        # 末地高度剖面 + 方块统计
+build/blockupdatetest.exe 12345   # 方块更新自检（15 项）
 build/portalselftest.exe          # 末地门朝向规则 + 方环几何
 build/portalflowtest.exe 12345    # 末地门插眼激活 + 下界门造门/回程落点
 

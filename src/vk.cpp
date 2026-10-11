@@ -1,15 +1,36 @@
+// X11 表面头要 Xlib 的 Display/Window 类型，且必须在 vk.hpp（会带出 volk.h，
+// volk.h 自己就会 include vulkan_xlib.h）之前包含。
+// Xlib 有个 typedef Window 与本工程同名，临时改名。
+#include <vulkan/vulkan.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <vulkan/vulkan_win32.h>
+#else
+#define Window XWindow
+#include <X11/Xlib.h>
+#include <vulkan/vulkan_xlib.h>
+#undef Window
+#endif
+
 #include "vk.hpp"
 #include "window.hpp"
 #include "version.hpp"
-#include <windows.h>
+#include "platform.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
 
+// 窗口表面扩展按平台不同：Windows 用 win32 版，Linux(X11) 用 xlib 版
+#ifdef _WIN32
+static const char* kSurfaceExt = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
+#else
+static const char* kSurfaceExt = VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
+#endif
+
 static const char* kInstanceExts[] = {
     VK_KHR_SURFACE_EXTENSION_NAME,
-    VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+    kSurfaceExt,
 };
 static const char* kDeviceExts[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -155,7 +176,8 @@ bool VkCtx::init(Window& win, int w, int h) {
     }
     volkLoadInstance(instance);
 
-    // ---- 窗口表面 ----
+    // ---- 窗口表面（Win32 / X11 两套创建流程）----
+#ifdef _WIN32
     VkWin32SurfaceCreateInfoKHR sci = {};
     sci.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
     sci.hwnd = (HWND)win.hwnd();
@@ -164,6 +186,17 @@ bool VkCtx::init(Window& win, int w, int h) {
         lastError = "surface creation failed";
         return false;
     }
+#else
+    VkXlibSurfaceCreateInfoKHR sci = {};
+    sci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+    sci.dpy = XOpenDisplay(nullptr);        // 表面持有自己的 Display 连接
+    sci.window = (::XWindow)(uintptr_t)win.hwnd();
+    if (vkCreateXlibSurfaceKHR(instance, &sci, nullptr, &surface) != VK_SUCCESS) {
+        lastError = "Xlib surface creation failed";
+        if (sci.dpy) XCloseDisplay(sci.dpy);
+        return false;
+    }
+#endif
 
     // ---- 物理设备 ----
     uint32_t devCount = 0;

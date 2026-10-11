@@ -1,7 +1,7 @@
 #include "save.hpp"
 #include "world.hpp"
 #include "player.hpp"
-#include <windows.h>
+#include "platform.hpp"
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -11,14 +11,10 @@
 namespace fs = std::filesystem;
 
 static std::string exeDir() {
-    char buf[MAX_PATH];
-    GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    std::string p(buf);
-    size_t pos = p.find_last_of("\\/");
-    return pos == std::string::npos ? "." : p.substr(0, pos);
+    return platform::exeDir();
 }
 
-std::string savesDir() { return exeDir() + "\\saves"; }
+std::string savesDir() { return platform::join(platform::exeDir(), "saves"); }
 
 static fs::path u8(const std::string& s) {
     static_assert(sizeof(char) == sizeof(char8_t), "char8_t must be same size as char");

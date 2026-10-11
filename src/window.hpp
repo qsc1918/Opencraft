@@ -27,6 +27,9 @@ public:
     // 每帧调用一次，清除瞬时输入状态。
     void endFrame();
 
+    // 改窗口标题（FPS 显示等）
+    void setTitle(const char* utf8);
+
     void* hwnd() const { return hwnd_; }
     int width() const { return w_; }
     int height() const { return h_; }
@@ -41,11 +44,11 @@ public:
     void cursorPos(float& x, float& y);
 
 private:
-    void* hwnd_ = nullptr;
+    void* hwnd_ = nullptr;    // Win32: HWND；X11: Window（XID）
+    void* state_ = nullptr;   // 后端私有数据（Win32 不用，X11 放 Display 等）
     int w_ = 0, h_ = 0;
     Input in_;
     bool capture_ = false;
     float lastMX_ = 0, lastMY_ = 0;
     bool haveMouse_ = false;
-    int winID_ = 0;
 };

@@ -71,8 +71,21 @@ build/portalflowtest.exe 12345  # 传送门流程自检：末地门插眼激活 
   PerlinNoise、BlendedNoise）；改生成前先确认这里的参数与顺序。
 - `src/world.cpp` 区块存储与工作线程；`src/mesher.cpp` 网格化与多 element 方块模型
   （紫颂植株/花模型见 `PROJECT_STATE.md` §4.9）；`src/renderer.cpp` 渲染；`src/portal.cpp` 传送门。
-- `src/console.hpp` 控制台指令输入（`tp`/`where`/`help`，主循环每帧取队列执行）。
-- `docs/standards.md` 世界规范；`docs/minecraft_1.0_reference.md` MC 对照资料。
+- `src/blockupdate.hpp` 方块更新（PP/NC 更新传播 + 计划刻，见 PROJECT_STATE §4.13）。
+- `src/mobai.*` 原版 AI 架构（GoalSelector/MoveControl/LookControl/PathNavigation + 常用 Goal），
+  `src/mobpath.*` 原版寻路（A*/WalkNodeEvaluator）。**改 AI 前先读 PROJECT_STATE §4.14**：
+  `Mob.setSpeed` 要同时写 zza、`getPathTypeOfMob` 要按枚举序取最差类型，这两条最容易踩。
+- `src/mobs.hpp` / `src/mobmodel.*` / `src/mobspawn.*` 生物与刷新（几何/贴图数据抄
+  `docs/mob_models.md`，那是照 26.2 反编译源码整理的，改模型先看它）。
+  **改 `buildMobMesh` 的面生成时注意**：uv 按角点位置推导（见 PROJECT_STATE §4.14），
+  别用固定 u 模式配角点 —— 会把贴图转 90°（袖子变竖条的教训）。
+- `src/platform.hpp` 平台抽象（键位、exe 目录、控制台输入线程）。
+- 控制台指令输入在 `src/platform.cpp` 的 `platform::ConsoleInput`（`tp`/`where`/`help`
+  与新增的 `summon`，主循环每帧取队列执行）。
+- `docs/standards.md` 世界规范；`docs/minecraft_1.0_reference.md` MC 对照资料；
+  `docs/mob_models.md` **生物模型数据表**（part 层级/texOffs/UV 公式，改生物模型先看它）。
+- `tools/extract_assets.py` 跨平台贴图提取（Windows 的 `extract_assets.exe` 只在
+  Windows 上编）；`tools/imgdiff.py` 逐像素比对两张截图。
 - 反编译源码在 `D:\i\decompiled\26.2`（首选）与 `D:\i\decompiled\1.21.4`。
 
 ### 提交格式（重要）
@@ -207,6 +220,6 @@ revert: feat(profile): 支持可选的高级材质 (#123)
 ```
 
 ## 当前状态
-
+TODO.txt中包含了一些要做的事，你可以将用户的需求拆成点自动添加进去，并且完成后标记完成的部分，请最好不要依赖agent框架自带的goal或类似工具
 见 `PROJECT_STATE.md` 的「当前状态」一节（完成项、未完成项、最近验证、已知差距）。
 改完项目请同步更新那一节。

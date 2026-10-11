@@ -1,4 +1,7 @@
+// 菜单是用 GDI（DIB + BitBlt + DrawTextW）画的，只在 Windows 上实现。
+// Linux 上暂时没有菜单：main.cpp 会直接进世界玩（见 README 的 Linux 说明）。
 #include "menu.hpp"
+#ifdef _WIN32
 #include "window.hpp"
 #include "png.hpp"
 #include "version.hpp"
@@ -11,6 +14,11 @@
 
 namespace {
 const int BTN_BORDER = 3; // 200x20 按钮贴图的九宫格边框宽
+
+// menu.hpp 里 GDI 句柄统一存成 void*（这样非 Windows 也能过编译），
+// 用到的时候转回 HDC/HBITMAP。
+inline HDC& asDC(void*& p) { return *(HDC*)&p; }
+inline HBITMAP& asBMP(void*& p) { return *(HBITMAP*)&p; }
 
 std::wstring utf8ToWide(const std::string& s) {
     int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
@@ -52,13 +60,13 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
                         DEFAULT_PITCH | FF_DONTCARE, "Microsoft YaHei");
 
     // 按钮与输入框的绘制用贴图 DIB（高度与贴图一致）
-    makeDib(dirtRGBA_.data(), dirtW_, dirtH_, dirtBmp_, dirtDC_, nullptr);
-    makeDib(btnRGBA_.data(), btnW_, btnH_, btnBmp_, btnDC_, nullptr);
-    makeDib(btnHiRGBA_.data(), btnW_, btnH_, btnHiBmp_, btnHiDC_, nullptr);
-    makeDib(fieldRGBA_.data(), btnW_, btnH_, fieldBmp_, fieldDC_, nullptr);
-    makeDib(sliderRGBA_.data(), sliderW_, sliderH_, sliderBmp_, sliderDC_, nullptr);
-    makeDib(handleRGBA_.data(), handleW_, handleH_, handleBmp_, handleDC_, nullptr);
-    makeDib(handleHiRGBA_.data(), handleW_, handleH_, handleHiBmp_, handleHiDC_, nullptr);
+    makeDib(dirtRGBA_.data(), dirtW_, dirtH_, asBMP(dirtBmp_), asDC(dirtDC_), nullptr);
+    makeDib(btnRGBA_.data(), btnW_, btnH_, asBMP(btnBmp_), asDC(btnDC_), nullptr);
+    makeDib(btnHiRGBA_.data(), btnW_, btnH_, asBMP(btnHiBmp_), asDC(btnHiDC_), nullptr);
+    makeDib(fieldRGBA_.data(), btnW_, btnH_, asBMP(fieldBmp_), asDC(fieldDC_), nullptr);
+    makeDib(sliderRGBA_.data(), sliderW_, sliderH_, asBMP(sliderBmp_), asDC(sliderDC_), nullptr);
+    makeDib(handleRGBA_.data(), handleW_, handleH_, asBMP(handleBmp_), asDC(handleDC_), nullptr);
+    makeDib(handleHiRGBA_.data(), handleW_, handleH_, asBMP(handleHiBmp_), asDC(handleHiDC_), nullptr);
     ensureDIB(win.width(), win.height());
     createMenuTexture(ctx);
 
@@ -309,12 +317,12 @@ void Menu::destroyMenuTexture(VkCtx& ctx) {
 }
 
 void Menu::ensureDIB(int w, int h) {
-    if (dibDC_ && diw_ == w && dih_ == h) return;
-    if (dibDC_) { DeleteDC(dibDC_); dibDC_ = nullptr; }
-    if (dibBmp_) { DeleteObject(dibBmp_); dibBmp_ = nullptr; }
+    if (asDC(dibDC_) && diw_ == w && dih_ == h) return;
+    if (asDC(dibDC_)) { DeleteDC(asDC(dibDC_)); asDC(dibDC_) = nullptr; }
+    if (asBMP(dibBmp_)) { DeleteObject(asBMP(dibBmp_)); asBMP(dibBmp_) = nullptr; }
     diw_ = w;
     dih_ = h;
-    dibDC_ = CreateCompatibleDC(nullptr);
+    asDC(dibDC_) = CreateCompatibleDC(nullptr);
     BITMAPINFO bmi = {};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi.bmiHeader.biWidth = w;
@@ -322,8 +330,8 @@ void Menu::ensureDIB(int w, int h) {
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
-    dibBmp_ = CreateDIBSection(dibDC_, &bmi, DIB_RGB_COLORS, &dibBits_, nullptr, 0);
-    SelectObject(dibDC_, dibBmp_);
+    asBMP(dibBmp_) = CreateDIBSection(asDC(dibDC_), &bmi, DIB_RGB_COLORS, &dibBits_, nullptr, 0);
+    SelectObject(asDC(dibDC_), asBMP(dibBmp_));
 }
 
 void Menu::onResize(VkCtx& ctx, int w, int h) {
@@ -356,13 +364,13 @@ static void slice9(HDC dst, HDC src, int tw, int th, int border,
 }
 
 void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float cy) {
-    HDC dc = dibDC_;
+    HDC dc = asDC(dibDC_);
     // 泥土背景平铺，放大约 4 倍
     {
         int ts = dirtW_ * 4; // 单个平铺块边长
         for (int y = 0; y < dih_; y += ts)
             for (int x = 0; x < diw_; x += ts)
-                StretchBlt(dc, x, y, ts, ts, dirtDC_, 0, 0, dirtW_, dirtH_, SRCCOPY);
+                StretchBlt(dc, x, y, ts, ts, asDC(dirtDC_), 0, 0, dirtW_, dirtH_, SRCCOPY);
     }
     btns_.clear();
     sliders_.clear();
@@ -371,7 +379,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
 
     auto addBtn = [&](int id, float x, float y, float bw, float bh, const std::string& text) {
         bool hov = cxr >= x && cxr <= x + bw && cyr >= y && cyr <= y + bh;
-        slice9(dc, hov ? btnHiDC_ : btnDC_, btnW_, btnH_, BTN_BORDER, x, y, bw, bh);
+        slice9(dc, hov ? asDC(btnHiDC_) : asDC(btnDC_), btnW_, btnH_, BTN_BORDER, x, y, bw, bh);
         RECT r = {(int)x, (int)y, (int)(x + bw), (int)(y + bh)};
         SetTextColor(dc, RGB(255, 255, 255));
         SetBkMode(dc, TRANSPARENT);
@@ -386,7 +394,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
                          int minV, int maxV, int* val, const char* label) {
         sliders_.push_back({id, x, y, bw, bh, minV, maxV, val, label});
         // 轨道：九宫格拉伸，保留圆角
-        slice9(dc, sliderDC_, sliderW_, sliderH_, BTN_BORDER, x, y, bw, bh);
+        slice9(dc, asDC(sliderDC_), sliderW_, sliderH_, BTN_BORDER, x, y, bw, bh);
         int valv = *val;
         if (valv < minV) valv = minV;
         if (valv > maxV) valv = maxV;
@@ -397,7 +405,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         bool handleHover = cxr >= handleX && cxr <= handleX + handleW_ &&
                            cyr >= handleY && cyr <= handleY + handleH_;
         StretchBlt(dc, (int)handleX, (int)handleY, (int)handleW_, (int)handleH_,
-                   handleHover ? handleHiDC_ : handleDC_, 0, 0, handleW_, handleH_, SRCCOPY);
+                   handleHover ? asDC(handleHiDC_) : asDC(handleDC_), 0, 0, handleW_, handleH_, SRCCOPY);
         // 轨道下方的数值标签
         std::string vl = std::string(label) + "：" + std::to_string(valv);
         RECT vr = {(int)x, (int)(y + bh + 4), (int)(x + bw), (int)(y + bh + 26)};
@@ -452,7 +460,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         SetTextAlign(dc, TA_LEFT);
         DrawTextW(dc, utf8ToWide("世界种子").c_str(), -1, &lr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         float fx = bx + 120, fy = 190, fw2 = bw - 120, fh2 = 22;
-        slice9(dc, fieldDC_, btnW_, btnH_, 3, fx, fy, fw2, fh2);
+        slice9(dc, asDC(fieldDC_), btnW_, btnH_, 3, fx, fy, fw2, fh2);
         RECT fr = {(int)(fx + 6), (int)fy, (int)(fx + fw2 - 6), (int)(fy + fh2)};
         SetTextColor(dc, RGB(255, 255, 255));
         DrawTextW(dc, utf8ToWide(data.seedText).c_str(), -1, &fr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -647,22 +655,22 @@ void Menu::shutdown(VkCtx& ctx) {
     if (layout_) vkDestroyPipelineLayout(ctx.device, layout_, nullptr);
     if (pipe_) vkDestroyPipeline(ctx.device, pipe_, nullptr);
     if (font_) DeleteObject(font_);
-    if (dibDC_) DeleteDC(dibDC_);
-    if (dibBmp_) DeleteObject(dibBmp_);
-    if (btnDC_) DeleteDC(btnDC_);
-    if (btnBmp_) DeleteObject(btnBmp_);
-    if (btnHiDC_) DeleteDC(btnHiDC_);
-    if (btnHiBmp_) DeleteObject(btnHiBmp_);
-    if (fieldDC_) DeleteDC(fieldDC_);
-    if (fieldBmp_) DeleteObject(fieldBmp_);
-    if (sliderDC_) DeleteDC(sliderDC_);
-    if (sliderBmp_) DeleteObject(sliderBmp_);
-    if (handleDC_) DeleteDC(handleDC_);
-    if (handleBmp_) DeleteObject(handleBmp_);
-    if (handleHiDC_) DeleteDC(handleHiDC_);
-    if (handleHiBmp_) DeleteObject(handleHiBmp_);
-    if (dirtDC_) DeleteDC(dirtDC_);
-    if (dirtBmp_) DeleteObject(dirtBmp_);
+    if (asDC(dibDC_)) DeleteDC(asDC(dibDC_));
+    if (asBMP(dibBmp_)) DeleteObject(asBMP(dibBmp_));
+    if (asDC(btnDC_)) DeleteDC(asDC(btnDC_));
+    if (asBMP(btnBmp_)) DeleteObject(asBMP(btnBmp_));
+    if (asDC(btnHiDC_)) DeleteDC(asDC(btnHiDC_));
+    if (asBMP(btnHiBmp_)) DeleteObject(asBMP(btnHiBmp_));
+    if (asDC(fieldDC_)) DeleteDC(asDC(fieldDC_));
+    if (asBMP(fieldBmp_)) DeleteObject(asBMP(fieldBmp_));
+    if (asDC(sliderDC_)) DeleteDC(asDC(sliderDC_));
+    if (asBMP(sliderBmp_)) DeleteObject(asBMP(sliderBmp_));
+    if (asDC(handleDC_)) DeleteDC(asDC(handleDC_));
+    if (asBMP(handleBmp_)) DeleteObject(asBMP(handleBmp_));
+    if (asDC(handleHiDC_)) DeleteDC(asDC(handleHiDC_));
+    if (asBMP(handleHiBmp_)) DeleteObject(asBMP(handleHiBmp_));
+    if (asDC(dirtDC_)) DeleteDC(asDC(dirtDC_));
+    if (asBMP(dirtBmp_)) DeleteObject(asBMP(dirtBmp_));
     quadBuf_ = VK_NULL_HANDLE;
     quadMem_ = VK_NULL_HANDLE;
     mpool_ = VK_NULL_HANDLE;
@@ -672,3 +680,12 @@ void Menu::shutdown(VkCtx& ctx) {
     font_ = nullptr;
 }
 
+#else  // !_WIN32 —— Linux 暂不提供菜单，main.cpp 会直接进世界
+// 菜单整套是 GDI 画的（九宫格位图 + DrawTextW 文本），移植到 X11 需要
+// 另做字体栅格化，暂时不做。Linux 上直接跳过菜单进世界，控制台指令仍可用。
+bool Menu::init(VkCtx&, Window&, const std::string&) { return true; }
+void Menu::shutdown(VkCtx&) {}
+int  Menu::renderMenu(VkCtx&, Menuscreen, const MenuData&, float, float, bool) { return MENU_NONE; }
+void Menu::onResize(VkCtx&, int, int) {}
+bool Menu::debugSaveMenu(const std::string&) const { return false; }
+#endif  // _WIN32

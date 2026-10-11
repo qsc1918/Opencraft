@@ -24,7 +24,39 @@ cmake --build build
 复制到它旁边。
 
 > `assets/` 里的贴图从 Minecraft 官方 jar 提取，按 Mojang EULA 不随仓库分发。
-> 请用 `tools/extract_assets` 从你自己的 Minecraft 安装中提取。
+> Windows 用 `build/extract_assets.exe`（弹文件对话框选 jar），
+> 跨平台用 `python tools/extract_assets.py [jar路径]`（不给就自动找 `~/.minecraft`）。
+
+## Linux
+
+Linux 版用 X11 + Vulkan（Xlib surface），和 Windows 版共用同一份渲染/世界/生物代码：
+
+```sh
+sudo apt install cmake ninja-build libx11-dev libvulkan-dev glslang-tools
+python tools/extract_assets.py            # 从 jar 提取贴图（C++ 那个提取器只在 Windows 上编）
+cmake -G Ninja -S . -B build-linux -DOPENCRAFT_AUTO_PACKAGE=OFF
+cmake --build build-linux
+./build-linux/opencraft --seed 12345 --render-dist 8
+```
+
+几点说明：
+
+* **菜单暂时只有 Windows 版**。菜单是用 GDI（DIB 九宫格 + `DrawTextW`）画的，
+  移植到 X11 要另做字体栅格化。Linux 上启动会直接进世界，种子与存档用命令行参数
+  和控制台指令（`help` 看用法），`Esc` 退出。
+* 着色器编译器优先 `glslc`（Vulkan SDK 自带），没有就退回 `glslangValidator`。
+* 无头环境（CI / 服务器）可以用 `xvfb-run`；没有显卡时 Mesa 的 lavapipe
+  （`mesa-vulkan-drivers`）也能跑，只是慢。
+* 交叉编译 Windows 版（Linux 上编 exe）：
+
+```sh
+sudo apt install mingw-w64
+cmake -G Ninja -S . -B build-mingw -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake
+cmake --build build-mingw     # 产物 build-mingw/opencraft.exe
+```
+
+反过来在 Windows 上编 Linux 版需要额外的 Linux 交叉工具链（或走 WSL），
+仓库里只提供了上面那份 mingw 工具链文件。
 
 ## 打包自解压安装包
 

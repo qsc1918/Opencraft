@@ -22,6 +22,9 @@ static const char* kTileFiles[T_COUNT] = {
     "fire_0.png",          // 原版火焰（16x512 动画条，取首帧）
     "chorus_plant.png",    "chorus_flower.png",    "chorus_flower_dead.png",
     "iron_bars.png",       "torch.png",
+    // 实体贴图不在这里：走下面的 kEntityFiles（另一个目录 + 保留原始比例）
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+    nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
 };
 
 // 物品图标贴图（assets/item/），tile = T_ITEM_BASE + 下标，
@@ -37,6 +40,14 @@ static const char* kItemFiles[] = {
     "golden_helmet.png",    "golden_chestplate.png",  "golden_leggings.png",  "golden_boots.png",
     "diamond_helmet.png",   "diamond_chestplate.png", "diamond_leggings.png", "diamond_boots.png",
     "flint_and_steel.png", "ender_pearl.png",  "ender_eye.png",
+};
+
+// 实体贴图（assets/entity/），下标 = tile - T_ENTITY_PIG。
+// 顺序必须与 blocks.hpp 里 T_ENTITY_* 的枚举顺序一致。
+static const char* kEntityFiles[] = {
+    "pig.png", "cow.png", "sheep.png",   "chicken.png", "zombie.png",   "skeleton.png",
+    "creeper.png", "spider.png", "blaze.png", "enderman.png", "steve.png", "arrow.png",
+    "sheep_wool.png",
 };
 
 const char* itemIconFile(uint8_t iconTile) {
@@ -90,6 +101,10 @@ const Tint kTileTint[T_COUNT] = {
     {1, 1, 1},             // 枯萎的紫颂花
     {1, 1, 1},             // 铁栏杆
     {1, 1, 1},             // 火把
+    // 实体贴图：原版皮肤自带颜色，一律不着色
+    {1,1,1},{1,1,1},{1,1,1},{1,1,1},{1,1,1},{1,1,1},
+    {1,1,1},{1,1,1},{1,1,1},{1,1,1},{1,1,1},{1,1,1},
+    {1,1,1},   // 羊毛层
 };
 
 // ---------------------------------------------------------------------------
@@ -494,16 +509,29 @@ Atlas buildAtlas(const std::string& dir) {
 
     for (int t = 0; t < T_COUNT; t++) {
         if (!kTileFiles[t]) { src[t].procedural = true; continue; }
-        loadInto(src[t], dir + "\\" + kTileFiles[t]);
+        loadInto(src[t], dir + "/" + kTileFiles[t]);
+    }
+    // 实体贴图：保留原始宽高（64×64 / 64×32），模型按原版 texOffs 取子矩形，
+    // 一旦被裁成正方形，逐面 UV 就全错了。
+    const int entityCount = (int)(sizeof(kEntityFiles) / sizeof(kEntityFiles[0]));
+    for (int n = 0; n < entityCount; n++) {
+        int t = T_ENTITY_PIG + n;
+        std::vector<uint8_t> img;
+        int w = 0, h = 0;
+        if (!loadPNG((assetRoot + "/entity/" + kEntityFiles[n]).c_str(), img, w, h) || img.empty()) continue;
+        src[t].px = std::move(img);
+        src[t].sw = src[t].w = w;
+        src[t].sh = src[t].h = h;
+        src[t].procedural = false;   // kTileFiles 里是 nullptr，这里补上真图后取消程序化
     }
     for (int n = 0; n < itemCount; n++)
-        loadInto(src[T_ITEM_BASE + n], assetRoot + "\\item\\" + kItemFiles[n]);
+        loadInto(src[T_ITEM_BASE + n], assetRoot + "/item/" + kItemFiles[n]);
 
     // 末地门：星空 + end_sky 预合成（原版 17 层叠加的静态等价物）
     if (!src[T_END_PORTAL].px.empty()) {
         std::vector<uint8_t> sky;
         int kw = 0, kh = 0;
-        loadPNG((dir + "\\end_sky.png").c_str(), sky, kw, kh);
+        loadPNG((dir + "/end_sky.png").c_str(), sky, kw, kh);
         int size = src[T_END_PORTAL].w;
         std::vector<uint8_t> comp =
             compositeEndPortal(size, src[T_END_PORTAL].px, src[T_END_PORTAL].sw,

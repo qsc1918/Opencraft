@@ -101,7 +101,22 @@ enum Tile : uint8_t {
     T_CHORUS_FLOWER_DEAD = 39,
     T_IRON_BARS = 40,
     T_TORCH = 41,
-    T_COUNT = 42,
+    // --- 实体贴图（assets/entity/，物理解像度入图集，不做正方形裁剪）---
+    // 生物模型用原版 texOffs 逐面取子矩形，所以必须保留 64×64 / 64×32 的原始比例。
+    T_ENTITY_PIG = 42,
+    T_ENTITY_COW = 43,
+    T_ENTITY_SHEEP = 44,
+    T_ENTITY_CHICKEN = 45,
+    T_ENTITY_ZOMBIE = 46,
+    T_ENTITY_SKELETON = 47,
+    T_ENTITY_CREEPER = 48,
+    T_ENTITY_SPIDER = 49,
+    T_ENTITY_BLAZE = 50,
+    T_ENTITY_ENDERMAN = 51,
+    T_ENTITY_STEVE = 52,
+    T_ENTITY_ARROW = 53,
+    T_ENTITY_SHEEP_WOOL = 54,   // 羊毛覆盖层（sheep_wool.png，未剪毛的羊）
+    T_COUNT = 55,
 };
 
 // 面索引（MC 语义: F_PY 顶面, F_NY 底面, ±X/±Z 四侧面）

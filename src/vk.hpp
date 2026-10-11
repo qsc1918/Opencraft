@@ -1,7 +1,17 @@
 #pragma once
-#include <windows.h>
+#ifdef _WIN32
+#include <windows.h>   // vulkan_win32.h 要 HWND/HINSTANCE，必须排在它前面
+#endif
 #include <vulkan/vulkan.h>
+// 窗口表面扩展按平台各取一个：Win32 用 win32，Linux(X11) 用 xlib。
+// volk 会按这两个头文件生成对应的函数指针（见 volk_impl.c）。
+#ifdef _WIN32
+// vulkan_win32.h 要 HWND/HINSTANCE，windows.h 已经排在它前面了。
+// 注意：Xlib 的头**不要**在这里包含——它会定义 None/Status/Success 这类
+// 宏，污染所有包含 vk.hpp 的文件（菜单枚举都被打乱）。X11 的表面头在 vk.cpp 里
+// 单独包含（那里会先包含 Xlib）。
 #include <vulkan/vulkan_win32.h>
+#endif
 #include <volk.h>
 #include <cstdint>
 #include <string>

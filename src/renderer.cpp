@@ -1,6 +1,8 @@
 #include "renderer.hpp"
 #include "camera.hpp"
 #include "entities.hpp"
+#include "mobs.hpp"
+#include "mobmodel.hpp"
 #include "player.hpp"
 #include "window.hpp"
 #include "png.hpp"
@@ -310,9 +312,11 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
                 (int)(skyPipe_ != VK_NULL_HANDLE), (int)(uiPipe_ != VK_NULL_HANDLE));
         return false;
     }
-    // 实体管线：复用 terrain 布局与着色器，不剔面（盒模型内外面都可能可见）
+    // 实体管线：复用 terrain 的布局与描述符，但用 entity 着色器
+    //（uv 按 0..255 映射整张贴图，生物模型才能按原版 texOffs 精确取子矩形），
+    // 不剔面（盒模型内外面都可能可见），写深度。
     entityPipe_ = makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
-                               "terrain.vert.spv", "terrain.frag.spv",
+                               "entity.vert.spv", "entity.frag.spv",
                                &terrBinding, terrAttrs, 1, 2,
                                VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
                                false, true, true);
@@ -936,82 +940,84 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
     return true;
 }
 
-// 向 verts 追加一个旋转盒（6 面 × 6 顶点 = 36 verts，无索引）。
-// c=中心，h=半尺寸，yaw=绕 Y 弧度，tile=图集 tile，shade=亮度基值。
-static void appendBox(std::vector<TerrainVertex>& verts, Vec3 c, Vec3 h, float yaw,
-                      uint8_t tile, uint8_t shade) {
-    float cy = cosf(yaw), sy = sinf(yaw);
-    auto rot = [&](float lx, float ly, float lz) -> Vec3 {
-        return {c.x + lx * cy - lz * sy, c.y + ly, c.z + lx * sy + lz * cy};
-    };
-    Vec3 v[8] = {
-        rot(-h.x, -h.y, -h.z), rot( h.x, -h.y, -h.z), rot( h.x,  h.y, -h.z), rot(-h.x,  h.y, -h.z),
-        rot(-h.x, -h.y,  h.z), rot( h.x, -h.y,  h.z), rot( h.x,  h.y,  h.z), rot(-h.x,  h.y,  h.z),
-    };
-    // 面定义：[顶点索引×4] + 方向亮度系数
-    struct Face { int vi[4]; uint8_t sh; };
-    Face faces[6] = {
-        {{1,0,3,2}, (uint8_t)(shade*255/255)},  // +X 面 PX
-        {{4,5,6,7}, (uint8_t)(shade*255/255)},  // -X 面 NX
-        {{3,7,6,2}, (uint8_t)(shade*255/255)},  // +Y 顶面 PY（最亮）
-        {{5,4,0,1}, (uint8_t)(shade*140/255)},  // -Y 底面 NY（最暗）
-        {{5,1,2,6}, (uint8_t)(shade*210/255)},  // +Z 面 PZ
-        {{0,4,7,3}, (uint8_t)(shade*190/255)},  // -Z 面 NZ
-    };
-    for (auto& f : faces) {
-        for (int t : {0,1,2, 0,2,3}) {
-            Vec3 p = v[f.vi[t]];
-            TerrainVertex vt;
-            // 顶点位置是 1/16 格单位的 int16，越界会截断，故夹一下
-            auto q16 = [](float q) {
-                float s = std::floor(q * 16.0f + 0.5f);
-                if (s > 32767.0f) s = 32767.0f;
-                if (s < -32768.0f) s = -32768.0f;
-                return (int16_t)s;
-            };
-            vt.x = q16(p.x); vt.y = q16(p.y); vt.z = q16(p.z);
-            vt.w = 0;
-            vt.u = (t < 3) ? ((t == 0 || t == 3) ? 0 : 16) : ((t == 2) ? 16 : 0);
-            vt.v = (t <= 1) ? 0 : 16;
-            vt.tex = tile;
-            vt.shade = f.sh;
-            verts.push_back(vt);
-        }
+// 生物 → Mob 基类的向下转型（编译关了 RTTI，用 kind 判断；kind 与类一一对应）
+static const Mob* asMob(const Entity& e) {
+    switch (e.kind) {
+    case EntityKind::Pig: case EntityKind::Cow: case EntityKind::Sheep:
+    case EntityKind::Chicken: case EntityKind::Zombie: case EntityKind::Skeleton:
+    case EntityKind::Creeper: case EntityKind::Spider: case EntityKind::Blaze:
+    case EntityKind::Enderman:
+        return static_cast<const Mob*>(&e);
+    default: return nullptr;
     }
 }
 
 void Renderer::drawEntities(VkCtx& ctx, const Camera& cam) {
     if (!world_ || !entityPipe_) return;
     entityVerts_.clear();
-    const Vec3 zero(0, 0, 0);
-    for (auto& e : world_->entities()) {
-        if (e->dead) continue;
-        if (e->kind == EntityKind::EndCrystal) {
-            // 末影水晶：两层反向旋转的立方体（外大内小）
-            auto* crystal = static_cast<EndCrystal*>(e.get());
-            Vec3 center = e->pos + Vec3(0, 1.0f + sinf(e->age * 1.2f) * 0.15f, 0);  // 悬浮+微浮动
-            // 外层：半宽 0.8、高 1.5，绕 Y 旋转 phase
-            appendBox(entityVerts_, center, Vec3(0.8f, 0.75f, 0.8f), crystal->phase,
-                      T_END_CRYSTAL, 220);
-            // 内层：小芯，反向旋转
-            appendBox(entityVerts_, center, Vec3(0.35f, 0.45f, 0.35f), -crystal->phase * 0.7f,
-                      T_END_CRYSTAL, 255);
+    entityDraws_.clear();
+
+    for (auto& up : world_->entities()) {
+        Entity* e = up.get();
+        if (!e || e->dead) continue;
+        // 第一人称不画自己（原版同理：否则整个屏幕都是头的内壁）
+        if (e->kind == EntityKind::Player && !thirdPerson_) continue;
+        // 太远的实体直接跳过（原版有 128 格的实体渲染距离）
+        Vec3 c = e->pos;
+        c.y += e->type ? e->type->height * 0.5f : 0.5f;
+        if (length(c - cam.pos) > 160.0f) continue;
+
+        MobAnimState an;
+        an.age = e->age;
+        if (const Mob* m = asMob(*e)) {
+            an.limbSwing = m->limbSwing;
+            an.limbAmount = m->limbAmount;
+            // 头部：头相对身体最多偏 ±50°（原版 getMaxHeadYRot）；
+            // 模型空间的 ry 正方向与世界 yaw 相反（见 buildMobMesh 的换算），要取负。
+            float headDiff = m->yHeadRot - e->yaw;
+            while (headDiff > 3.14159265f) headDiff -= 6.2831853f;
+            while (headDiff < -3.14159265f) headDiff += 6.2831853f;
+            headDiff = clampf(headDiff, -50.0f * 0.0174533f, 50.0f * 0.0174533f);
+            an.headYaw = -headDiff;
+            an.headPitch = e->pitch;       // 模型 rx 正 = 低头，与原版 xRot 同号
+            an.flying = !m->onGround;
+        } else if (e->kind == EntityKind::Player) {
+            // 玩家：按水平速度摆腿，身体朝向 = yaw
+            float hs = std::sqrt(e->vel.x * e->vel.x + e->vel.z * e->vel.z);
+            an.limbSwing = e->age * 8.0f;
+            an.limbAmount = clampf(hs * 1.6f, 0.0f, 1.0f);
+            an.headPitch = -e->pitch;
         }
+        uint32_t first = (uint32_t)entityVerts_.size();
+        buildMobMesh(entityVerts_, *e, an);
+        if (entityVerts_.size() > first)
+            entityDraws_.push_back({e->pos, first, (uint32_t)(entityVerts_.size() - first)});
     }
     if (entityVerts_.empty()) return;
+
     // 上传顶点（缓冲 256KB，超了就截断，别越界写显存映射）
     size_t maxVerts = (256 * 1024) / sizeof(TerrainVertex);
-    size_t n = entityVerts_.size() < maxVerts ? entityVerts_.size() : maxVerts;
-    memcpy(entityMap_[curFrame_], entityVerts_.data(), n * sizeof(TerrainVertex));
+    if (entityVerts_.size() > maxVerts) {
+        entityVerts_.resize(maxVerts);
+        for (auto& d : entityDraws_) {
+            if (d.first + d.count > maxVerts) d.count = (uint32_t)maxVerts - std::min(d.first, (uint32_t)maxVerts);
+        }
+    }
+    memcpy(entityMap_[curFrame_], entityVerts_.data(), entityVerts_.size() * sizeof(TerrainVertex));
+
     VkCommandBuffer cb = ctx.cmds[curFrame_];
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, entityPipe_);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainLayout_, 0, 1, &terrainSet_[curFrame_], 0, nullptr);
-    Vec3 origin(0, 0, 0);
-    vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &origin);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainLayout_, 0, 1,
+                            &terrainSet_[curFrame_], 0, nullptr);
     VkBuffer vb = entityVB_[curFrame_].b;
     VkDeviceSize off = 0;
     vkCmdBindVertexBuffers(cb, 0, 1, &vb, &off);
-    vkCmdDraw(cb, (uint32_t)n, 1, 0, 0);
+    // 逐实体设置 push constant（顶点存的是相对实体的局部坐标）
+    for (const auto& d : entityDraws_) {
+        if (!d.count) continue;
+        vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &d.origin);
+        vkCmdDraw(cb, d.count, 1, d.first, 0);
+    }
 }
 
 // drawEntities 的调用点应放在 drawChunks 结束大括号之后

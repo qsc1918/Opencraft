@@ -1,8 +1,10 @@
 #include "camera.hpp"
-#include "console.hpp"
 #include "endgen.hpp"
 #include "entities.hpp"
 #include "mctick.hpp"
+#include "mobs.hpp"
+#include "mobmodel.hpp"
+#include "mobspawn.hpp"
 #include "player.hpp"
 #include "portal.hpp"
 #include "raycast.hpp"
@@ -13,7 +15,8 @@
 #include "window.hpp"
 #include "world.hpp"
 #include "version.hpp"
-#include <windows.h>
+#include "platform.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -49,6 +52,11 @@ struct Args {
     int menuScreen = 1; // 默认主菜单（Menuscreen::MainMenu）
     bool spawnPortal = false; // 调试：在出生点生成已点燃的下界门
     std::string tpDim;        // 调试：--tp-dim 进入世界后立即传送到该维度
+    std::vector<std::string> summons;  // 调试：--summon <种类>（可多次）
+    bool zoo = false;         // 调试：--zoo 在面前摆一排所有生物（截图用）
+    bool testbed = false;     // 调试：--testbed 在空中搭一个石台（生物测试用）
+    bool thirdPersonArg = false;  // 调试：--third-person 启动即第三人称背视
+    bool frontViewArg = false;    // 调试：--front-view 启动即第三人称前视
     bool showVersion = false; // --version：打印版本号后退出
 };
 
@@ -85,6 +93,11 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--menu-screen") a.menuScreen = std::stoi(next());
         else if (arg == "--spawn-portal") a.spawnPortal = true;
         else if (arg == "--tp-dim") a.tpDim = next();
+        else if (arg == "--summon") a.summons.push_back(next());
+        else if (arg == "--zoo") a.zoo = true;
+        else if (arg == "--testbed") a.testbed = true;
+        else if (arg == "--third-person") a.thirdPersonArg = true;
+        else if (arg == "--front-view") a.frontViewArg = true;
         else if (arg == "--version") a.showVersion = true;
         else if (arg == "--help") {
             printf("Usage: opencraft [--seed N] [--render-dist N] [--threads N] [--pos x,y,z]\n"
@@ -98,13 +111,7 @@ static Args parseArgs(int argc, char** argv) {
     return a;
 }
 
-static std::string exeDir() {
-    char buf[MAX_PATH];
-    GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    std::string p(buf);
-    size_t pos = p.find_last_of("\\/");
-    return pos == std::string::npos ? "." : p.substr(0, pos);
-}
+static std::string exeDir() { return platform::exeDir(); }
 
 // 持久化设置：保存到 exe 同目录的 options.txt。
 struct Options {
@@ -114,7 +121,7 @@ struct Options {
     int texSharp = 16;        // 近景清晰距离（格）：内锁 mip0 不糊；0=关闭
 };
 
-static std::string optionsPath() { return exeDir() + "\\options.txt"; }
+static std::string optionsPath() { return platform::join(exeDir(), "options.txt"); }
 
 static Options loadOptions() {
     Options o;
@@ -148,7 +155,9 @@ static void saveOptions(const Options& o) {
 
 int main(int argc, char** argv) {
     Args a = parseArgs(argc, argv);
-    SetProcessDPIAware();
+#ifdef _WIN32
+    SetProcessDPIAware();   // Windows 上别让系统缩放弄糊界面
+#endif
 
     if (a.showVersion) {
         printf("Opencraft %s\n", version::full().c_str());
@@ -170,15 +179,21 @@ int main(int argc, char** argv) {
 
     Renderer renderer;
     Menu menu;
-    if (!renderer.init(ctx, win, exeDir() + "\\assets", exeDir() + "\\shaders")) { printf("Renderer init failed\n"); return 1; }
+    if (!renderer.init(ctx, win, platform::join(exeDir(), "assets"), platform::join(exeDir(), "shaders"))) { printf("Renderer init failed\n"); return 1; }
     
-    if (!menu.init(ctx, win, exeDir() + "\\assets")) { printf("Menu init failed\n"); return 1; }
+    if (!menu.init(ctx, win, platform::join(exeDir(), "assets"))) { printf("Menu init failed\n"); return 1; }
     
 
     // ---- 游戏状态 ----
     enum class GS { MainMenu, SaveSelect, NewWorld, Options, Video, Pause, Play };
+    // Linux 上还没有菜单（menu.cpp 是 GDI 实现的），所以一律直接进世界；
+    // 存档/种子等通过命令行参数与控制台指令来。
+#ifndef _WIN32
+    const bool startDirect = true;
+#else
     const bool startDirect = !a.screenshot.empty() || a.drive || !a.breakBlock.empty()
                              || a.frames > 0 || !a.posStr.empty() || a.invStart;
+#endif
     GS gs = startDirect ? GS::Play : GS::MainMenu;
 
     std::unique_ptr<World> world;
@@ -195,10 +210,13 @@ int main(int argc, char** argv) {
     renderer.setTexSharp((float)texSharp);
 
     // 控制台指令输入线程（tp / where / help）
-    ConsoleInput consoleInput;
+    platform::ConsoleInput consoleInput;
     consoleInput.start();
     printf("[cmd] 控制台指令已启用：输入 help 查看用法\n");
     bool escPrev = false, ePrev = false, in_prevL = false, in_prevR = false;
+    int thirdPerson = 0;               // F5 循环：0=第一人称 1=背视 2=前视
+    double lastAttack = -10.0;         // 上次攻击时间（秒）
+    double nowSeconds = 0.0;           // 累计游戏时间（秒）
     auto last = std::chrono::steady_clock::now();
 
     auto screenFromGS = [](GS g) -> Menuscreen {
@@ -227,6 +245,10 @@ int main(int argc, char** argv) {
         renderer.setWorld(*world);
         worldName = name;
         player = Player();
+        // 玩家也是一个实体（MC Player extends LivingEntity）：注册进 World，
+        // 生物才能找到它、攻击它，射线也能打中它
+        player.ent = static_cast<PlayerEntity*>(
+            world->spawnEntity(std::make_unique<PlayerEntity>()));
         if (a.dimArg == "nether") { player.dim = DIM_NETHER; world->setDimension(DIM_NETHER); }
         else if (a.dimArg == "end") { player.dim = DIM_END; world->setDimension(DIM_END); }
         player.cam.yaw = a.yaw;
@@ -348,6 +370,49 @@ int main(int argc, char** argv) {
                                            (float)spawnZ + 0.5f);
             }
         }
+        // 记住出生点（死亡后回这里）
+        player.spawnPos = player.cam.pos;
+
+        // 调试：--testbed 搭一个空中石台，免得生物掉进海里/地形里没法看
+        if (a.testbed) {
+            const int bedY = 120, R = 12;   // 高于树冠但低于 WORLD_HEIGHT(128)，避免镜头扎进树叶
+            int cx0 = (int)std::floor(player.cam.pos.x), cz0 = (int)std::floor(player.cam.pos.z);
+            for (int dx = -R; dx <= R; dx++)
+                for (int dz = -R; dz <= R; dz++) {
+                    int bx = cx0 + dx, bz = cz0 + dz;
+                    world->forceGenerateChunk(blockToChunkCoord(bx), blockToChunkCoord(bz));
+                    world->setBlock(bx, bedY, bz, B_STONE, bu::U_NO_ALL);
+                }
+            player.cam.pos = Vec3(player.cam.pos.x, bedY + 1.0f + player.eyeHeight, player.cam.pos.z);
+            player.vel = Vec3(0, 0, 0);
+            fprintf(stderr, "[main] testbed: 石台 y=%d %dx%d, 相机所在方块=%d\n", bedY, R * 2 + 1, R * 2 + 1,
+                    world->getBlock((int)player.cam.pos.x, (int)player.cam.pos.y, (int)player.cam.pos.z));
+        }
+
+        // 调试：--summon <种类> / --zoo（截图与测试用）
+        if (!a.summons.empty() || a.zoo) {
+            static const char* kZoo[] = {"pig", "cow", "sheep", "chicken",
+                                         "zombie", "skeleton", "creeper", "spider",
+                                         "blaze", "enderman"};
+            int n = a.zoo ? (int)(sizeof(kZoo) / sizeof(kZoo[0])) : (int)a.summons.size();
+            Vec3 fwd = player.cam.forward();
+            Vec3 rt = player.cam.right();
+            for (int i = 0; i < n; i++) {
+                const char* name = a.zoo ? kZoo[i] : a.summons[i].c_str();
+                EntityKind k;
+                if (!mobspawn::kindByName(name, k)) {
+                    fprintf(stderr, "[main] 未知生物：%s\n", name);
+                    continue;
+                }
+                // 在玩家面前 6 格横向摆开，别叠在一起
+                float t = ((float)i - (n - 1) * 0.5f) * 1.8f;
+                Vec3 at = player.cam.pos + fwd * 6.0f + rt * t;
+                // 从脚部高度生成，脚下没地面就让它自己掉下去（原版 summon 同理）
+                at.y = player.cam.pos.y - player.eyeHeight;
+                mobspawn::summon(*world, k, Vec3(at.x, std::floor(at.y), at.z));
+            }
+        }
+
         // 调试/演示：在玩家前方 3 格生成并点燃一个竖直下界门（两种出生路径都可用）
         if (a.spawnPortal) {
             int pxi = (int)std::floor(player.cam.pos.x);
@@ -375,7 +440,7 @@ int main(int argc, char** argv) {
         }
         if (!a.invStart) renderer.setInventoryOpen(false);
         win.setCapture(true);
-        ShowCursor(FALSE);
+        platform::showCursor(false);
         gs = GS::Play;
     };
 
@@ -572,7 +637,9 @@ int main(int argc, char** argv) {
             printf("[cmd] 可用指令:\n"
                    "  tp <x> <y> <z>             传送到本维度坐标（y 为脚底高度，支持小数）\n"
                    "  tp <overworld|nether|end>  跨维度传送（也可写 主世界/下界/末地）\n"
-                   "  where                      显示当前坐标与维度\n");
+                   "  where                      显示当前坐标与维度\n"
+                   "  summon <种类> [数量]        在面前生成生物（猪/牛/羊/鸡/僵尸/骷髅/苦力怕/蜘蛛/烈焰人/末影人）\n"
+                   "  kill                       清掉附近 32 格内的所有生物\n");
         } else if (cmd == "tp") {
             if (!world) { printf("[cmd] 尚未进入世界\n"); return; }
             if (tok.size() == 2) {
@@ -597,6 +664,43 @@ int main(int argc, char** argv) {
             } else {
                 printf("[cmd] 用法: tp <x> <y> <z> 或 tp <overworld|nether|end>\n");
             }
+        } else if (cmd == "summon") {
+            if (!world) { printf("[cmd] 尚未进入世界\n"); return; }
+            if (tok.size() < 2) { printf("[cmd] 用法: summon <种类> [数量]\n"); return; }
+            EntityKind k;
+            if (!mobspawn::kindByName(tok[1].c_str(), k)) {
+                printf("[cmd] 未知生物: %s（help 看列表）\n", tok[1].c_str());
+                return;
+            }
+            int n = 1;
+            if (tok.size() >= 3) { try { n = std::max(1, std::stoi(tok[2])); } catch (...) {} }
+            // 生成在玩家面前 3 格、脚部高度
+            Vec3 fwd = player.cam.forward();
+            Vec3 at = player.cam.pos + fwd * 3.0f;
+            at.y = player.cam.pos.y - player.eyeHeight;
+            mobspawn::summon(*world, k, Vec3(at.x, std::floor(at.y), at.z), n);
+            printf("[cmd] 已在面前生成 %d 只 %s\n", n, tok[1].c_str());
+        } else if (cmd == "kill") {
+            if (!world) { printf("[cmd] 尚未进入世界\n"); return; }
+            int killed = 0;
+            for (auto& e : world->entities()) {
+                if (!e || e->dead) continue;
+                switch (e->kind) {
+                case EntityKind::Pig: case EntityKind::Cow: case EntityKind::Sheep:
+                case EntityKind::Chicken: case EntityKind::Zombie: case EntityKind::Skeleton:
+                case EntityKind::Creeper: case EntityKind::Spider: case EntityKind::Blaze:
+                case EntityKind::Enderman: {
+                    Vec3 d = e->pos - player.cam.pos;
+                    if (std::fabs(d.x) < 32 && std::fabs(d.y) < 16 && std::fabs(d.z) < 32) {
+                        e->dead = true;
+                        killed++;
+                    }
+                    break;
+                }
+                default: break;
+                }
+            }
+            printf("[cmd] 清掉 %d 只生物\n", killed);
         } else if (cmd == "where") {
             if (!world) { printf("[cmd] 尚未进入世界\n"); return; }
             printf("[cmd] 位置: x=%.2f y=%.2f z=%.2f (脚底 y=%.2f)  方块: (%d, %d, %d)  维度: %s\n",
@@ -609,6 +713,45 @@ int main(int argc, char** argv) {
         } else {
             printf("[cmd] 未知指令: %s（输入 help 查看可用指令）\n", cmd.c_str());
         }
+    };
+
+    bool quitRequested = false;
+    if (a.thirdPersonArg) { thirdPerson = 1; renderer.setThirdPerson(true); }
+    if (a.frontViewArg) { thirdPerson = 2; renderer.setThirdPerson(true); }
+
+    // 死亡处理：血空就回出生点（原版保留物品栏，这里不做经验与掉落）
+    auto checkPlayerDeath = [&]() {
+        if (!player.ent || player.ent->health > 0.0f) return;
+        fprintf(stderr, "[main] 你死了，回到出生点\n");
+        player.ent->health = player.ent->maxHealth;
+        player.ent->dead = false;
+        player.ent->fireTicks = 0;
+        player.ent->hurtTime = 0;
+        player.cam.pos = player.spawnPos;
+        player.cam.markDirty();
+        player.vel = Vec3(0, 0, 0);
+    };
+
+    // 第三人称相机：0=第一人称 1=背视（相机在身后看背影）2=前视（相机在面前看脸）。
+    // 沿视线移 4 格，撞墙时贴到墙前（原版 F5 循环）。
+    // 截图循环与主循环都要用，所以放外面。
+    auto makeViewCam = [&]() {
+        Camera c = player.cam;
+        if (thirdPerson == 0) return c;
+        Vec3 fwd = player.cam.forward();
+        Vec3 dir = (thirdPerson == 2) ? fwd : -fwd;   // 前视：相机放到面前
+        RayHit back = raycastWorld(*world, player.cam.pos, dir, 4.0f);
+        float dist = 4.0f;
+        if (back.hit)
+            dist = std::max(0.6f, length(player.cam.pos -
+                                          Vec3(back.x + 0.5f, back.y + 0.5f, back.z + 0.5f)) - 0.35f);
+        c.pos = player.cam.pos + dir * dist;
+        if (thirdPerson == 2) {
+            c.yaw = player.cam.yaw + 3.14159265f;   // 掉头看向玩家
+            c.pitch = -player.cam.pitch;
+        }
+        c.markDirty();
+        return c;
     };
 
     if (gs == GS::Play) {
@@ -688,10 +831,18 @@ int main(int argc, char** argv) {
                         runConsoleCommand(cmdline);
                 }
                 player.update(in, *world, 1.0f / 60.0f);
+                {
+                    float tod = renderer.timeOfDay();
+                    mobs::setDayLight(std::max(0.0f, std::cos((tod - 0.25f) * 6.2831853f)));
+                    mobs::setDimension(player.dim);
+                }
                 world->tickEntities(1.0f / 60.0f);
+                mobspawn::tick(*world, player.cam.pos, renderDist * CHUNK_SIZE, 1.0f / 60.0f);
+                mctick::tickRandomBlocks(*world, player.cam.pos.x, player.cam.pos.z, 1.0f / 60.0f);
                 world->update(player.cam.pos.x, player.cam.pos.z, renderDist);
+                checkPlayerDeath();
                 checkTeleport();
-                renderer.render(ctx, player.cam, player, in, 1.0f / 60.0f, (float)renderDist, !a.noUI);
+                renderer.render(ctx, makeViewCam(), player, in, 1.0f / 60.0f, (float)renderDist, !a.noUI);
                 win.endFrame();
             }
             {
@@ -705,8 +856,29 @@ int main(int argc, char** argv) {
                 });
                 // 顶点/三角形总数是"GPU 上要处理多少几何"的直接指标，
                 // draws 是最后一帧真正提交的不透明绘制次数（剔除效果的体现）。
-                fprintf(stderr, "[main] screenshot: %d chunks meshed, %zu verts, %zu tris, %d draws\n",
-                        ready, verts, tris, renderer.debugDraws());
+                // 顺带报一下实体统计与玩家位置（截图调试时最常问的两个问题）
+                int nMob = 0, nPassive = 0;
+                for (auto& up : world->entities()) {
+                    if (!up || up->dead) continue;
+                    switch (up->kind) {
+                    case EntityKind::Pig: case EntityKind::Cow: case EntityKind::Sheep:
+                    case EntityKind::Chicken:
+                        nMob++; nPassive++; break;
+                    case EntityKind::Zombie: case EntityKind::Skeleton: case EntityKind::Creeper:
+                    case EntityKind::Spider: case EntityKind::Blaze: case EntityKind::Enderman:
+                        nMob++; break;
+                    default: break;
+                    }
+                }
+                fprintf(stderr, "[main] screenshot: %d chunks meshed, %zu verts, %zu tris, %d draws"
+                        " | 实体 %d（被动 %d）掉落方块 %d | 玩家 (%.1f,%.1f,%.1f) 血量 %.0f\n",
+                        ready, verts, tris, renderer.debugDraws(), nMob, nPassive,
+                        (int)std::count_if(world->entities().begin(), world->entities().end(),
+                                           [](const std::unique_ptr<Entity>& e) {
+                                               return e && !e->dead && e->kind == EntityKind::FallingBlock;
+                                           }),
+                        player.cam.pos.x, player.cam.pos.y, player.cam.pos.z,
+                        player.ent ? player.ent->health : -1.0f);
             }
             menu.shutdown(ctx);
             renderer.shutdown(ctx);
@@ -739,6 +911,7 @@ int main(int argc, char** argv) {
         return n;
     };
 
+#ifdef _WIN32
     if (!a.menuShot.empty()) {
         Menuscreen ms = (Menuscreen)a.menuScreen;
         MenuData md;
@@ -760,12 +933,12 @@ int main(int argc, char** argv) {
         win.shutdown();
         return 0;
     }
+#endif
 
     while (true) {
         if (!win.pump()) break;
-        RECT rc;
-        GetClientRect((HWND)win.hwnd(), &rc);
-        int cw = rc.right - rc.left, ch = rc.bottom - rc.top;
+        if (quitRequested) break;
+        int cw = win.width(), ch = win.height();
         if (cw <= 0 || ch <= 0) { std::this_thread::sleep_for(std::chrono::milliseconds(16)); continue; }
         if (cw != lastW || ch != lastH) { ctx.recreateSwapchain(cw, ch); menu.onResize(ctx, cw, ch); lastW = cw; lastH = ch; }
 
@@ -774,8 +947,9 @@ int main(int argc, char** argv) {
         float dt = std::chrono::duration<float>(now - last).count();
         last = now;
         if (dt > 0.1f) dt = 0.1f;
+        nowSeconds += dt;   // 攻击冷却等按秒计时的量共用它
 
-        bool esc = in.keys[VK_ESCAPE], escEdge = esc && !escPrev;
+        bool esc = in.keys[KEY_ESCAPE], escEdge = esc && !escPrev;
         bool eKey = in.keys['E'], eEdge = eKey && !ePrev;
         escPrev = esc;
         ePrev = eKey;
@@ -789,23 +963,35 @@ int main(int argc, char** argv) {
 
         if (gs == GS::Play) {
             if (escEdge) {
-                if (renderer.inventoryOpen()) { renderer.setInventoryOpen(false); win.setCapture(true); ShowCursor(FALSE); }
-                else { gs = GS::Pause; win.setCapture(false); ShowCursor(TRUE); }
+                if (renderer.inventoryOpen()) { renderer.setInventoryOpen(false); win.setCapture(true); platform::showCursor(false); }
+#ifndef _WIN32
+                else { quitRequested = true; }   // Linux 没有暂停菜单：Esc 退出
+#else
+                else { gs = GS::Pause; win.setCapture(false); platform::showCursor(true); }
+#endif
             }
             if (eEdge) {
                 bool o = !renderer.inventoryOpen();
                 renderer.setInventoryOpen(o);
-                if (o) { win.setCapture(false); ShowCursor(TRUE); }
-                else { win.setCapture(true); ShowCursor(FALSE); }
+                if (o) { win.setCapture(false); platform::showCursor(true); }
+                else { win.setCapture(true); platform::showCursor(false); }
             }
             if (a.drive) { in.keys['W'] = true; player.cam.pitch = -0.1f; player.cam.markDirty(); }
 
+            // F5 第三人称（原版同键位）：相机往后拉 4 格，撞墙就拉近
+            if (in.pressed[KEY_F5]) {
+                thirdPerson = (thirdPerson + 1) % 3;
+                renderer.setThirdPerson(thirdPerson != 0);
+                fprintf(stderr, "[main] 视角：%s\n",
+                        thirdPerson == 0 ? "第一人称" : (thirdPerson == 1 ? "第三人称背视" : "第三人称前视"));
+            }
+
             // 调试：F7 顺序切维度、F6 反向切，快速在主世界/下界/末地之间穿越
-            if (in.pressed[VK_F7] || in.pressed[VK_F6]) {
-                int step = in.pressed[VK_F7] ? 1 : -1;
+            if (in.pressed[KEY_F7] || in.pressed[KEY_F6]) {
+                int step = in.pressed[KEY_F7] ? 1 : -1;
                 int d = ((int)player.dim + step + DIM_COUNT) % DIM_COUNT;
                 fprintf(stderr, "[main] debug teleport (F%d) -> dim %d\n",
-                        in.pressed[VK_F7] ? 7 : 6, d);
+                        in.pressed[KEY_F7] ? 7 : 6, d);
                 performTeleport((DimensionId)d, INT_MIN, 0, 0);
             }
 
@@ -818,21 +1004,39 @@ int main(int argc, char** argv) {
                 player.cam.addPitch(-my * 0.003f);
                 
                 player.update(in, *world, dt);
+                // 生物要知道昼夜（僵尸/骷髅白天燃烧）与当前维度
+                float tod = renderer.timeOfDay();
+                // 0=正午 0.5=午夜；日照 = cos((tod-0.25)*2π) 的正值部分
+                float sunAngle = (tod - 0.25f) * 6.2831853f;
+                mobs::setDayLight(std::max(0.0f, std::cos(sunAngle)));
+                mobs::setDimension(player.dim);
                 world->tickEntities(dt);
+                // 生物刷新（内部按 20 TPS 累积，每秒试几次）
+                mobspawn::tick(*world, player.cam.pos, renderDist * CHUNK_SIZE, dt);
                 // 方块随机刻（紫颂花长成植株等）
                 mctick::tickRandomBlocks(*world, player.cam.pos.x, player.cam.pos.z, dt);
+
+                // 死亡回出生点（原版：保留物品栏，扣经验；这里只做回血+传送）
+                checkPlayerDeath();
 
                 // ---- 传送检测：脚下方块是传送门就切维度 ----
                 checkTeleport();
 
                 RayHit hit = raycastWorld(*world, player.cam.pos, player.cam.forward(), 6.0f);
                 if (in.mouse[0] && !in_prevL) {
-                    // 先测实体（龙/水晶），再测方块
+                    // 先测实体（生物/龙/水晶），再测方块。
+                    // 射线起点在玩家自己的碰撞箱里，会先"命中"自己 —— 必须排除，
+                    // 否则 !entHit 永远不成立，一个方块都挖不掉。
                     Vec3 entityHit;
-                    Entity* entHit = world->raycastEntity(player.cam.pos, player.cam.forward(), 6.0f, &entityHit);
-                    if (entHit) {
-                        entHit->hurt(10.0f); // 攻击水晶造成伤害
-                    } else if (hit.hit) {
+                    Entity* entHit = world->raycastEntity(player.cam.pos, player.cam.forward(), 4.0f, &entityHit);
+                    if (entHit && entHit->kind == EntityKind::Player) entHit = nullptr;
+                    // 攻击冷却 0.5 秒（原版）；打的是玩家自己就当没打中
+                    if (entHit && entHit->kind != EntityKind::Player &&
+                        nowSeconds - lastAttack > 0.5) {
+                        lastAttack = nowSeconds;
+                        entHit->hurt(entHit->kind == EntityKind::EndCrystal ? 10.0f : 4.0f);
+                        mobs::knockback(*entHit, player.cam.pos, 0.35f);
+                    } else if (!entHit && hit.hit) {
                         uint8_t t = world->getBlock(hit.x, hit.y, hit.z);
                         // 水与岩浆不可挖（原版流体不可破坏）
                         if (t != B_AIR && t != B_WATER && t != B_LAVA) {
@@ -887,7 +1091,7 @@ int main(int argc, char** argv) {
 
             renderer.gpuSync(ctx);
             world->update(player.cam.pos.x, player.cam.pos.z, renderDist);
-            renderer.render(ctx, player.cam, player, in, dt, (float)renderDist, !a.noUI);
+            renderer.render(ctx, makeViewCam(), player, in, dt, (float)renderDist, !a.noUI);
         } else {
             // ---- 菜单界面 ----
             if (escEdge) {
@@ -896,19 +1100,18 @@ int main(int argc, char** argv) {
                     case GS::NewWorld: gs = GS::SaveSelect; break;
                     case GS::Options: gs = optionsReturnTo == Menuscreen::Pause ? GS::Pause : GS::MainMenu; break;
                     case GS::Video: gs = GS::Options; break;
-                    case GS::Pause: win.setCapture(true); ShowCursor(FALSE); gs = GS::Play; break;
+                    case GS::Pause: win.setCapture(true); platform::showCursor(false); gs = GS::Play; break;
                     case GS::MainMenu: default: break;
                 }
             }
 
-            // 种子输入：边沿触发，一次按键输入一个字符
+            // 种子输入：边沿触发，一次按键输入一个字符（只有 Windows 菜单用得到）
             if (gs == GS::NewWorld) {
-                for (UINT k : {0x30u,0x31u,0x32u,0x33u,0x34u,0x35u,0x36u,0x37u,0x38u,0x39u,
-                               (UINT)'A',(UINT)'B',(UINT)'C',(UINT)'D',(UINT)'E',(UINT)'F'})
+                for (int k : {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'})
                     if (in.pressed[k]) seedText += (char)k;
-                if (in.pressed[VK_SPACE]) seedText += ' ';
-                if (in.pressed[VK_OEM_MINUS]) seedText += '-';
-                if (in.pressed[VK_BACK] && !seedText.empty()) seedText.pop_back();
+                if (in.pressed[KEY_SPACE]) seedText += ' ';
+                if (in.pressed['-']) seedText += '-';
+                if (in.pressed[KEY_BACKSPACE] && !seedText.empty()) seedText.pop_back();
             }
 
             float cx, cy; win.cursorPos(cx, cy);
@@ -937,7 +1140,7 @@ int main(int argc, char** argv) {
                     saveWorld(*world, player, worldName, savesDir());
                     world->stopWorkers();
                     world.reset();
-                    gs = GS::MainMenu; win.setCapture(false); ShowCursor(TRUE);
+                    gs = GS::MainMenu; win.setCapture(false); platform::showCursor(true);
                     break;
                 case MENU_CREATE: {
                     uint32_t seed = seedFromText();
@@ -986,11 +1189,12 @@ int main(int argc, char** argv) {
         }
 
         if (frame % 10 == 0) {
-            const wchar_t* mode = (gs == GS::Play) ? L"Game" : L"Menu";
-            wchar_t title[128];
+            // 标题栏显示模式与 FPS（X11 后端用 UTF-8 字符串，Win32 走宽字符）
             int ifps = (int)(renderer.fps() + 0.5f);
-            swprintf(title, 128, L"Opencraft - %s - FPS: %d", mode, ifps);
-            SetWindowTextW((HWND)win.hwnd(), title);
+            char buf[128];
+            snprintf(buf, sizeof(buf), "Opencraft - %s - FPS: %d",
+                     gs == GS::Play ? "Game" : "Menu", ifps);
+            win.setTitle(buf);
         }
         win.endFrame();
         if (a.frames > 0 && ++frame >= a.frames) break;

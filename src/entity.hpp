@@ -26,14 +26,39 @@ class World;
 
 // 实体种类，用于渲染/AI 分派
 enum class EntityKind : uint8_t {
-    Generic = 0,   // 无渲染实体的默认种类（玩家等）
+    Generic = 0,   // 无渲染实体的默认种类
     EndCrystal,    // 末影水晶
     EnderDragon,   // 末影龙
+    FallingBlock,  // 下落的方块（沙子/沙砾/龙蛋失去支撑后）
+    Player,        // 玩家（本工程只有一个；注册进 World 以便生物能找到它）
+    // --- 被动生物 ---
+    Pig, Cow, Sheep, Chicken,
+    // --- 敌对生物 ---
+    Zombie, Skeleton, Creeper, Spider, Blaze, Enderman,
+    // --- 弹射物 ---
+    Arrow, Fireball,
 };
 
 // 与 MC 对齐的实体类型表（规范 ID 见 docs/standards.md §实体）
 inline constexpr EntityType ENTITY_END_CRYSTAL{"opencraft:end_crystal", 2.0f, 2.0f, 1.0f};
 inline constexpr EntityType ENTITY_ENDER_DRAGON{"opencraft:ender_dragon", 13.0f, 4.0f, 2.0f};
+// 下落的方块：原版 0.98×0.98（见 实体.txt 实体表）
+inline constexpr EntityType ENTITY_FALLING_BLOCK{"opencraft:falling_block", 0.98f, 0.98f, 0.49f};
+
+// 生物碰撞箱（原版实体表）：宽×高都按格计，眼高取头部高度
+inline constexpr EntityType ENTITY_PIG{"opencraft:pig",      0.9f, 0.9f,  0.45f};
+inline constexpr EntityType ENTITY_COW{"opencraft:cow",      0.9f, 1.4f,  0.90f};
+inline constexpr EntityType ENTITY_SHEEP{"opencraft:sheep",  0.9f, 1.3f,  0.95f};
+inline constexpr EntityType ENTITY_CHICKEN{"opencraft:chicken", 0.4f, 0.7f, 0.50f};
+inline constexpr EntityType ENTITY_ZOMBIE{"opencraft:zombie", 0.6f, 1.95f, 1.74f};
+inline constexpr EntityType ENTITY_SKELETON{"opencraft:skeleton", 0.6f, 1.99f, 1.74f};
+inline constexpr EntityType ENTITY_CREEPER{"opencraft:creeper", 0.6f, 1.7f, 1.50f};
+inline constexpr EntityType ENTITY_SPIDER{"opencraft:spider", 1.4f, 0.9f, 0.65f};
+inline constexpr EntityType ENTITY_BLAZE{"opencraft:blaze",   0.6f, 1.8f, 1.50f};
+inline constexpr EntityType ENTITY_ENDERMAN{"opencraft:enderman", 0.6f, 2.9f, 2.55f};
+// 弹射物：箭 0.5×0.5、小火球 0.3125×0.3125（见 实体.txt）
+inline constexpr EntityType ENTITY_ARROW{"opencraft:arrow",       0.5f,    0.5f,   0.25f};
+inline constexpr EntityType ENTITY_FIREBALL{"opencraft:small_fireball", 0.3125f, 0.3125f, 0.15f};
 
 // 实体基类，按 tick 模拟（由 World::tickEntities 在主线程驱动）。
 // pos=脚部中心、vel=速度、yaw/pitch=朝向（弧度）。
@@ -47,6 +72,11 @@ struct Entity {
     float pitch = 0.0f;                // 俯仰（弧度）
     bool dead = false;                 // 标记后由 World::tickEntities 移除
     float age = 0.0f;                  // 存在时长（秒）
+    float health = 1.0f;               // 生命值（无生命的实体为 1，只用于"被摧毁"）
+    float maxHealth = 1.0f;
+    bool onGround = false;             // 上一刻是否着地（阻力/AI 都要用）
+    int  hurtTime = 0;                 // 受击后的无敌刻数（原版 10 刻）
+    int  fireTicks = 0;                // >0 表示正在燃烧（每刻掉血）
 
     virtual ~Entity() = default;
     virtual void tick(World& w, float dt) { age += dt; }
