@@ -136,9 +136,12 @@ build/opencraft.exe
 - `tools/` 资源提取工具、自解压安装包脚本、开发自检工具（`endprobe`、`portalselftest`）
 - `docs/` 项目说明；`PROJECT_STATE.md` 项目现状与文件职责
 
-## 开发约定
+## 法律声明
 
-- 注释一律用**简短的中文**，一两句话说清即可，不要长篇大论。
-- 不要写英文或其他语言的注释。
-- Git 提交要少而清晰，提交信息也用简短中文。
-- 其它约定见 `AGENTS.md`。
+- 本项目与 Mojang Studios、Microsoft均无官方隶属或认可关系。
+- “Minecraft”及相关资产归其权利人所有。
+- 本仓库不授予任何 Minecraft 或材质包的再分发权。
+- 仓库不包含Minecraft原始 Java 二进制、专有资源或品牌资产。
+- 使用者必须自行拥有合法的 Minecraft 资源来源并遵守相关许可和服务条款。
+- 本软件官方渠道不付费。
+- 本软件不构成对 Minecraft 的“实质性替代”
