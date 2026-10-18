@@ -8,10 +8,8 @@
 
 namespace {
 
-// ---------------------------------------------------------------------------
 // 原版末地下界的基准噪声（base_3d_noise）只跟世界种子有关，
 // 每个工作线程按种子缓存一份，避免每区块重建 40 个柏林噪声八度。
-// ---------------------------------------------------------------------------
 struct NoiseSet {
     uint32_t seed = 0xFFFFFFFFu;
     bool ready = false;
@@ -77,22 +75,22 @@ double islandDensity(const McSimplexNoise& n, int blockX, int blockZ) {
     return ((double)rawHeightValue(n, blockX / 8, blockZ / 8) - 8.0) / 128.0;
 }
 
-// 原版 y_clamped_gradient
+// 原版 y_clamped_gradient。
 inline double yGradient(int y, int fromY, int toY, double fromValue, double toValue) {
     return mcClampedMap((double)y, (double)fromY, (double)toY, fromValue, toValue);
 }
 
-// 原版 Mapped.SQUEEZE
+// 原版 Mapped.SQUEEZE。
 inline double squeeze(double v) {
     double c = v < -1.0 ? -1.0 : (v > 1.0 ? 1.0 : v);
     return c / 2.0 - c * c * c / 24.0;
 }
 
-// 末地 final_density（见 noise_settings/end.json）。
+// 末地 final_density（见 noise_settings/end.json）
 // slideEndLike(caves, 0, 128, topStart 72, topEnd -184, topTarget -23.4375,
 //              bottomStart 4, bottomEnd 32, bottomTarget -0.234375)
 // 注意 slide 的形态：y 高处系数 s = mul(y_gradient, add(23.4375, caves))，
-// y 低处对 s 做 lerp，最后整体加 -23.4375 再乘 0.64 —— 顺序不能合并。
+// y 低处对 s 做 lerp，最后整体加 -23.4375 再乘 0.64 —— 顺序不能合并
 // island 是已算好的 end_islands 值（列缓存），避免重复扫 24×24 个区块。
 inline double endDensity(double island, const McBlendedNoise& base3D, int wx, int wy, int wz) {
     double cheese = island + base3D.compute(wx, wy, wz);
@@ -106,7 +104,7 @@ inline double endDensity(double island, const McBlendedNoise& base3D, int wx, in
 } // 匿名命名空间
 
 namespace endgen {
-// 调试用（endprobe）：查询某点的 final_density
+// 调试用（endprobe）：查询某点的 final_density。
 double debugDensity(uint32_t seed, int wx, int wy, int wz) {
     const NoiseSet& ns = endNoise(seed);
     double island = islandDensity(*ns.islandShape, wx, wz);
@@ -137,10 +135,8 @@ void debugDumpColumn(uint32_t seed, int cx, int cz, int lx, int lz) {
 
 namespace {
 
-// ---------------------------------------------------------------------------
 // 黑曜石柱（原版 EndSpikeFeature）：10 根，半径 2..5，高 76..103，
 // 每 36° 一根，距中心 42 格；size 为 1 或 2 的柱子顶部有铁栏杆笼子。
-// ---------------------------------------------------------------------------
 struct EndSpike {
     int cx, cz, radius, height;
     bool guarded;
@@ -176,23 +172,20 @@ inline void put(uint8_t* out, int baseWX, int baseWZ, int x, int y, int z, uint8
     int lx = x - baseWX, lz = z - baseWZ;
     if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return;
     if (y < 0 || y >= WORLD_HEIGHT) return;
-    out[lx + (lz << 4) + (y << 8)] = id;
+    out[chunkIndex(lx, y, lz)] = id;
 }
 
-// ---------------------------------------------------------------------------
-// 紫颂植株：原版 1.9+ 的 ChorusFlowerBlock.generatePlant / growTreeRecursive。
+// 紫颂植株：原版 1.9+ 的 ChorusFlowerBlock.generatePlant / growTreeRecursive
 // 生成期只写本区块（长到邻块的部分丢掉，邻块生成时会独立再摆一次，不会重复）；
 // 随机数消耗顺序与原版递归版一致。
-// ---------------------------------------------------------------------------
 constexpr int CHORUS_MAX_SPREAD = 8;  // 原版 placed_feature/chorus_plant 传的 8
-const int kChorusOff[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}}; // 北 东 南 西
 
 bool chorusNeighborsEmpty(const uint8_t* out, int baseWX, int baseWZ, int x, int y, int z, int ignore) {
     for (int i = 0; i < 4; i++) {
         if (i == ignore) continue;
-        int lx = x + kChorusOff[i][0] - baseWX, lz = z + kChorusOff[i][1] - baseWZ;
+        int lx = x + kDir4[i][0] - baseWX, lz = z + kDir4[i][1] - baseWZ;
         if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return false;
-        if (out[lx + (lz << 4) + (y << 8)] != B_AIR) return false;
+        if (out[chunkIndex(lx, y, lz)] != B_AIR) return false;
     }
     return true;
 }
@@ -200,7 +193,7 @@ bool chorusNeighborsEmpty(const uint8_t* out, int baseWX, int baseWZ, int x, int
 bool chorusEmpty(const uint8_t* out, int baseWX, int baseWZ, int x, int y, int z) {
     int lx = x - baseWX, lz = z - baseWZ;
     if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return false;
-    return out[lx + (lz << 4) + (y << 8)] == B_AIR;
+    return out[chunkIndex(lx, y, lz)] == B_AIR;
 }
 
 void growChorus(uint8_t* out, int baseWX, int baseWZ, int x, int y, int z, McCnRandom& rnd) {
@@ -230,7 +223,7 @@ void growChorus(uint8_t* out, int baseWX, int baseWZ, int x, int y, int z, McCnR
             if (cur.depth == 0) stems++;
             for (int i = 0; i < stems; i++) {
                 int dir = rnd.nextInt(4);
-                int tx = cur.x + kChorusOff[dir][0], tz = cur.z + kChorusOff[dir][1];
+                int tx = cur.x + kDir4[dir][0], tz = cur.z + kDir4[dir][1];
                 int ty = cur.y + height;
                 if (std::abs(tx - x) >= CHORUS_MAX_SPREAD || std::abs(tz - z) >= CHORUS_MAX_SPREAD) continue;
                 if (!chorusEmpty(out, baseWX, baseWZ, tx, ty, tz)) continue;
@@ -238,8 +231,8 @@ void growChorus(uint8_t* out, int baseWX, int baseWZ, int x, int y, int z, McCnR
                 if (!chorusNeighborsEmpty(out, baseWX, baseWZ, tx, ty, tz, (dir + 2) % 4)) continue;
                 placedStem = true;
                 put(out, baseWX, baseWZ, tx, ty, tz, B_CHORUS_PLANT);
-                put(out, baseWX, baseWZ, tx + kChorusOff[(dir + 2) % 4][0], ty,
-                    tz + kChorusOff[(dir + 2) % 4][1], B_CHORUS_PLANT);
+                put(out, baseWX, baseWZ, tx + kDir4[(dir + 2) % 4][0], ty,
+                    tz + kDir4[(dir + 2) % 4][1], B_CHORUS_PLANT);
                 if (sp < 64) stack[sp++] = {tx, ty, tz, cur.depth + 1};
             }
         }
@@ -258,18 +251,16 @@ void decorateChorus(uint32_t seed, int cx, int cz, uint8_t* out) {
         int lx = rnd.nextInt(16), lz = rnd.nextInt(16);
         int top = -1;
         for (int y = WORLD_HEIGHT - 1; y >= 0; y--)
-            if (out[lx + (lz << 4) + (y << 8)] != B_AIR) { top = y; break; }
+            if (out[chunkIndex(lx, y, lz)] != B_AIR) { top = y; break; }
         if (top < 0 || top + 1 >= WORLD_HEIGHT) continue;
-        if (out[lx + (lz << 4) + (top << 8)] != B_END_STONE) continue;
+        if (out[chunkIndex(lx, top, lz)] != B_END_STONE) continue;
         growChorus(out, baseWX, baseWZ, baseWX + lx, top + 1, baseWZ + lz, rnd);
     }
 }
 
-// ---------------------------------------------------------------------------
 // 返回传送门（原版 EndPodiumFeature，生成期用 active=false 的分支）
 // 以 (0,64,0) 为中心：2.5 格内是 3×3 的末地门 + 基岩环，3.5 格内铺末地石，
-// 中心立 4 格基岩柱，柱上四面挂火把。
-// ---------------------------------------------------------------------------
+// 中心立 4 格基岩柱，柱上四面挂火把
 void placePodium(uint8_t* out, int baseWX, int baseWZ, int oy) {
     for (int x = -4; x <= 4; x++) {
         for (int z = -4; z <= 4; z++) {
@@ -287,7 +278,7 @@ void placePodium(uint8_t* out, int baseWX, int baseWZ, int oy) {
             int lx = x - baseWX, lz = z - baseWZ;
             if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
             int yBottom = oy - 2;
-            while (yBottom > 1 && out[lx + (lz << 4) + (yBottom << 8)] == B_AIR) yBottom--;
+            while (yBottom > 1 && out[chunkIndex(lx, yBottom, lz)] == B_AIR) yBottom--;
             for (int y = yBottom; y <= oy - 2; y++)
                 put(out, baseWX, baseWZ, x, y, z, rim ? B_BEDROCK : B_END_STONE);
         }
@@ -300,9 +291,9 @@ void placePodium(uint8_t* out, int baseWX, int baseWZ, int oy) {
     put(out, baseWX, baseWZ, 0, oy + 2, -1, B_WALL_TORCH_N);
 }
 
-// 返回传送门底座 y：从 y=70 向下找 (0,0) 列的第一个实心方块。
+// 返回传送门底座 y：从 y=70 向下找 (0,0) 列的第一个实心方块
 // (0,0) 恰是采样列（fx=fz=0），用竖向 lerp 公式算出的密度与区块 (0,0) 的
-// 生成数组逐格一致——四个宿主区块不读数组也能算出同一个 y（生成与顺序无关）。
+// 生成数组逐格一致——四个宿主区块不读数组也能算出同一个 y（生成与顺序无关）
 // 一直扫到 y=8：主岛表面高度随种子在 40..64 之间浮动，只扫 64..70 的话
 // 表面偏低的种子会拿 63 兜底，祭坛就悬空了。
 int podiumOriginY(uint32_t seed) {
@@ -321,9 +312,7 @@ int podiumOriginY(uint32_t seed) {
     return 63;
 }
 
-// ---------------------------------------------------------------------------
 // 外岛：原版 end_island feature（随机半径 4..6 的圆盘，逐层缩小）
-// ---------------------------------------------------------------------------
 void placeIsland(uint8_t* out, int baseWX, int baseWZ, int ox, int oy, int oz, McCnRandom& rnd) {
     // 原版用 float 尺寸，每层减 nextInt(2) + 0.5，这里用 1/2 整数累加器等价还原
     int size2 = (rnd.nextInt(3) + 4) * 2;
@@ -341,13 +330,13 @@ void placeIsland(uint8_t* out, int baseWX, int baseWZ, int ox, int oy, int oz, M
 }
 
 // 群系判定（原版 TheEndBiomeSource）：中心 64 区块内是 the_end，
-// 之外才是 end_highlands / small_end_islands 这些外岛群系。
+// 之外才是 end_highlands / small_end_islands 这些外岛群系
 // 本实现只做"是不是外岛群系"，用来决定放不放外岛/紫颂（对齐原版 features 表）。
 inline bool isOuterBiomeChunk(int cx, int cz) {
     return (int64_t)cx * cx + (int64_t)cz * cz > 4096LL;
 }
 
-// 一个区块里 end_island_decorated 的落地。
+// 一个区块里 end_island_decorated 的落地
 // 外岛半径最多 7 格，会跨区块，所以把 3×3 邻域的候选都算一遍，
 // put 只保留属于本区块的方块（各区块独立、与生成顺序无关）。
 void decorateIslands(uint32_t seed, int cx, int cz, uint8_t* out) {
@@ -390,7 +379,7 @@ void generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
     // 采样格点：水平与垂直都每 4 格一个点（end.json 的 size_horizontal=2、
     // size_vertical=1，对应 8×8×4 方块一格；NoiseInterpolator 对每个方块插值，
     // 这里按 4 格步长直接采样，结果等价且省内存）。
-    constexpr int SN = 11;   // x/z 采样点 sx∈[0,10] → cellX = sx-1 ∈ [-1,9]
+    constexpr int SN = 11;   // x/z 采样点，步长 4 格；三线性插值只用到下标 1..5，见下面插值处
     constexpr int SNY = 34;  // y 采样点 0..33 → y = 0..128
     double samples[SN][SNY][SN];
 
@@ -412,7 +401,7 @@ void generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
         }
     }
 
-    // 逐方块三线性插值
+    // 逐方块三线性插值。
     for (int lz = 0; lz < CHUNK_SIZE; lz++) {
         const int cz0 = lz >> 2;
         const double fz = (lz & 3) * 0.25;
@@ -431,12 +420,12 @@ void generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
                 double b0 = mcLerp(fx, v010, v110), b1 = mcLerp(fx, v011, v111);
                 double c0 = mcLerp(fy, a0, b0), c1 = mcLerp(fy, a1, b1);
                 double d = mcLerp(fz, c0, c1);
-                if (d > 0.0) out[lx + (lz << 4) + (y << 8)] = B_END_STONE;
+                if (d > 0.0) out[chunkIndex(lx, y, lz)] = B_END_STONE;
             }
         }
     }
 
-    // ---- 黑曜石柱（原版 EndSpikeFeature.placeSpike）----
+    // 黑曜石柱（原版 EndSpikeFeature.placeSpike）
     // 柱子半径 2..5 会跨区块：原版只在柱心所在区块放置（feature 可写入邻块），
     // 本引擎逐区块自足，改为"包围盒与当前区块相交就算一遍"，put 只留本块部分。
     EndSpike spikes[10];
@@ -472,13 +461,13 @@ void generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
         }
     }
 
-    // ---- 返回传送门 ----
+    // 返回传送门
     // 结构以 (0,0) 为中心、半径 4，会跨到西北邻块；四个宿主区块各算一遍，
     // put 只留本块部分；底座 y 由种子直接算（见 podiumOriginY），各块结果一致。
     if (cx >= -1 && cx <= 0 && cz >= -1 && cz <= 0)
         placePodium(out, baseWX, baseWZ, podiumOriginY(seed));
 
-    // ---- 末地平台 ----
+    // 末地平台
     // 5×5 以 (100,0) 为中心：z∈[-2,2] 跨到区块 (6,-1)，按范围相交判定而非中心区块
     if (END_PLATFORM_X + 2 >= baseWX && END_PLATFORM_X - 2 < baseWX + CHUNK_SIZE &&
         END_PLATFORM_Z + 2 >= baseWZ && END_PLATFORM_Z - 2 < baseWZ + CHUNK_SIZE) {
@@ -490,7 +479,7 @@ void generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
             }
     }
 
-    // ---- 外岛与紫颂只在外岛群系生成（the_end 中心群系里没有这两个 feature）----
+    // 外岛与紫颂只在外岛群系生成（the_end 中心群系里没有这两个 feature）
     if (isOuterBiomeChunk(cx, cz)) {
         decorateIslands(seed, cx, cz, out);
         decorateChorus(seed, cx, cz, out);
@@ -499,7 +488,7 @@ void generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
 
 int surfaceHeight(const uint8_t* out, int lx, int lz) {
     for (int y = WORLD_HEIGHT - 1; y >= 0; y--)
-        if (out[lx + (lz << 4) + (y << 8)] != B_AIR) return y;
+        if (out[chunkIndex(lx, y, lz)] != B_AIR) return y;
     return -1;
 }
 

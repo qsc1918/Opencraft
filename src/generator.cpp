@@ -25,7 +25,7 @@ const Ore kOres[] = {
     {B_DIAMOND, 1, 7, 0, 16},
 };
 
-inline uint8_t& ref(uint8_t* b, int x, int y, int z) { return b[x + (z << 4) + (y << 8)]; }
+inline uint8_t& ref(uint8_t* b, int x, int y, int z) { return b[chunkIndex(x, y, z)]; }
 
 struct SurfaceInfo {
     int height;      // 地表最高方块 y
@@ -48,7 +48,7 @@ void placeTree(uint8_t* b, int wx, int wz, int rootY, Rng& rng) {
     int cxBase = (wx & 15);
     int czBase = (wz & 15);
     int trunk = 4 + rng.irange(0, 2);
-    // 先放树干，避免之后被树叶覆盖
+    // 先放树干，避免之后被树叶覆盖。
     for (int i = 0; i < trunk; i++) {
         int y = rootY + 1 + i;
         if (y < 2 || y >= WORLD_HEIGHT) continue;
@@ -75,17 +75,12 @@ void placeTree(uint8_t* b, int wx, int wz, int rootY, Rng& rng) {
 
 } // 匿名命名空间
 
-// ===========================================================================
 // 下界生成见 nethergen.cpp（原版密度函数 + 表面规则 + 下界荒地群系）。
-// ===========================================================================
 void gen::generateNether(uint32_t seed, int cx, int cz, uint8_t* out) {
     nethergen::generateNether(seed, cx, cz, out);
 }
 
-
-// ===========================================================================
 // 按维度分发。末地实现在 endgen.cpp（原版密度函数 + 结构 + 植被）。
-// ===========================================================================
 void gen::generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
     endgen::generateEnd(seed, cx, cz, out);
 }
@@ -110,7 +105,7 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
 
     int baseWX = cx * CHUNK_SIZE, baseWZ = cz * CHUNK_SIZE;
 
-    // 预计算每列地表高度供洞穴阶段使用，省掉之后 16×16×128 全扫描。
+    // 预计算每列地表高度供洞穴阶段使用，省掉之后 16×16×128 全扫描
     // 此时每列最高非空气块就是 height（≥5）；地形极低时 (height<5) 为 y=4 基岩。
     int localTop[CHUNK_SIZE][CHUNK_SIZE];
 
@@ -135,7 +130,7 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
             ref(out, lx, 0, lz) = B_BEDROCK;
             for (int y = 1; y <= 4; y++) {
                 float chance = 0.9f - y * 0.18f;
-                // 逐方块确定性随机
+                // 逐方块确定性随机。
                 uint32_t hsh = hash32((uint32_t)wx * 0x9e3779b9U ^ (uint32_t)wz ^ (uint32_t)(y * 97)) * 0x85ebca6bU;
                 float r = (hsh & 0xFFFF) * (1.0f / 65535.0f);
                 ref(out, lx, y, lz) = r < chance ? B_BEDROCK : B_STONE;
@@ -212,7 +207,7 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
             if (height < SEA_LEVEL) continue;
             uint8_t top = ref(out, lx, height, lz);
             if (top != B_GRASS && top != B_SNOW) continue;
-            // 避开区块边界，防止树跨到邻块
+            // 避开区块边界，防止树跨到邻块。
             if (lx < 2 || lx >= CHUNK_SIZE - 2 || lz < 2 || lz >= CHUNK_SIZE - 2) continue;
             SurfaceInfo si = surfaceFor(tempN, moistN, wx, wz, height);
             if (si.desert) continue;
@@ -228,7 +223,7 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
     }
 
     // 注水：海/湖列（地表低于海平面）整列灌满；陆地上低于海平面的空气
-    // 多是洞穴，只按低频噪声约 20% 注水，避免地下变成原版含水层那样的大湖。
+    // 多是洞穴，只按低频噪声阈值注水，避免地下变成原版含水层那样的大湖。
     Noise waterN(seed ^ 0xb5297a4dU);
     for (int lx = 0; lx < CHUNK_SIZE; lx++) {
         for (int lz = 0; lz < CHUNK_SIZE; lz++) {

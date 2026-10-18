@@ -1,11 +1,8 @@
 #pragma once
-// ===========================================================================
 // mobpath.hpp — 原版寻路的移植（net/minecraft/world/level/pathfinder/*）
-//
 // 逐条对照 26.2 反编译源码：Node / Target / BinaryHeap / Path / PathFinder /
-// WalkNodeEvaluator。方块世界换成 World::getBlock；碰撞用 mobs::boxSolid。
+// WalkNodeEvaluator。方块世界换成 World::getBlock；碰撞用 mobs::boxSolid
 // 坐标系：方块整数坐标（Node.x/y/z 是"脚下方块"的坐标），与原版一致。
-// ===========================================================================
 #include "entity.hpp"
 #include <cstdint>
 #include <deque>
@@ -14,7 +11,7 @@
 
 namespace mobpath {
 
-// 目标方块坐标
+// 目标方块坐标。
 struct BlockPos3 { int x = 0, y = 0, z = 0; };
 
 // PathType：值与原版 PathType 的默认扣分一致（PathType.java）
@@ -34,7 +31,7 @@ enum class PathType : uint8_t {
 };
 float malusOf(PathType t);   // 原版 PathType 枚举自带的默认扣分
 
-// ---- Node / Target（Target 是带"最佳节点"记忆的 Node）----
+// Node / Target（Target 是带"最佳节点"记忆的 Node）
 struct Node {
     int x = 0, y = 0, z = 0;
     int heapIdx = -1;
@@ -59,7 +56,7 @@ struct Node {
     bool inOpenSet() const { return heapIdx >= 0; }
 };
 
-// ---- 二叉堆（BinaryHeap.java：按 f 排序的最小堆）----
+// 二叉堆（BinaryHeap.java：按 f 排序的最小堆）
 class BinaryHeap {
 public:
     Node* insert(Node* n);
@@ -73,7 +70,7 @@ private:
     std::vector<Node*> heap_;
 };
 
-// ---- Path（找到的路径；节点指针归 NodeEvaluator 的节点池所有）----
+// Path（找到的路径；节点指针归 NodeEvaluator 的节点池所有）
 class Path {
 public:
     std::vector<Node*> nodes;
@@ -84,12 +81,12 @@ public:
     bool isDone() const { return next >= (int)nodes.size(); }
     void advance() { next++; }
     Node* getNextNode() const { return nodes[next]; }
-    // 原版 getEntityPosAtNode：节点中心向 bbWidth 偏移半格
+    // 原版 getEntityPosAtNode：节点中心向 bbWidth 偏移半格。
     void getNextEntityPos(float bbWidth, float& x, float& y, float& z) const;
     void getNextNodePos(int& x, int& y, int& z) const;
 };
 
-// ---- A*（PathFinder.java）----
+// A*（PathFinder.java）
 class PathFinder {
 public:
     explicit PathFinder(int maxVisitedNodes) : maxVisitedNodes_(maxVisitedNodes) {}
@@ -104,7 +101,7 @@ private:
     BinaryHeap openSet_;
 };
 
-// ---- WalkNodeEvaluator（节点生成与地形判定）----
+// WalkNodeEvaluator（节点生成与地形判定）
 class NodeEvaluator {
 public:
     NodeEvaluator();   // 初始化 PathType → 扣分表
@@ -115,7 +112,7 @@ public:
     int getNeighbors(Node* out[32], Node* pos);
     PathType getPathType(int x, int y, int z);
     PathType getPathTypeOfMob(int x, int y, int z);
-    // 原版 getFloorLevel：pos 下方碰撞体的顶面高度
+    // 原版 getFloorLevel：pos 下方碰撞体的顶面高度。
     double getFloorLevel(int x, int y, int z);
     void setCanFloat(bool v) { canFloat_ = v; }
     bool canFloat() const { return canFloat_; }

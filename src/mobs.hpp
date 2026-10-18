@@ -1,16 +1,13 @@
 #pragma once
-// ===========================================================================
 // mobs.hpp — 生物（被动/敌对）与玩家实体
-//
 // AI 架构与物理都是原版移植（见 mobai.hpp/mobpath.hpp）：
 //   每整刻顺序 = 原版 serverAiStep + travel：
 //     goalSelector → navigation → moveControl → jumpControl → lookControl
 //     → applyInput → moveRelative → move(碰撞) → 重力/阻力
 //   关键点：原版 Mob.setSpeed(speed) 会同时把前进输入 zza 设为 speed，
 //   所以地面加速度 = speed²（摩擦 0.6 下稳态位移 ≈ 2.2*speed² 格/刻，
-//   猪 0.25 → ≈2.8 m/s，与原版一致）。
+//   猪 0.25 → ≈2.8 m/s，与原版一致）
 // 特殊行为（苦力怕引信、末影人瞬移、烈焰人火球等）走 aiExtra 钩子。
-// ===========================================================================
 #include "dimensions.hpp"
 #include "entity.hpp"
 #include "mobai.hpp"
@@ -18,9 +15,9 @@
 #include <memory>
 #include <vector>
 
-// 生物共用的基类
+// 生物共用的基类。
 struct Mob : Entity {
-    // ---- 属性（原版 Attributes）----
+    // 属性（原版 Attributes）
     float moveSpeed = 0.10f;     // generic.movement_speed
     bool  hostile = false;       // 是否敌对（决定目标选择）
     float damage = 3.0f;         // 近战伤害
@@ -30,7 +27,7 @@ struct Mob : Entity {
     int   teleportTimer = 0;     // 末影人瞬移冷却
     int   angerTicks = 0;        // 末影人被注视后的愤怒时间
 
-    // ---- 原版运行时字段 ----
+    // 原版运行时字段
     float speed = 0.0f;          // Mob.speed：加速度基准
     float zza = 0.0f, xxa = 0.0f;
     // 原版 Mob.setSpeed：速度同时写进"前进输入" zza —— 这是移动的关键
@@ -47,7 +44,7 @@ struct Mob : Entity {
     int   attackCooldown = 0;
     World* world = nullptr;      // 每刻由 tick 填（Goal 用来找玩家/读方块）
 
-    // ---- AI 组件 ----
+    // AI 组件
     ai::GoalSelector goals;
     ai::PathNavigation nav;
     ai::MoveControl moveCtl;
@@ -122,7 +119,7 @@ struct Enderman : HostileMob {
     void teleportRandom(World& w);
 };
 
-// ---- 弹射物 ----
+// 弹射物
 struct Arrow : Entity {         // 箭：受重力，命中造成伤害与击退
     Arrow();
     void tick(World& w, float dt) override;
@@ -132,7 +129,7 @@ struct Fireball : Entity {      // 小火球：不落，命中点火并造成伤
     void tick(World& w, float dt) override;
 };
 
-// ---- 玩家实体 ----
+// 玩家实体
 struct PlayerEntity : Entity {
     int regenTimer = 0;
     int hurtFlash = 0;

@@ -1,5 +1,6 @@
 #include "portal.hpp"
 #include "blockupdate.hpp"
+#include "specs.hpp"
 #include "world.hpp"
 #include <algorithm>
 #include <array>
@@ -14,11 +15,9 @@ bool isPortalBlock(uint8_t id) {
     return id == B_NETHER_PORTAL || id == B_END_PORTAL;
 }
 
-// ---------------------------------------------------------------------------
 // 下界传送门：黑曜石矩形框识别（对齐 MC PortalShape，简化为无需朝向）
-// 从空位 (x,y,z) 出发，在水平面内找 2..21 宽、3..21 高的黑曜石框。
+// 从空位 (x,y,z) 出发，在水平面内找 2..21 宽、3..21 高的黑曜石框
 // 返回框左下角/宽/高/轴；找不到返回 false。
-// ---------------------------------------------------------------------------
 struct Frame {
     int x0, y0, z0;     // 内腔左下角（内腔第一个方块的下界）
     int w, h;           // 内腔宽（沿轴）、高
@@ -29,8 +28,8 @@ static bool isObsidian(const World& w, int x, int y, int z) {
     return w.getBlock(x, y, z) == B_OBSIDIAN;
 }
 
-// 从 (x,y,z) 沿 dir（±1 水平方向）找右侧黑曜石边界。
-// 调用者保证 y 是内腔最底行（每格的 below 都是黑曜石地板）。
+// 从 (x,y,z) 沿 dir（±1 水平方向）找右侧黑曜石边界
+// 调用者保证 y 是内腔最底行（每格的 below 都是黑曜石地板）
 // 返回内腔宽（不含两侧黑曜石）；失败返回 -1。
 static int scanWidthUntilObsidian(const World& w, int x, int y, int z, int dx, int dz, int maxW) {
     for (int i = 1; i <= maxW; i++) {
@@ -44,7 +43,7 @@ static int scanWidthUntilObsidian(const World& w, int x, int y, int z, int dx, i
 }
 
 bool tryLightNetherPortal(World& w, int fx, int fy, int fz) {
-    // (fx,fy,fz) 是玩家用打火石瞄准的位面（门洞内或瞄准格）；MC 允许点门洞内任意空位。
+    // (fx,fy,fz) 是玩家用打火石瞄准的位面（门洞内或瞄准格）；MC 允许点门洞内任意空位
     // 先向下找内腔最底行：below 为黑曜石（地板）的那一行。
     int baseY = fy;
     while (baseY > WORLD_MIN_Y) {
@@ -76,7 +75,7 @@ bool tryLightNetherPortal(World& w, int fx, int fy, int fz) {
         // startX/startZ 是内腔最左（贴着左黑曜石）的格；右扫确定宽度。
         int width = scanWidthUntilObsidian(w, startX, by, startZ, dx, dz, 21);
         if (width < 2 || width > 21) continue;
-        // 左边界（startX 左侧）必须确实是黑曜石
+        // 左边界（startX 左侧）必须确实是黑曜石。
         if (!isObsidian(w, startX - dx, by, startZ - dz)) continue;
 
         // 高度：从 by 向上，逐层要求左右黑曜石 + 内部空，直到顶框。
@@ -93,7 +92,7 @@ bool tryLightNetherPortal(World& w, int fx, int fy, int fz) {
             }
             if (!allEmpty) break;
             height++;
-            // 顶框检查：本行上方整行都是黑曜石
+            // 顶框检查：本行上方整行都是黑曜石。
             bool topFrame = true;
             for (int i = 0; i < width; i++)
                 if (!isObsidian(w, startX + dx * i, hy + 1, startZ + dz * i)) { topFrame = false; break; }
@@ -120,7 +119,7 @@ bool tryLightNetherPortal(World& w, int fx, int fy, int fz) {
                 w.forceGenerateChunk(cx, cz);
     }
 
-    // 填充 nether_portal 方块
+    // 填充 nether_portal 方块。
     int dx = best.axis == 0 ? 1 : 0;
     int dz = best.axis == 0 ? 0 : 1;
     for (int i = 0; i < best.w; i++)
@@ -132,8 +131,7 @@ bool tryLightNetherPortal(World& w, int fx, int fy, int fz) {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// 末地传送门：12 个框架围成 5×5 方环（四角无框架），中心 3×3 为 portal。
+// 末地传送门：12 个框架围成 5×5 方环（四角无框架），中心 3×3 为 portal
 // 布局（5×5，F=框架位置，. = 中心 portal 区）：
 //   .FFF.
 //   F...F
@@ -141,8 +139,7 @@ bool tryLightNetherPortal(World& w, int fx, int fy, int fz) {
 //   F...F
 //   .FFF.
 // 每个框架还要朝向正确：原版 BlockPattern 要求上边朝南、下边朝北、左边朝东、
-// 右边朝西（即都指向环心），否则不激活。
-// ---------------------------------------------------------------------------
+// 右边朝西（即都指向环心），否则不激活
 // 检查 (x0,cy,z0) 为基准的 5×5 方环是否满足激活条件
 static bool allFramesHaveEye(const World& w, int x0, int cy, int z0) {
     return isCompleteRingAt([&](int x, int y, int z) { return w.getBlock(x, y, z); }, x0, cy, z0);
@@ -150,7 +147,7 @@ static bool allFramesHaveEye(const World& w, int x0, int cy, int z0) {
 
 uint8_t frameIdForPlacement(float yaw) {
     // 原版 getStateForPlacement 用 context.getHorizontalDirection().getOpposite()：
-    // 玩家朝哪边看，框架就背对他。
+    // 玩家朝哪边看，框架就背对他
     // 本工程相机 forward = (sin yaw, *, cos yaw)：yaw=0 看 +Z（南）、π/2 看 +X（东）。
     float a = std::fmod(yaw, 6.2831853f);
     if (a < 0) a += 6.2831853f;
@@ -172,7 +169,7 @@ bool tryPlaceEyeOfEnder(World& w, int fx, int fy, int fz) {
         for (int rz = -4; rz <= 4; rz++)
             w.forceGenerateChunk(blockToChunkCoord(fx + rx), blockToChunkCoord(fz + rz));
 
-    // 变成有眼框架（保留原朝向）。原版插眼与生成末地传送门都不产生 NC 更新
+    // 变成有眼框架（保留原朝向）。原版插眼与生成末地传送门都不产生 NC 更新。
     w.setBlock(fx, fy, fz, frameId(blockFrameFacing(b), true), bu::U_NO_NC);
 
     // 检测：以 (fx,fz) 为环上某格，反推 5×5 方环的左上角基准
@@ -199,7 +196,6 @@ bool tryPlaceEyeOfEnder(World& w, int fx, int fy, int fz) {
 
 // 洪水填充：清掉与起点相连的同一种传送门方块（原版里门是整体破碎的）
 static void floodClearPortal(World& w, int x, int y, int z, uint8_t portalId) {
-    static const int d[6][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
     if (w.getBlock(x, y, z) != portalId) return;
     std::vector<std::array<int, 3>> stack;
     stack.push_back({x, y, z});
@@ -207,7 +203,7 @@ static void floodClearPortal(World& w, int x, int y, int z, uint8_t portalId) {
     while (!stack.empty()) {
         std::array<int, 3> p = stack.back();
         stack.pop_back();
-        for (const auto& dd : d) {
+        for (const auto& dd : kDir6) {
             int nx = p[0] + dd[0], ny = p[1] + dd[1], nz = p[2] + dd[2];
             if (w.getBlock(nx, ny, nz) == portalId) {
                 w.setBlock(nx, ny, nz, B_AIR);
@@ -228,36 +224,35 @@ void breakEndPortal(World& w, int x, int y, int z) {
 }
 
 void onBlockRemoved(World& w, int x, int y, int z, uint8_t oldId) {
-    static const int d[6][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
     if (oldId == B_NETHER_PORTAL) {
-        // 起点可能已经被挖成空气了，所以连自己和六个邻格一起试着扩散
+        // 起点可能已经被挖成空气了，所以连自己和六个邻格一起试着扩散。
         if (w.getBlock(x, y, z) == B_NETHER_PORTAL) breakNetherPortal(w, x, y, z);
-        for (const auto& dd : d) {
+        for (const auto& dd : kDir6) {
             int nx = x + dd[0], ny = y + dd[1], nz = z + dd[2];
             if (w.getBlock(nx, ny, nz) == B_NETHER_PORTAL) breakNetherPortal(w, nx, ny, nz);
         }
         return;
     }
     if (oldId == B_END_PORTAL) {
-        // 挖掉末地门方块：相连的门方块整体破碎
+        // 挖掉末地门方块：相连的门方块整体破碎。
         if (w.getBlock(x, y, z) == B_END_PORTAL) breakEndPortal(w, x, y, z);
-        for (const auto& dd : d) {
+        for (const auto& dd : kDir6) {
             int nx = x + dd[0], ny = y + dd[1], nz = z + dd[2];
             if (w.getBlock(nx, ny, nz) == B_END_PORTAL) breakEndPortal(w, nx, ny, nz);
         }
         return;
     }
     if (blockIsPortalFrame(oldId)) {
-        // 破坏末地门框架：环内的末地门方块跟着破碎
-        for (const auto& dd : d) {
+        // 破坏末地门框架：环内的末地门方块跟着破碎。
+        for (const auto& dd : kDir6) {
             int nx = x + dd[0], ny = y + dd[1], nz = z + dd[2];
             if (w.getBlock(nx, ny, nz) == B_END_PORTAL) breakEndPortal(w, nx, ny, nz);
         }
         return;
     }
     if (oldId != B_OBSIDIAN) return;
-    // 破坏框架方块：贴着它的整扇门一起消失
-    for (const auto& dd : d) {
+    // 破坏框架方块：贴着它的整扇门一起消失。
+    for (const auto& dd : kDir6) {
         int nx = x + dd[0], ny = y + dd[1], nz = z + dd[2];
         if (w.getBlock(nx, ny, nz) == B_NETHER_PORTAL) {
             breakNetherPortal(w, nx, ny, nz);
@@ -266,13 +261,11 @@ void onBlockRemoved(World& w, int x, int y, int z, uint8_t oldId) {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 下界门目的地：对齐原版 PortalForcer（26.2）
 // 原版流程：按坐标比例算出近似出口 → 在附近找已有的门（POI 方形搜索），
 // 找不到就 createPortal 造一扇：33×33 方形螺旋找一列"底下实心、上方 4×4 可替换"的
-// 空腔，放黑曜石框 + 2×3 传送门方块；落点取门内横向中点、底排。
+// 空腔，放黑曜石框 + 2×3 传送门方块；落点取门内横向中点、底排
 // 本实现没有 POI 索引，只在"已生成的区块"里找已有门（回程时原门通常还在内存里）。
-// ---------------------------------------------------------------------------
 namespace {
 
 // 能不能被门/门框替换（原版 canBeReplaced() && fluidState.isEmpty()：水/岩浆不算空位）
@@ -305,7 +298,7 @@ inline Vec3 portalLandingPos(const World& w, int px, int py, int pz, int axis) {
 
 int inferPortalAxis(const World& w, int x, int y, int z) {
     if (w.getBlock(x, y, z) != B_NETHER_PORTAL) return -1;
-    // 门宽方向那一侧一定有同门方块；另一侧是黑曜石框
+    // 门宽方向那一侧一定有同门方块；另一侧是黑曜石框。
     bool xSide = w.getBlock(x + 1, y, z) == B_NETHER_PORTAL ||
                  w.getBlock(x - 1, y, z) == B_NETHER_PORTAL;
     bool zSide = w.getBlock(x, y, z + 1) == B_NETHER_PORTAL ||
@@ -397,7 +390,7 @@ bool createNetherPortal(World& w, int tx, int ty, int tz, int axis, Vec3& outPos
     if (!haveFull && havePart) { haveFull = true; fx = px; fy = py; fz = pz; }
 
     if (!haveFull) {
-        // 兜底：硬凿一个口袋（原版同款），保证一定能造出门
+        // 兜底：硬凿一个口袋（原版同款），保证一定能造出门。
         int minStartY = std::max(WORLD_MIN_Y + 1, 70), maxStartY = maxY - 9;
         if (maxStartY < minStartY) return false;
         fx = tx - dirX; fz = tz - dirZ;
@@ -416,7 +409,7 @@ bool createNetherPortal(World& w, int tx, int ty, int tz, int axis, Vec3& outPos
             if (width != -1 && width != 2 && height != -1 && height != 3) continue;
             w.setBlock(fx + dirX * width, fy + height, fz + dirZ * width, B_OBSIDIAN);
         }
-    // 门内 2×3
+    // 门内 2×3。
     for (int width = 0; width < 2; width++)
         for (int height = 0; height < 3; height++)
             w.setBlock(fx + dirX * width, fy + height, fz + dirZ * width, B_NETHER_PORTAL);

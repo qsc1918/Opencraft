@@ -1,12 +1,9 @@
 #pragma once
-// ===========================================================================
 // mobai.hpp — 原版生物 AI 架构移植（net/minecraft/world/entity/ai/*）
-//
 // 对照 26.2 反编译源码：GoalSelector/Goal、MoveControl/LookControl/JumpControl、
-// GroundPathNavigation，以及被动生物常用的那几个 Goal。
+// GroundPathNavigation，以及被动生物常用的那几个 Goal
 // Mob（mobs.hpp）持有这些控制器，每整刻按原版顺序 tick：
 //   goalSelector → navigation → moveControl → jumpControl → lookControl → travel
-// ===========================================================================
 #include "mobpath.hpp"
 #include <vector>
 
@@ -14,7 +11,7 @@ struct Mob;   // mobs.hpp（避免循环包含）
 
 namespace ai {
 
-// ---- Goal（Goal.java）----
+// Goal（Goal.java）
 enum class Flag : uint8_t { MOVE, LOOK, JUMP, TARGET };
 
 class Goal {
@@ -34,7 +31,7 @@ public:
     uint32_t flags_ = 0;
 };
 
-// ---- GoalSelector（GoalSelector.java：优先级 + 互斥标志）----
+// GoalSelector（GoalSelector.java：优先级 + 互斥标志）
 class GoalSelector {
 public:
     void add(int prio, Goal* g);
@@ -49,7 +46,7 @@ private:
     Goal* locked_[(int)Flag::TARGET + 1] = {};
 };
 
-// ---- JumpControl（JumpControl.java）----
+// JumpControl（JumpControl.java）
 class JumpControl {
 public:
     void jump() { want_ = true; }
@@ -58,7 +55,7 @@ private:
     bool want_ = false;
 };
 
-// ---- MoveControl（MoveControl.java）----
+// MoveControl（MoveControl.java）
 class MoveControl {
 public:
     void setWantedPosition(double x, double y, double z, double speedModifier);
@@ -67,13 +64,13 @@ public:
     double speedModifier() const { return speedModifier_; }
 private:
     enum class Op { WAIT, MOVE_TO, JUMPING };
-    static float rotlerp(float a, float b, float max);   // 角度插值（度）
+    static float rotlerp(float a, float b, float max);   // 角度插值（弧度）
     double wx_ = 0, wy_ = 0, wz_ = 0;
     double speedModifier_ = 1.0;
     Op op_ = Op::WAIT;
 };
 
-// ---- LookControl（LookControl.java）----
+// LookControl（LookControl.java）
 class LookControl {
 public:
     void setLookAt(double x, double y, double z, float yMaxRotSpeed, float xMaxRotAngle);
@@ -84,11 +81,11 @@ private:
     int cooldown_ = 0;
 };
 
-// ---- GroundPathNavigation（PathNavigation.java + GroundPathNavigation.java）----
+// GroundPathNavigation（PathNavigation.java + GroundPathNavigation.java）
 class PathNavigation {
 public:
     explicit PathNavigation(Mob& mob);
-    // 到指定点（自动算路径）；找不到路径返回 false
+    // 到指定点（自动算路径）；找不到路径返回 false。
     bool moveTo(double x, double y, double z, double speedModifier);
     bool moveToEntity(const Entity& target, double speedModifier);
     void stop();
@@ -113,7 +110,7 @@ private:
     mobpath::NodeEvaluator eval_;
 };
 
-// ---- 常用 Goal（各自的 Java 对应文件已逐条对照）----
+// 常用 Goal（各自的 Java 对应文件已逐条对照）
 
 // FloatGoal：在水里就上浮（0 优先级）
 class FloatGoal : public Goal {
@@ -141,7 +138,7 @@ private:
     double px_ = 0, py_ = 0, pz_ = 0;
 };
 
-// RandomStrollGoal：每 120 刻掷骰，随机找 10 格内的可走点走过去
+// RandomStrollGoal：每 120 刻掷骰，随机找 10 格内的可走点走过去。
 class RandomStrollGoal : public Goal {
 public:
     RandomStrollGoal(Mob& m, double speedModifier, int interval = 120)
@@ -158,7 +155,7 @@ protected:
     double wx_ = 0, wy_ = 0, wz_ = 0;
 };
 
-// WaterAvoidingRandomStrollGoal：陆生生物优先找不落水的随机点
+// WaterAvoidingRandomStrollGoal：陆生生物优先找不落水的随机点。
 class WaterAvoidingRandomStrollGoal : public RandomStrollGoal {
 public:
     WaterAvoidingRandomStrollGoal(Mob& m, double speedModifier)
@@ -200,7 +197,7 @@ private:
     int lookTime_ = 0;
 };
 
-// MeleeAttackGoal（MeleeAttackGoal.java 的精简版）：追到目标身边打
+// MeleeAttackGoal（MeleeAttackGoal.java 的精简版）：追到目标身边打。
 class MeleeAttackGoal : public Goal {
 public:
     MeleeAttackGoal(Mob& m, double speedModifier, bool mustSee = true)

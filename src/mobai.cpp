@@ -1,19 +1,14 @@
-// ===========================================================================
 // mobai.cpp — 原版 AI 架构移植（对照 26.2：GoalSelector/MoveControl/LookControl/
 // JumpControl/PathNavigation 与常用 Goal）
-// ===========================================================================
 #include "mobai.hpp"
 #include "mobs.hpp"
 #include "blocks.hpp"
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
-#include <cstdio>
 #include <cstdio>
 
 namespace ai {
 
-static const float PI = 3.14159265f;
 static const float DEG2RAD = PI / 180.0f;
 
 // 实体脚下是否在液体里
@@ -31,26 +26,26 @@ static float wrapPi(float a) {
     while (a <= -PI) a += 2 * PI;
     return a;
 }
-// Mth.rotateIfNecessary：把 base 朝 target 转，最多 maxDiff
+// Mth.rotateIfNecessary：把 base 朝 target 转，最多 maxDiff。
 static float rotateIfNecessary(float base, float target, float maxDiff) {
     float d = wrapPi(target - base);
     return base + std::clamp(d, -maxDiff, maxDiff);
 }
 
-// ---- GoalSelector（GoalSelector.java）----
+// GoalSelector（GoalSelector.java）
 void GoalSelector::add(int prio, Goal* g) {
     goals_.push_back({prio, g, false});
 }
 void GoalSelector::tick(Mob& mob) {
     (void)mob;
-    // cleanup：正在跑但条件不再满足的停掉
+    // cleanup：正在跑但条件不再满足的停掉。
     for (auto& w : goals_) {
         if (w.running && !w.goal->canContinueToUse()) {
             w.goal->stop();
             w.running = false;
         }
     }
-    // 锁定的标志位如果对应 goal 已经不在跑，就解锁
+    // 锁定的标志位如果对应 goal 已经不在跑，就解锁。
     for (int f = 0; f <= (int)Flag::TARGET; f++)
         if (locked_[f]) {
             bool stillRunning = false;
@@ -82,13 +77,13 @@ void GoalSelector::tick(Mob& mob) {
         if (w.running) w.goal->tick();
 }
 
-// ---- JumpControl ----
+// JumpControl
 void JumpControl::tick(Mob& mob) {
     mob.jumping = want_;
     want_ = false;
 }
 
-// ---- MoveControl（MoveControl.java）----
+// MoveControl（MoveControl.java）
 void MoveControl::setWantedPosition(double x, double y, double z, double speedModifier) {
     wx_ = x; wy_ = y; wz_ = z;
     speedModifier_ = speedModifier;
@@ -124,7 +119,7 @@ void MoveControl::tick(Mob& mob) {
     }
 }
 
-// ---- LookControl（LookControl.java）----
+// LookControl（LookControl.java）
 void LookControl::setLookAt(double x, double y, double z, float yMaxRotSpeed, float xMaxRotAngle) {
     wx_ = x; wy_ = y; wz_ = z;
     yMaxRotSpeed_ = yMaxRotSpeed;
@@ -136,7 +131,7 @@ void LookControl::tick(Mob& mob) {
         cooldown_--;
         double xd = wx_ - mob.pos.x, zd = wz_ - mob.pos.z;
         if (std::abs(zd) > 1e-5 || std::abs(xd) > 1e-5) {
-            // getYRotD：目标水平角
+            // getYRotD：目标水平角。
             float yRotD = std::atan2((float)zd, (float)xd);
             mob.yHeadRot = rotateIfNecessary(mob.yHeadRot, yRotD, yMaxRotSpeed_);
         }
@@ -157,9 +152,9 @@ void LookControl::tick(Mob& mob) {
         mob.yHeadRot = rotateIfNecessary(mob.yHeadRot, mob.yaw, 50.0f * DEG2RAD);
 }
 
-// ---- PathNavigation（PathNavigation.java + GroundPathNavigation.java）----
+// PathNavigation（PathNavigation.java + GroundPathNavigation.java）
 PathNavigation::PathNavigation(Mob& mob) : mob_(mob) {
-    // 陆地生物可下水（配合 FloatGoal 上浮）；WATER 扣分默认 8 但可通行
+    // 陆地生物可下水（配合 FloatGoal 上浮）；WATER 扣分默认 8 但可通行。
 }
 bool PathNavigation::isDone() const { return path_.isDone(); }
 void PathNavigation::stop() {
@@ -202,7 +197,7 @@ void PathNavigation::tick() {
     if (isDone()) return;
     bool canUpdate = mob_.onGround || inFluid(mob_);
     if (canUpdate) {
-        // followThePath：够近就推进到下一个节点
+        // followThePath：够近就推进到下一个节点。
         float bbW = mob_.type->width;
         float maxDist = bbW > 0.75f ? bbW * 0.5f : 0.75f - bbW * 0.5f;
         int nx, ny, nz;
@@ -216,7 +211,7 @@ void PathNavigation::tick() {
     if (!isDone()) {
         float tx, ty, tz;
         path_.getNextEntityPos(mob_.type->width, tx, ty, tz);
-        // getGroundY：本工程方块都是整格碰撞，直接用节点 y
+        // getGroundY：本工程方块都是整格碰撞，直接用节点 y。
         mob_.moveCtl.setWantedPosition(tx, (double)ty, tz, speedModifier_);
     }
 }
@@ -247,14 +242,14 @@ void PathNavigation::doStuckDetection(Mob& mob, float px, float pz) {
     }
 }
 
-// ---- 随机位置工具（DefaultRandomPos / RandomPos 的等效实现）----
-// 在 mob 周围找可站立点：随机方向 × 距离，向下/向上找地面，类型合法才要。
+// 随机位置工具（DefaultRandomPos / RandomPos 的等效实现）
+// 在 mob 周围找可站立点：随机方向 × 距离，向下/向上找地面，类型合法才要
 static bool findGroundPos(Mob& m, float maxDist, int tries, bool avoidWater,
                           double& ox, double& oy, double& oz) {
     World& w = *m.world;
     for (int i = 0; i < tries; i++) {
-        float a = (float)(rand() % 6283) / 1000.0f;
-        float d = 1.0f + (float)(rand() % 1000) / 1000.0f * (maxDist - 1.0f);
+        float a = rndInt(6283) / 1000.0f;
+        float d = 1.0f + rndInt(1000) / 1000.0f * (maxDist - 1.0f);
         float bx = m.pos.x + std::sin(a) * d;
         float bz = m.pos.z + std::cos(a) * d;
         int ix = (int)std::floor(bx), iz = (int)std::floor(bz);
@@ -274,7 +269,7 @@ static bool findGroundPos(Mob& m, float maxDist, int tries, bool avoidWater,
     return false;
 }
 
-// ---- FloatGoal（FloatGoal.java）----
+// FloatGoal（FloatGoal.java）
 bool FloatGoal::canUse() {
     if (!m_.world) return false;
     uint8_t atFeet = m_.world->getBlock((int)std::floor(m_.pos.x),
@@ -283,10 +278,10 @@ bool FloatGoal::canUse() {
     return atFeet == B_WATER || atFeet == B_LAVA;
 }
 void FloatGoal::tick() {
-    if ((rand() % 5) != 0) m_.jumpCtl.jump();   // 原版 0.8 概率
+    if (rndInt(5) != 0) m_.jumpCtl.jump();   // 原版 0.8 概率
 }
 
-// ---- PanicGoal（PanicGoal.java）----
+// PanicGoal（PanicGoal.java）
 bool PanicGoal::canUse() {
     if (m_.lastHurtTicks <= 0) return false;
     return findRandomPosition();
@@ -301,9 +296,9 @@ void PanicGoal::start() { m_.nav.moveTo(px_, py_, pz_, speed_); }
 bool PanicGoal::canContinueToUse() { return m_.nav.isInProgress(); }
 void PanicGoal::stop() { m_.nav.stop(); }
 
-// ---- RandomStrollGoal（RandomStrollGoal.java）----
+// RandomStrollGoal（RandomStrollGoal.java）
 bool RandomStrollGoal::canUse() {
-    if (rand() % (interval_ / 2 > 0 ? interval_ / 2 : 1) != 0) return false;   // reducedTickDelay
+    if (rndInt(interval_ / 2 > 0 ? interval_ / 2 : 1) != 0) return false;   // reducedTickDelay
     bool ok = getPosition(wx_, wy_, wz_);
     if (getenv("OPENCRAFT_STROLL_DEBUG"))
         fprintf(stderr, "[stroll] %s 找点=%d (%.1f,%.1f,%.1f)\n", m_.type->id, ok ? 1 : 0, wx_, wy_, wz_);
@@ -320,14 +315,14 @@ void RandomStrollGoal::start() {
 bool RandomStrollGoal::canContinueToUse() { return m_.nav.isInProgress(); }
 void RandomStrollGoal::stop() { m_.nav.stop(); }
 
-// ---- WaterAvoidingRandomStrollGoal ----
+// WaterAvoidingRandomStrollGoal
 bool WaterAvoidingRandomStrollGoal::getPosition(double& x, double& y, double& z) {
     return findGroundPos(m_, 10.0f, 10, true, x, y, z);
 }
 
-// ---- LookAtPlayerGoal（LookAtPlayerGoal.java）----
+// LookAtPlayerGoal（LookAtPlayerGoal.java）
 bool LookAtPlayerGoal::canUse() {
-    if ((float)(rand() % 1000) / 1000.0f >= prob_) return false;
+    if (rndInt(1000) / 1000.0f >= prob_) return false;
     if (m_.target) { lookAt_ = m_.target; return true; }
     if (!m_.world) return false;
     Entity* p = mobs::findPlayer(*m_.world);
@@ -339,7 +334,7 @@ bool LookAtPlayerGoal::canContinueToUse() {
     if (!lookAt_ || lookAt_->dead) return false;
     return length(m_.pos - lookAt_->pos) <= dist_ && lookTime_ > 0;
 }
-void LookAtPlayerGoal::start() { lookTime_ = 40 + rand() % 40; }
+void LookAtPlayerGoal::start() { lookTime_ = 40 + rndInt(40); }
 void LookAtPlayerGoal::stop() { lookAt_ = nullptr; }
 void LookAtPlayerGoal::tick() {
     if (!lookAt_) return;
@@ -349,15 +344,15 @@ void LookAtPlayerGoal::tick() {
     lookTime_--;
 }
 
-// ---- RandomLookAroundGoal（RandomLookAroundGoal.java）----
+// RandomLookAroundGoal（RandomLookAroundGoal.java）
 bool RandomLookAroundGoal::canUse() {
-    return (float)(rand() % 1000) / 1000.0f < 0.02f;
+    return rndInt(1000) / 1000.0f < 0.02f;
 }
 void RandomLookAroundGoal::start() {
-    double rnd = 2 * PI * (double)rand() / (double)RAND_MAX;
+    double rnd = 2.0 * PI * rndF();
     relX_ = std::cos(rnd);
     relZ_ = std::sin(rnd);
-    lookTime_ = 20 + rand() % 20;
+    lookTime_ = 20 + rndInt(20);
 }
 void RandomLookAroundGoal::tick() {
     lookTime_--;
@@ -365,7 +360,7 @@ void RandomLookAroundGoal::tick() {
                          m_.pos.z + relZ_, 40.0f * DEG2RAD, 50.0f * DEG2RAD);
 }
 
-// ---- MeleeAttackGoal（MeleeAttackGoal.java 精简版）----
+// MeleeAttackGoal（MeleeAttackGoal.java 精简版）
 bool MeleeAttackGoal::canUse() {
     Entity* t = m_.target;
     if (!t || t->dead) return false;

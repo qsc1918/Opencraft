@@ -1,6 +1,4 @@
-// ===========================================================================
 // platform.cpp — 平台抽象实现（Windows / Linux）
-// ===========================================================================
 #include "platform.hpp"
 #include <atomic>
 #include <cstdio>
@@ -52,7 +50,7 @@ void setThreadPriorityLow() {
 }
 
 void showCursor(bool on) {
-    // X11 的光标是窗口属性，由 window_x11.cpp 处理；这里留个空实现
+    // X11 的光标是窗口属性，由 window_x11.cpp 处理；这里留个空实现。
     (void)on;
 }
 #endif
@@ -64,9 +62,7 @@ std::string join(const std::string& a, const std::string& b) {
     return a + pathSep() + b;
 }
 
-// ---------------------------------------------------------------------------
-// 控制台输入：一个后台线程读整行，主线程 poll 取走
-// ---------------------------------------------------------------------------
+// 控制台输入：一个后台线程读整行，主线程 poll 取走。
 namespace {
 
 std::mutex g_consoleLock;

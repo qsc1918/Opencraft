@@ -1,25 +1,20 @@
 #pragma once
-// ===========================================================================
 // mcnoise.hpp — 原版噪声/随机数复刻
-//
 // 末地、下界的地形生成完全按原版 density_function / noise 数据驱动，
-// 因此这里逐位复刻 MC 的随机源与噪声，保证同种子地形一致。
+// 因此这里逐位复刻 MC 的随机源与噪声，保证同种子地形一致
 // 对齐版本：Java 版 26.2（net.minecraft.world.level.levelgen.synth 等）。
-// ===========================================================================
 #include "util.hpp"
 #include <cstdint>
 #include <vector>
 
-// ---------------------------------------------------------------------------
-// 原版 LegacyRandomSource：48 位 LCG，next(bits) 取高 bits 位。
+// 原版 LegacyRandomSource：48 位 LCG，next(bits) 取高 bits 位
 // 所有原版结构（噪声八度、末地柱）都由它驱动，必须逐位一致。
-// ---------------------------------------------------------------------------
 class McCnRandom {
 public:
     explicit McCnRandom(uint64_t seed) { setSeed(seed); }
     void setSeed(uint64_t seed) { state_ = (seed ^ 25214903917ULL) & 281474976710655ULL; }
 
-    // 高 bits 位；bits 在 1..32
+    // 高 bits 位；bits 在 1..32。
     int32_t next(int bits) {
         state_ = (state_ * 25214903917ULL + 11ULL) & 281474976710655ULL;
         return (int32_t)(state_ >> (48 - bits));
@@ -60,9 +55,7 @@ inline int32_t javaStringHash(const char* s) {
     return h;
 }
 
-// ---------------------------------------------------------------------------
 // Mth 辅助（名字带 mc 前缀，避免和 util.hpp 的 clampf 混淆）
-// ---------------------------------------------------------------------------
 inline double mcLerp(double a, double p0, double p1) { return p0 + a * (p1 - p0); }
 inline double mcSmoothstep(double x) { return x * x * x * (x * (x * 6.0 - 15.0) + 10.0); }
 inline double mcInverseLerp(double v, double a, double b) { return (v - a) / (b - a); }
@@ -73,16 +66,14 @@ inline double mcClampedLerp(double f, double a, double b) {
 inline double mcClampedMap(double v, double fa, double fb, double ta, double tb) {
     return mcClampedLerp(mcInverseLerp(v, fa, fb), ta, tb);
 }
-// 原版 Mth.getSeed：结构定位种子
+// 原版 Mth.getSeed：结构定位种子。
 inline int64_t mcPosSeed(int x, int y, int z) {
     int64_t l = (int64_t)(x * 3129871) ^ ((int64_t)z * 116129781LL) ^ (int64_t)y;
     l = l * l * 42317861LL + l * 11LL;
     return l >> 16;
 }
 
-// ---------------------------------------------------------------------------
 // 原版 ImprovedNoise（Perlin 噪声的单八度）
-// ---------------------------------------------------------------------------
 class McImprovedNoise {
 public:
     explicit McImprovedNoise(McCnRandom& rnd) {
@@ -147,9 +138,7 @@ public:
     double xo = 0, yo = 0, zo = 0;
 };
 
-// ---------------------------------------------------------------------------
 // 原版 SimplexNoise：末地主岛/外岛形状噪声（end_islands）用它
-// ---------------------------------------------------------------------------
 class McSimplexNoise {
 public:
     explicit McSimplexNoise(McCnRandom& rnd) {
@@ -173,12 +162,10 @@ public:
     double xo = 0, yo = 0, zo = 0;
 };
 
-// ---------------------------------------------------------------------------
 // 原版 PerlinNoise：八度叠加的柏林噪声（BlendedNoise 的组成部分）
-// ---------------------------------------------------------------------------
 class McPerlinNoise {
 public:
-    // 原版 createLegacyForBlendedNoise：八度从 lowOctave..0，创建后不再消耗随机源
+    // 原版 createLegacyForBlendedNoise：八度从 lowOctave..0，创建后不再消耗随机源。
     McPerlinNoise(McCnRandom& rnd, int lowOctave);
     ~McPerlinNoise();
     McPerlinNoise(const McPerlinNoise&) = delete;
@@ -198,9 +185,7 @@ private:
     double lowestFreqValueFactor = 1.0;
 };
 
-// ---------------------------------------------------------------------------
 // 原版 BlendedNoise：末地/下界的 base_3d_noise
-// ---------------------------------------------------------------------------
 class McBlendedNoise {
 public:
     // 原版 BlendedNoise(xzScale, yScale, xzFactor, yFactor, smear) + withNewRandom(seed)
@@ -212,7 +197,7 @@ public:
     double compute(int blockX, int blockY, int blockZ) const;
 
 private:
-    // 三段噪声必须按原版顺序共用同一个随机源，指针避免浅拷贝
+    // 三段噪声必须按原版顺序共用同一个随机源，指针避免浅拷贝。
     McPerlinNoise* minLimit;
     McPerlinNoise* maxLimit;
     McPerlinNoise* main;

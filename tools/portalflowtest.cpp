@@ -2,7 +2,7 @@
 //  1) 末地门：按"玩家站环心朝外放框"的方式摆环 → 12 个眼全部插上后应激活中心 3×3；
 //     朝向错一个、缺眼、缺框都不该激活。
 //  2) 下界门：主世界点燃一扇门 → 传到下界应生成/找到新门并给出安全落点；
-//     再传回来应"找到"原来那扇门而不是又造一扇。
+//     再传回来应"找到"原来那扇门而不是又造一扇
 // 用法: portalflowtest [seed]
 #include "blocks.hpp"
 #include "portal.hpp"
@@ -55,15 +55,13 @@ int main(int argc, char** argv) {
     uint32_t seed = argc > 1 ? (uint32_t)std::stoul(argv[1]) : 12345u;
     printf("传送门流程自检（seed=%u）：\n", seed);
 
-    // ------------------------------------------------------------------
     // 1) 末地门激活
-    // ------------------------------------------------------------------
     printf("[末地门]\n");
     {
         World w(seed);
         w.setDimension(DIM_OVERWORLD);
         const int y = 64;
-        // 找一片高空区域摆环，保证周围是空气
+        // 找一片高空区域摆环，保证周围是空气。
         w.forceGenerateChunk(0, 0);
         const int x0 = 8, z0 = 8;
 
@@ -161,9 +159,7 @@ int main(int argc, char** argv) {
               "环上朝向规则：西→东、东→西、北→南、南→北（指向环心）");
     }
 
-    // ------------------------------------------------------------------
     // 2) 下界门目的地
-    // ------------------------------------------------------------------
     printf("[下界门]\n");
     {
         World w(seed);
@@ -204,7 +200,7 @@ int main(int argc, char** argv) {
               "落点脚下是黑曜石/实心块");
         check(w.getBlock(lx, ly + 1, lz) != B_OBSIDIAN && w.getBlock(lx, ly + 1, lz) != B_LAVA,
               "落点头部不是方块/岩浆");
-        // 门框完整性：横向相邻应是门方块，纵向上面还是门方块
+        // 门框完整性：横向相邻应是门方块，纵向上面还是门方块。
         int wx = srcAxis == 0 ? 1 : 0, wz = srcAxis == 0 ? 0 : 1;
         check(w.getBlock(lx + wx, ly, lz + wz) == B_NETHER_PORTAL ||
               w.getBlock(lx - wx, ly, lz - wz) == B_NETHER_PORTAL,
@@ -215,7 +211,7 @@ int main(int argc, char** argv) {
               w.getBlock(lx - wx, ly + 3, lz - wz) == B_OBSIDIAN,
               "新门顶上有黑曜石框");
 
-        // 回主世界：应找到原来那扇门，而不是又造一扇
+        // 回主世界：应找到原来那扇门，而不是又造一扇。
         int bx = (int)std::floor(land.x) * 8, bz = (int)std::floor(land.z) * 8;
         w.setDimension(DIM_OVERWORLD);
         Vec3 back;

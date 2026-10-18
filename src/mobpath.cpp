@@ -1,6 +1,4 @@
-// ===========================================================================
 // mobpath.cpp — 原版寻路移植（对照 26.2：PathFinder/WalkNodeEvaluator 等）
-// ===========================================================================
 #include "mobpath.hpp"
 #include "blocks.hpp"
 #include "mobs.hpp"
@@ -11,6 +9,10 @@
 #include <cstring>
 
 namespace mobpath {
+
+// 水平邻居顺序：东 西 南 北。A* 的邻居遍历顺序会影响同权路径的取舍，
+// 改这里会让寻出来的路不同（仍合法），别顺手调。
+const int kNeighborDir[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
 
 float malusOf(PathType t) {
     switch (t) {
@@ -30,7 +32,7 @@ float malusOf(PathType t) {
     return 0.0f;
 }
 
-// ---- Node ----
+// Node
 float Node::distanceTo(const Node& o) const {
     float dx = (float)(o.x - x), dy = (float)(o.y - y), dz = (float)(o.z - z);
     return std::sqrt(dx * dx + dy * dy + dz * dz);
@@ -39,7 +41,7 @@ float Node::distanceManhattan(const Node& o) const {
     return (float)(std::abs(o.x - x) + std::abs(o.y - y) + std::abs(o.z - z));
 }
 
-// ---- BinaryHeap（BinaryHeap.java）----
+// BinaryHeap（BinaryHeap.java）
 Node* BinaryHeap::insert(Node* n) {
     if (heap_.size() == heap_.capacity()) heap_.reserve(heap_.capacity() * 2 + 128);
     heap_.push_back(n);
@@ -94,7 +96,7 @@ void BinaryHeap::changeCost(Node* n, float newCost) {
     else downHeap(n->heapIdx);
 }
 
-// ---- Path ----
+// Path
 void Path::getNextEntityPos(float bbWidth, float& x, float& y, float& z) const {
     const Node* n = nodes[next];
     x = (float)n->x + (int)(bbWidth + 1.0f) * 0.5f;
@@ -106,7 +108,7 @@ void Path::getNextNodePos(int& x, int& y, int& z) const {
     x = n->x; y = n->y; z = n->z;
 }
 
-// ---- NodeEvaluator ----
+// NodeEvaluator
 NodeEvaluator::NodeEvaluator() {
     for (int i = 0; i < 12; i++) malusOverride_[i] = malusOf((PathType)i);
 }
@@ -139,7 +141,7 @@ Node* NodeEvaluator::getNode(int x, int y, int z) {
     return n;
 }
 
-// 原版 getPathTypeStatic：先看本格，再综合"下方一格"决定是否可走
+// 原版 getPathTypeStatic：先看本格，再综合"下方一格"决定是否可走。
 static PathType getPathTypeFromState(World& w, int x, int y, int z) {
     uint8_t b = w.getBlock(x, y, z);
     if (b == B_AIR) return PathType::OPEN;
@@ -157,7 +159,7 @@ static PathType getPathTypeFromState(World& w, int x, int y, int z) {
 PathType NodeEvaluator::getPathType(int x, int y, int z) {
     PathType t = getPathTypeFromState(*w_, x, y, z);
     if (t != PathType::OPEN) return t;
-    // 原版：本格 OPEN 时看下方 —— 实心则是 WALKABLE，再按邻居修正
+    // 原版：本格 OPEN 时看下方 —— 实心则是 WALKABLE，再按邻居修正。
     PathType below = getPathTypeFromState(*w_, x, y - 1, z);
     switch (below) {
     case PathType::OPEN: case PathType::WATER: case PathType::LAVA: case PathType::WALKABLE:
@@ -189,14 +191,14 @@ PathType NodeEvaluator::getCachedCellType(int x, int y, int z) {
 }
 
 PathType NodeEvaluator::getCachedPathType(int x, int y, int z) {
-    // getPathTypeOfMob 的结果不能按单格缓存（依赖实体尺寸），但内部走单格缓存
+    // getPathTypeOfMob 的结果不能按单格缓存（依赖实体尺寸），但内部走单格缓存。
     return getPathTypeOfMob(x, y, z);
 }
 
 PathType NodeEvaluator::getPathTypeOfMob(int x, int y, int z) {
     // 原版 getPathTypeWithinMobBB + getPathTypeOfMob：
     //   收集实体包围盒覆盖的所有格子的类型（EnumSet），
-    //   再**按 PathType 的枚举顺序**遍历，扣分最大者胜出。
+    //   再**按 PathType 的枚举顺序**遍历，扣分最大者胜出
     //   ⚠ 不能按"空间遍历顺序"收集就取最后/最大 —— OPEN(1) 排在 WALKABLE(2) 前面，
     //   按枚举序 WALKABLE 才会赢；否则站在地上的怪会被判成"悬空 OPEN"，
     //   寻路直接找不到起点邻居（A* 一个节点都扩不出来）。
@@ -269,14 +271,13 @@ int NodeEvaluator::getNeighbors(Node* out[32], Node* pos) {
                        ? (int)std::floor(std::max(1.0f, 0.6f)) : 0;
     double posHeight = getFloorLevel(pos->x, pos->y, pos->z);
 
-    static const int DIRS[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};   // 东 西 南 北
     Node* sides[4] = {nullptr, nullptr, nullptr, nullptr};
     for (int d = 0; d < 4; d++) {
-        Node* n = findAcceptedNode(pos->x + DIRS[d][0], pos->y, pos->z + DIRS[d][1],
+        Node* n = findAcceptedNode(pos->x + kNeighborDir[d][0], pos->y, pos->z + kNeighborDir[d][1],
                                    jumpSize, posHeight, d, cur);
         if (getenv("OPENCRAFT_PATH_DEBUG"))
             fprintf(stderr, "[nb] d=%d jump=%d cur=%d (%d,%d,%d)->%p type=%d malus=%.1f closed=%d\n",
-                    d, jumpSize, (int)cur, pos->x + DIRS[d][0], pos->y, pos->z + DIRS[d][1],
+                    d, jumpSize, (int)cur, pos->x + kNeighborDir[d][0], pos->y, pos->z + kNeighborDir[d][1],
                     (void*)n, n ? (int)n->type : -1, n ? n->costMalus : -9.0f,
                     n ? (n->closed ? 1 : 0) : -1);
         sides[d] = n;
@@ -286,8 +287,8 @@ int NodeEvaluator::getNeighbors(Node* out[32], Node* pos) {
     for (int d = 0; d < 4; d++) {
         int d2 = (d + 1) & 3;   // 顺时针
         if (isDiagonalValidPair(pos, sides[d], sides[d2])) {
-            Node* n = findAcceptedNode(pos->x + DIRS[d][0] + DIRS[d2][0], pos->y,
-                                       pos->z + DIRS[d][1] + DIRS[d2][1],
+            Node* n = findAcceptedNode(pos->x + kNeighborDir[d][0] + kNeighborDir[d2][0], pos->y,
+                                       pos->z + kNeighborDir[d][1] + kNeighborDir[d2][1],
                                        jumpSize, posHeight, d, cur);
             if (isDiagonalValidNode(n)) out[p++] = n;
         }
@@ -327,7 +328,7 @@ Node* NodeEvaluator::findAcceptedNode(int x, int y, int z, int jumpSize, double 
             // 原版 tryFindFirstNonWaterBelow：水底找可站节点（本工程按空气处理略过）
             best = best;
         } else if (pathType == PathType::OPEN) {
-            // 悬空：向下找地面节点，超过最大摔落距离就堵死
+            // 悬空：向下找地面节点，超过最大摔落距离就堵死。
             Node* dn = nullptr;
             int cy = y - 1;
             for (; cy >= 0; cy--) {
@@ -357,15 +358,14 @@ Node* NodeEvaluator::findAcceptedNode(int x, int y, int z, int jumpSize, double 
 
 Node* NodeEvaluator::tryJumpOn(int x, int y, int z, int jumpSize, double nodeHeight,
                                int dirIdx, PathType cur) {
-    // 原版：先看上方一格能不能站，再看跳跃过程中会不会撞头
+    // 原版：先看上方一格能不能站，再看跳跃过程中会不会撞头。
     Node* above = findAcceptedNode(x, y + 1, z, jumpSize - 1, nodeHeight, dirIdx, cur);
     if (above == nullptr) return nullptr;
     if (mob_->type->width >= 1.0f) return above;
     if (above->type != PathType::OPEN && above->type != PathType::WALKABLE) return above;
     // 细实体：检查跳上去之后头部空间（当前格到目标格之间）
-    static const int DIRS[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};
-    float cx = (float)x - DIRS[dirIdx][0] + 0.5f;
-    float cz = (float)z - DIRS[dirIdx][1] + 0.5f;
+    float cx = (float)x - kNeighborDir[dirIdx][0] + 0.5f;
+    float cz = (float)z - kNeighborDir[dirIdx][1] + 0.5f;
     float hw = mob_->type->width * 0.5f;
     float h = mob_->type->height;
     if (hasCollisions(cx - hw, (float)y + 1.001f, cz - hw,
@@ -378,7 +378,7 @@ bool NodeEvaluator::hasCollisions(float x0, float y0, float z0, float x1, float 
     return mobs::boxSolid(*w_, x0, y0, z0, x1, y1, z1);
 }
 
-// ---- PathFinder（PathFinder.findPath 的忠实移植）----
+// PathFinder（PathFinder.findPath 的忠实移植）
 Path PathFinder::findPath(World& w, const Entity& mob,
                           const std::vector<BlockPos3>& targets,
                           float maxPathLength, int reachRange, NodeEvaluator& eval) {
@@ -387,7 +387,7 @@ Path PathFinder::findPath(World& w, const Entity& mob,
     Node* from = eval.getStart();
     if (!from) return {};
 
-    // 每个目标一个 Target 节点
+    // 每个目标一个 Target 节点。
     std::vector<Node*> tos;
     tos.reserve(targets.size());
     for (auto& t : targets) tos.push_back(eval.getTarget(t.x, t.y, t.z));

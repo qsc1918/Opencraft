@@ -147,7 +147,6 @@ bool World::setBlock(int x, int y, int z, uint8_t id, uint32_t flags) {
         if (c->blocks[chunkIndex(lx, y, lz)] == id) return false;
         c->blocks[chunkIndex(lx, y, lz)] = id;
     }
-    editLog_.push_back({x, y, z, (int)id});
     // 所在区块与四个边邻都要重建：边界改动会影响邻居的剔除与 AO，
     // 漏建会残留旧面，造成 z-fighting（闪烁、透缝）。
     markDirty(cx, cz);
@@ -310,7 +309,7 @@ void World::meshChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chu
     auto& d = dims_[dim];
     MeshView view;
     view.blocks.fill(B_AIR);
-    // 读数据前先清 dirty：如果快照/建网格期间又有方块改动，收尾时能发现并补建一次。
+    // 读数据前先清 dirty：如果快照/建网格期间又有方块改动，收尾时能发现并补建一次
     // 否则"边建网格边改方块"的更新会被丢掉（点燃传送门只显示一部分就是这个原因）。
     c->dirty.store(false);
 
@@ -395,7 +394,7 @@ void World::meshChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chu
         std::lock_guard<std::mutex> lk(queueLock_);
         d.meshing.erase(chunkKey(cx, cz));
     }
-    // 快照之后又有改动：补排一次网格，保证更新不丢
+    // 快照之后又有改动：补排一次网格，保证更新不丢。
     if (c->dirty.load()) scheduleMesh(dim, cx, cz);
 }
 
@@ -412,7 +411,7 @@ void World::workerLoop() {
     }
 }
 
-// ---- 实体管理（主线程；见 docs/standards.md §实体）----
+// 实体管理（主线程；见 docs/standards.md §实体）
 
 Entity* World::spawnEntity(std::unique_ptr<Entity> e) {
     if (!e) return nullptr;

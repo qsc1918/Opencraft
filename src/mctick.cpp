@@ -9,21 +9,10 @@ namespace {
 
 // 随机刻半径（区块）。原版按加载范围抽，这里取一个够用的固定值。
 constexpr int kTickChunkRadius = 4;
-// 每区块每刻抽取的方块数（原版是每子区块 3 个；这里按整列折中成 4 个）
+// 每区块每刻抽取的方块数（原版是每子区块 3 个；这里按整列折中成 4 个）。
 constexpr int kSamplesPerChunk = 4;
 
-// 随机刻用的随机源：原版是每维度一个随机源，不需要存档一致，用固定种子即可。
-uint64_t g_rng = 0x9E3779B97F4A7C15ULL;
-inline uint32_t rndNext() {
-    g_rng += 0x9E3779B97F4A7C15ULL;
-    uint64_t z = g_rng;
-    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
-    return (uint32_t)(z ^ (z >> 31));
-}
-inline int rndInt(int bound) { return bound <= 0 ? 0 : (int)(rndNext() % (uint32_t)bound); }
-
-// ---- 原版 ChorusPlantBlock.getStateWithConnections / canSurvive 的等价判断 ----
+// 原版 ChorusPlantBlock.getStateWithConnections / canSurvive 的等价判断
 bool isChorusPart(uint8_t b) {
     return b == B_CHORUS_PLANT || b == B_CHORUS_FLOWER || b == B_CHORUS_FLOWER_DEAD;
 }
@@ -34,8 +23,7 @@ bool emptyForChorus(uint8_t b) { return b == B_AIR; }
 
 // 原版 allNeighborsEmpty(level, pos, ignore)
 bool allNeighborsEmpty(const World& w, int x, int y, int z, int ignoreDx, int ignoreDz) {
-    static const int off[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
-    for (const auto& o : off) {
+    for (const auto& o : kDir4) {
         if (o[0] == ignoreDx && o[1] == ignoreDz) continue;
         if (!emptyForChorus(w.getBlock(x + o[0], y, z + o[1]))) return false;
     }
@@ -80,9 +68,8 @@ bool tickChorusFlower(World& w, int x, int y, int z) {
     int attempts = rndInt(4);
     if (pillarOnSupport) attempts++;
     bool branched = false;
-    static const int off[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
     for (int i = 0; i < attempts; i++) {
-        const int* d = off[rndInt(4)];
+        const int* d = kDir4[rndInt(4)];
         int tx = x + d[0], tz = z + d[1];
         if (w.getBlock(tx, y, tz) != B_AIR) continue;
         if (w.getBlock(tx, y - 1, tz) != B_AIR) continue;

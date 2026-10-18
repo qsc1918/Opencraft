@@ -1,7 +1,8 @@
-// 菜单是用 GDI（DIB + BitBlt + DrawTextW）画的，只在 Windows 上实现。
+// 菜单是用 GDI（DIB + BitBlt + DrawTextW）画的，只在 Windows 上实现
 // Linux 上暂时没有菜单：main.cpp 会直接进世界玩（见 README 的 Linux 说明）。
 #include "menu.hpp"
 #ifdef _WIN32
+#include "vkutil.hpp"
 #include "window.hpp"
 #include "png.hpp"
 #include "version.hpp"
@@ -70,7 +71,7 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
     ensureDIB(win.width(), win.height());
     createMenuTexture(ctx);
 
-    // ---- 管线 ----
+    // 管线
     VkDescriptorSetLayoutBinding b0 = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
                                        VK_SHADER_STAGE_FRAGMENT_BIT};
     VkDescriptorSetLayoutCreateInfo li = {};
@@ -85,95 +86,21 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
     pl.pSetLayouts = &dsl_;
     vkCreatePipelineLayout(ctx.device, &pl, nullptr, &layout_);
 
-    auto loadMod = [&](const char* path) -> VkShaderModule {
-        std::string full = assetDir + "/../shaders/" + path;
-        FILE* f = fopen(full.c_str(), "rb");
-        if (!f) { full = std::string("shaders/") + path; f = fopen(full.c_str(), "rb"); }
-        if (!f) return VK_NULL_HANDLE;
-        fseek(f, 0, SEEK_END);
-        long sz = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        std::vector<char> data(sz);
-        fread(data.data(), 1, sz, f);
-        fclose(f);
-        VkShaderModuleCreateInfo ci = {};
-        ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        ci.codeSize = data.size();
-        ci.pCode = (const uint32_t*)data.data();
-        VkShaderModule m;
-        vkCreateShaderModule(ctx.device, &ci, nullptr, &m);
-        return m;
-    };
-    auto vs = loadMod("menu.vert.spv");
-    auto fs = loadMod("menu.frag.spv");
-    if (!vs || !fs) { fprintf(stderr, "[menu] shader load failed\n"); return false; }
-
-    VkPipelineShaderStageCreateInfo st[2] = {};
-    st[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    st[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    st[0].module = vs;
-    st[0].pName = "main";
-    st[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    st[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    st[1].module = fs;
-    st[1].pName = "main";
-
     VkVertexInputBindingDescription vb = {0, 32, VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription va[3] = {};
     va[0] = {0, 0, VK_FORMAT_R32G32_SFLOAT, 0};
     va[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, 8};
     va[2] = {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 16};
 
-    VkPipelineVertexInputStateCreateInfo vi = {};
-    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vi.vertexBindingDescriptionCount = 1;
-    vi.pVertexBindingDescriptions = &vb;
-    vi.vertexAttributeDescriptionCount = 3;
-    vi.pVertexAttributeDescriptions = va;
-
-    VkPipelineInputAssemblyStateCreateInfo ia = {};
-    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    VkPipelineViewportStateCreateInfo vp = {};
-    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    vp.viewportCount = 1;
-    vp.scissorCount = 1;
-    VkPipelineRasterizationStateCreateInfo rs = {};
-    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rs.cullMode = VK_CULL_MODE_NONE;
-    rs.lineWidth = 1.0f;
-    VkPipelineMultisampleStateCreateInfo ms = {};
-    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    VkPipelineColorBlendAttachmentState ba = {};
-    ba.colorWriteMask = 0xF;
-    VkPipelineColorBlendStateCreateInfo cb = {};
-    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    cb.attachmentCount = 1;
-    cb.pAttachments = &ba;
-    VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    VkPipelineDynamicStateCreateInfo dynCI = {};
-    dynCI.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynCI.dynamicStateCount = 2;
-    dynCI.pDynamicStates = dyn;
-
-    VkGraphicsPipelineCreateInfo pi = {};
-    pi.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pi.stageCount = 2;
-    pi.pStages = st;
-    pi.pVertexInputState = &vi;
-    pi.pInputAssemblyState = &ia;
-    pi.pViewportState = &vp;
-    pi.pRasterizationState = &rs;
-    pi.pMultisampleState = &ms;
-    pi.pColorBlendState = &cb;
-    pi.pDynamicState = &dynCI;
-    pi.layout = layout_;
-    pi.renderPass = ctx.renderPass;
-    pi.subpass = 0;
-    vkCreateGraphicsPipelines(ctx.device, VK_NULL_HANDLE, 1, &pi, nullptr, &pipe_);
-    vkDestroyShaderModule(ctx.device, vs, nullptr);
-    vkDestroyShaderModule(ctx.device, fs, nullptr);
+    // 着色器目录沿用原来的两段式定位（exe 旁的 shaders/，失败回退相对路径）。
+    std::string shaderDir = assetDir + "/../shaders";
+    if (vkutil::readFile(shaderDir + "/menu.vert.spv").empty()) shaderDir = "shaders";
+    pipe_ = vkutil::makePipeline(ctx, ctx.renderPass, layout_, shaderDir,
+                                 "menu.vert.spv", "menu.frag.spv",
+                                 &vb, va, 1, 3,
+                                 VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
+                                 false, false, false);
+    if (!pipe_) { fprintf(stderr, "[menu] pipeline creation failed\n"); return false; }
 
     // 描述符集（菜单贴图）
     VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
@@ -208,20 +135,13 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
         {-1,-1,0,0,1,1,1,1},{1,-1,1,0,1,1,1,1},{1,1,1,1,1,1,1,1},
         {-1,-1,0,0,1,1,1,1},{1,1,1,1,1,1,1,1},{-1,1,0,1,1,1,1,1},
     };
-    VkBufferCreateInfo bci = {};
-    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.size = sizeof(quad);
-    bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    vkCreateBuffer(ctx.device, &bci, nullptr, &quadBuf_);
-    VkMemoryRequirements mr;
-    vkGetBufferMemoryRequirements(ctx.device, quadBuf_, &mr);
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = mr.size;
-    mai.memoryTypeIndex = ctx.findMemoryType(mr.memoryTypeBits,
-                          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    vkAllocateMemory(ctx.device, &mai, nullptr, &quadMem_);
-    vkBindBufferMemory(ctx.device, quadBuf_, quadMem_, 0);
+    Buffer2 qb;
+    if (!vkutil::createBuffer(ctx, sizeof(quad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, qb)) {
+        return false;
+    }
+    quadBuf_ = qb.b;
+    quadMem_ = qb.m;
     void* qp;
     vkMapMemory(ctx.device, quadMem_, 0, sizeof(quad), 0, &qp);
     memcpy(qp, quad, sizeof(quad));
@@ -243,52 +163,25 @@ bool Menu::loadTextures(const std::string& assetDir) {
     if (!load("gui/slider.png", sliderRGBA_, sliderW_, sliderH_)) return false;
     if (!load("gui/slider_handle.png", handleRGBA_, handleW_, handleH_)) return false;
     if (!load("gui/slider_handle_highlighted.png", handleHiRGBA_, handleW_, handleH_)) return false;
-    // 按钮贴图固定 200x20，DIB 需留少量余量，避免边缘被钳制。
     return true;
 }
 
 void Menu::createMenuTexture(VkCtx& ctx) {
-    VkImageCreateInfo ici = {};
-    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    ici.imageType = VK_IMAGE_TYPE_2D;
-    // GUI 贴图同样是 sRGB 字节：交给硬件解码，交换链再编码，显示值＝贴图原值
-    ici.format = VK_FORMAT_R8G8B8A8_SRGB;
-    ici.extent = {(uint32_t)diw_, (uint32_t)dih_, 1};
-    ici.mipLevels = 1;
-    ici.arrayLayers = 1;
-    ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    vkCreateImage(ctx.device, &ici, nullptr, &img_);
-    VkMemoryRequirements mr;
-    vkGetImageMemoryRequirements(ctx.device, img_, &mr);
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = mr.size;
-    mai.memoryTypeIndex = ctx.findMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    vkAllocateMemory(ctx.device, &mai, nullptr, &imgMem_);
-    vkBindImageMemory(ctx.device, img_, imgMem_, 0);
+    // GUI 贴图同样是 sRGB 字节：交给硬件解码，交换链再编码，显示值＝贴图原值。
+    if (!vkutil::createImage(ctx, (uint32_t)diw_, (uint32_t)dih_, VK_FORMAT_R8G8B8A8_SRGB,
+                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, img_, imgMem_)) {
+        return;
+    }
+    Buffer2 st;
+    if (!vkutil::createBuffer(ctx, (VkDeviceSize)diw_ * dih_ * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, st)) {
+        return;
+    }
+    staging_ = st.b;
+    stagingMem_ = st.m;
 
-    VkBufferCreateInfo bci = {};
-    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.size = (VkDeviceSize)diw_ * dih_ * 4;
-    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    vkCreateBuffer(ctx.device, &bci, nullptr, &staging_);
-    vkGetBufferMemoryRequirements(ctx.device, staging_, &mr);
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = mr.size;
-    mai.memoryTypeIndex = ctx.findMemoryType(mr.memoryTypeBits,
-                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    vkAllocateMemory(ctx.device, &mai, nullptr, &stagingMem_);
-    vkBindBufferMemory(ctx.device, staging_, stagingMem_, 0);
-
-    VkImageViewCreateInfo vci = {};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = img_;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VK_FORMAT_R8G8B8A8_SRGB;
-    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    vkCreateImageView(ctx.device, &vci, nullptr, &view_);
+    view_ = vkutil::create2DView(ctx.device, img_, VK_FORMAT_R8G8B8A8_SRGB);
 
     VkSamplerCreateInfo sm = {};
     sm.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -365,7 +258,7 @@ static void slice9(HDC dst, HDC src, int tw, int th, int border,
 
 void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float cy) {
     HDC dc = asDC(dibDC_);
-    // 泥土背景平铺，放大约 4 倍
+    // 泥土背景平铺，放大约 4 倍。
     {
         int ts = dirtW_ * 4; // 单个平铺块边长
         for (int y = 0; y < dih_; y += ts)
@@ -393,7 +286,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
     auto addSlider = [&](int id, float x, float y, float bw, float bh,
                          int minV, int maxV, int* val, const char* label) {
         sliders_.push_back({id, x, y, bw, bh, minV, maxV, val, label});
-        // 轨道：九宫格拉伸，保留圆角
+        // 轨道：九宫格拉伸，保留圆角。
         slice9(dc, asDC(sliderDC_), sliderW_, sliderH_, BTN_BORDER, x, y, bw, bh);
         int valv = *val;
         if (valv < minV) valv = minV;
@@ -406,7 +299,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
                            cyr >= handleY && cyr <= handleY + handleH_;
         StretchBlt(dc, (int)handleX, (int)handleY, (int)handleW_, (int)handleH_,
                    handleHover ? asDC(handleHiDC_) : asDC(handleDC_), 0, 0, handleW_, handleH_, SRCCOPY);
-        // 轨道下方的数值标签
+        // 轨道下方的数值标签。
         std::string vl = std::string(label) + "：" + std::to_string(valv);
         RECT vr = {(int)x, (int)(y + bh + 4), (int)(x + bw), (int)(y + bh + 26)};
         SetTextColor(dc, RGB(255, 255, 255));
@@ -455,7 +348,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         SelectObject(dc, font_);
         DrawTextW(dc, utf8ToWide(data.titleText).c_str(), -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        // 种子标签与输入框
+        // 种子标签与输入框。
         RECT lr = {(int)bx, 180, (int)(bx + 120), 220};
         SetTextAlign(dc, TA_LEFT);
         DrawTextW(dc, utf8ToWide("世界种子").c_str(), -1, &lr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -605,7 +498,7 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
     vkEndCommandBuffer(cb);
     if (!ctx.presentImage(imageIndex, f, cb)) { ctx.recreateSwapchain(diw_, dih_); return MENU_NONE; }
 
-    // ---- 滑块拖拽交互（渲染距离 / 近景清晰等）----
+    // 滑块拖拽交互（渲染距离 / 近景清晰等）
     if (!sliders_.empty()) {
         for (size_t i = 0; i < sliders_.size(); i++) {
             const Slider& s = sliders_[i];

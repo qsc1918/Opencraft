@@ -15,8 +15,7 @@ MC assets文件夹：C:\Users\abc\AppData\Roaming\.minecraft\assets
 
 ## 约定
 
-- 注释一律用简体中文，尽量短：能一行就一行，只说明“为什么 / 约束 / 坑”，不复述代码。
-- 不允许英文或其他语言的注释；新增的用户可见文本也尽量用中文。
+- 注释规范见下面「注释规范」一节。
 - `.ps1` 脚本含中文时必须存成 UTF-8 带 BOM，否则 Windows PowerShell 5.1 会乱码。
   `.cpp/.hpp` 必须存成 UTF-8 **不带 BOM**；别用 `Set-Content`（会写成 ANSI 弄坏中文），
   用 `[IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($false)))`。
@@ -34,6 +33,74 @@ MC assets文件夹：C:\Users\abc\AppData\Roaming\.minecraft\assets
 - **颜色是标准 sRGB 工作流**：交换链与贴图视图都是 sRGB，着色器在线性空间算，
   显示值＝贴图字节原值。给着色器加"乘性常量"（明暗、色调）要按 `系数^2.2` 用，
   否则会把暗部抬亮、颜色发灰；细节见 `PROJECT_STATE.md` §4.11。
+- **不要重复造公共工具**：随机数、区块索引、方向表、角度换算、Vulkan 样板都只有一份，
+  分别在 `src/util.hpp`（RNG/wrapPi/PI/Rng）、`src/specs.hpp`（chunkIndex/kDir4/kDir6）、
+  `src/vkutil.hpp`（createBuffer/createImage/makePipeline/loadShaderModule）。
+  要用先找，找不到就加到这三个文件里，不要在调用处另写一份。
+
+## 注释规范
+
+所有源码注释一律**简体中文**，不复述代码，只写三类信息：这处为什么这样写、什么地方
+不能改、踩过什么坑。与这三类都无关的历史包袱（"以前用的是 WIC"、"原来的 96 字节"）
+直接删掉，不要留给读者考证。
+
+格式要求：
+
+- 全中文，不出现英文注释，也不中英混排（`Discrete（独立显卡）` 这类用户可见字符串除外）。
+- 中文句子末尾加句号。
+- 裸注释。不用 `// ----`、`// ====`、`// ####` 这类装饰分隔线；小节标题直接写 `// 小节名`。
+  只有连续十行以上的整段说明才允许用一行分隔线分段。
+- 行内注释与代码之间留两个空格，统一 `// ` 前缀（一个空格）。
+- 注释与实现必须一致。改代码时同步改注释；发现注释与代码矛盾，按代码修注释，
+  拿不准就先在注释里写明"当前实现是 X，原版/预期是 Y"，不要留一句错话误导后来人。
+- 跨行注释只在**最后一句**结尾加句号，中间行不加。
+- 已知但刻意没做的功能，在注释里写明"未实现/未接通"，不要写得像已经做了。
+
+## C++ 命名规范
+
+本项目所有由 AI 生成、修改或重构的代码都必须严格遵守以下规则。已有代码不符合时，
+修改该文件应顺手把同一作用域内的相关名字改成规范风格，但不要无故大规模重命名公共 API。
+
+**基本规则**
+
+- 标识符只能由字母、数字和下划线组成，数字不能开头，区分大小写，不能用 C++ 关键字。
+- 不得以单下划线开头，不得包含双下划线。
+- 描述性优先，格式即类型，同概念同名。
+- 禁止匈牙利命名法，禁止在名字里编码类型（不要 `iCount`、`strName`、`pBuffer`）。
+
+**命名约定**
+
+| 对象 | 规则 | 示例 |
+|------|------|------|
+| 类型名（类/结构体/枚举/别名/概念） | PascalCase | `MyClass`、`OrderStatus`、`PropertiesMap` |
+| 枚举值 | PascalCase | `OrderStatus::Pending` |
+| 函数与方法 | PascalCase，动词或动词短语开头 | `GetValue`、`CalculateTotal` |
+| 返回布尔的函数 | `Is`/`Has`/`Can`/`Should` 开头 | `IsEmpty`、`CanSurvive` |
+| 局部变量与函数参数 | lower_snake_case，不加前后缀 | `user_name`、`num_errors` |
+| 类成员变量（含私有/公有/受保护） | lower_snake_case + 末尾下划线 | `user_name_`、`count_` |
+| 结构体公开数据成员 | lower_snake_case，不加末尾下划线 | `x`、`y`、`width` |
+| 全局变量 | `g_` + lower_snake_case | `g_config`、`g_instance` |
+| 静态成员变量 | `s_` + lower_snake_case | `s_instance_count` |
+| 编译期常量与全局 const 常量 | UPPER_SNAKE_CASE | `MAX_RETRY_COUNT`、`PI` |
+| 函数内局部常量 | lower_snake_case | `max_items` |
+| 宏 | UPPER_SNAKE_CASE，尽量不用宏定义常量，优先 `constexpr` | `MY_DEBUG_FLAG` |
+| 命名空间 | 全小写下划线 | `my_project`、`utils` |
+| 模板类型参数 | PascalCase，单字母可用 `T` | `ValueType` |
+| 文件名与目录名 | 全小写下划线 | `my_class.cpp`、`utils` |
+
+**布尔与访问器**
+
+- 布尔局部变量用 `is_`、`has_`、`can_`、`should_` 前缀，如 `is_valid`。
+- 简单访问器直接用成员变量名去掉末尾下划线作 getter 名，setter 加 `set_` 前缀，
+  如 `count()` 与 `set_count(int count)`。
+- 有计算逻辑的 getter 用 `Compute` 或 `Calculate` 开头。
+
+**执行要求**
+
+- 不得混用其他风格；不确定时选更描述性的名字，并与同文件邻近代码保持一致。
+- 建议用 clang-tidy 的 `readability-identifier-naming` 检查关键规则（类名与函数名
+  PascalCase、类成员变量末尾下划线、全局变量 `g_` 前缀、常量全大写），并配合
+  clang-format 统一排版。
 
 ## 构建 / 验证 / 打包
 

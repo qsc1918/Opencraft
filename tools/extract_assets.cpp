@@ -159,7 +159,7 @@ int main(int argc, char** argv) {
 
     bool haveOldTextField = false;
     {
-        // 检查该 jar 用的是哪个 text_field 路径
+        // 检查该 jar 用的是哪个 text_field 路径。
         std::string chk = "tar -tf \"" + jar + "\" 2>nul | findstr /C:\"textures/gui/sprites/widget/text_field.png\" >nul";
         haveOldTextField = system(chk.c_str()) == 0;
         (void)haveOldTextField;
@@ -185,7 +185,7 @@ int main(int argc, char** argv) {
         fs::path dst = dstRoot / e.dst;
         fs::create_directories(dst.parent_path());
         if (!fs::exists(src)) {
-            // 旧版 text_field 路径兜底
+            // 旧版 text_field 路径兜底。
             fs::path alt = tmp / "assets/minecraft/textures/gui/sprites/widget/text_field.png";
             if (std::string(e.src).find("text_field") != std::string::npos && fs::exists(alt)) {
                 src = alt;

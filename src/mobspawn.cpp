@@ -1,6 +1,4 @@
-// ===========================================================================
 // mobspawn.cpp — 生物刷新
-//
 // 原版要点（SpawnPlacements / MobSpawnSettings）：
 //  * 敌对要在暗处（亮度 ≤ 7），被动要亮（天空光 ≥ 9）且脚下是草方块；
 //  * 生成点在玩家 24~128 格的随机水平位置，再找该处的合法落点；
@@ -8,7 +6,6 @@
 //  * 离玩家超过 128 格的生物直接清除。
 // 本工程没有光照引擎，亮度用 mobs::lightAt 的近似值（天空光按遮挡算 +
 // 附近发光方块按距离衰减），够刷怪判定用。
-// ===========================================================================
 #include "mobspawn.hpp"
 #include "blocks.hpp"
 #include "mobs.hpp"
@@ -22,18 +19,6 @@
 #include <vector>
 
 namespace {
-
-// 刷新用的随机源（不需要存档一致）
-uint64_t g_rng = 0x2545F4914F6CDD1DULL;
-inline uint32_t rnd() {
-    g_rng += 0x9e3779b97f4a7c15ULL;
-    uint64_t z = g_rng;
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-    return (uint32_t)(z ^ (z >> 31));
-}
-inline float rndF() { return (rnd() >> 8) * (1.0f / 16777216.0f); }
-inline int rndInt(int n) { return n <= 0 ? 0 : (int)(rndF() * n); }
 
 // 数量上限（原版：敌对 70、被动 10）
 constexpr int kHostileCap = 70;
@@ -63,7 +48,7 @@ const SpawnEntry kNether[] = {
     {EntityKind::Zombie,   false, 100},   // 原版下界僵尸权重低于主世界
     {EntityKind::Skeleton, false, 100},   // 普通骷髅也会在下界刷
     {EntityKind::Enderman, false, 20},    // 末影人下界常见
-    // 烈焰人：原版只从下界要塞刷怪笼出，没有要塞就不刷
+    // 烈焰人：原版只从下界要塞刷怪笼出，没有要塞就不刷。
 };
 const SpawnEntry kEnd[] = {
     {EntityKind::Enderman, false, 100},   // 末地刷末影人
@@ -149,7 +134,7 @@ Entity* summon(World& w, EntityKind kind, const Vec3& at, int count) {
 
 namespace {
 
-// 找一个合法落点：返回 true 时 y 是脚底所在高度
+// 找一个合法落点：返回 true 时 y 是脚底所在高度。
 bool findSpawn(World& w, int bx, int bz, bool passive, int& outY) {
     // 只在已加载的区块里找（未加载区块 getBlock 返回空气，会误判成空）
     auto c = w.chunkAt(blockToChunkCoord(bx), blockToChunkCoord(bz));
@@ -215,7 +200,7 @@ void tick(World& w, const Vec3& playerPos, int renderDistBlocks, float dt) {
     int maxDist = std::min(kMaxDist, std::max(kMinDist + 8, renderDistBlocks));
     const int kTries = 4;
     for (int t = 0; t < kTries; t++) {
-        // 按权重挑一个种类
+        // 按权重挑一个种类。
         int total = 0;
         for (int i = 0; i < nTable; i++) total += table[i].weight;
         int roll = rndInt(total);

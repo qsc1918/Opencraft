@@ -1,20 +1,16 @@
-// ===========================================================================
 // mobmodel.cpp — 生物/玩家模型数据（原版 ModelPart/Box）与盒模型生成
-//
-// 数据来自 docs/mob_models.md（逐字取自 26.2 反编译源码的 texOffs 与 addBox）。
-// 换算约定见 mobmodel.hpp 与 mob_models.md §1.2/§1.4。
-//
+// 数据来自 docs/mob_models.md（逐字取自 26.2 反编译源码的 texOffs 与 addBox）
+// 换算约定见 mobmodel.hpp 与 mob_models.md §1.2/§1.4
 // UV 展开约定（原版 Box，见 mob_models.md §1.4）：
 //   贴图上一行是 顶|底，下一行是 西|北|东|南 四个侧面连排：
 //     [U, U+d]=西(-X)  [U+d, U+d+w]=北(-Z,正面)  [U+d+w, U+d+w+d]=东(+X)
 //     [U+d+w+d, U+2d+2w]=南(+Z,背面)
 //   侧面 v 沿模型 y（矩形上沿 = 模型 minY = 世界顶，袖子在肩上）；
 //   ±X 面 u 沿 z、±Z 面 u 沿 x；展开图连续 ⇒ -X 面 u 朝 -z 增、
-//   +Z 面 u 随 x 减（即从背面看文字不镜像）。
-//   顶/底面 u 沿 x、v 沿 z。
+//   +Z 面 u 随 x 减（即从背面看文字不镜像）
+//   顶/底面 u 沿 x、v 沿 z
 //   ⚠ 之前 -X/+Z/顶三个面把 u 配到了错误的轴上（贴图旋转 90°）：
 //   袖子横条变竖条、腿的鞋底横条变竖灰条 —— 改成按角点位置推导 uv 后修复。
-// ===========================================================================
 #include "mobmodel.hpp"
 #include "blocks.hpp"
 #include "entities.hpp"
@@ -25,13 +21,12 @@
 
 namespace {
 
-constexpr float PI = 3.14159265f;
-constexpr float DEG = PI / 180.0f;
+constexpr float DEG2RAD = PI / 180.0f;
 
-// ---- 模型数据（见 mobmodel_data.inc）----
+// 模型数据（见 mobmodel_data.inc）
 #include "mobmodel_data.inc"
 
-// ---- 变换：R = Rz·Ry·Rx，平移在最后（ModelPart.translateAndRotate 的顺序）----
+// 变换：R = Rz·Ry·Rx，平移在最后（ModelPart.translateAndRotate 的顺序）
 struct Xf {
     float r[9];    // 行主序 3x3
     float t[3];
@@ -84,7 +79,7 @@ void applyXf(const Xf& m, float x, float y, float z, float& ox, float& oy, float
     oz = m.r[6] * x + m.r[7] * y + m.r[8] * z + m.t[2];
 }
 
-// ---- 顶点 ----
+// 顶点
 // 实体管线的 uv 是"整张贴图的比例"：0..255 对应 0..1（着色器按 /256 取样），
 // 这样一个 64 宽的贴图 1 像素 = 4 个单位，texOffs 不会因取整而错位。
 inline uint8_t uvByte(float px, int texSize) {
@@ -99,7 +94,7 @@ const float kFaceShade[6] = {0.6f, 0.6f, 1.0f, 0.5f, 0.8f, 0.8f};  // +X -X +Y -
 
 struct Vtx3 { float x, y, z; };
 
-// 两个三角形用的角点下标，以及六个面的角点表（+X -X +Y -Y +Z -Z）。
+// 两个三角形用的角点下标，以及六个面的角点表（+X -X +Y -Y +Z -Z）
 // 每行的 4 个下标构成面的一个环（c0→c1→c2→c3）。
 const int kIdx[6] = {0, 1, 2, 0, 2, 3};
 const int kFace[6][4] = {
@@ -111,7 +106,7 @@ const int kFace[6][4] = {
     {0, 1, 3, 2},   // -Z (minZ)：c0→c1 沿 +x
 };
 
-// 四个角点 + 逐角点 uv（贴图像素），出两个三角形。
+// 四个角点 + 逐角点 uv（贴图像素），出两个三角形
 // uv 必须与角点一一对应地传入 —— 不能用固定 {u0,u1,u1,u0} 模式去配
 // 不同面的角点顺序（那正是之前贴图旋转 90° 的根源）。
 void pushQuad(std::vector<TerrainVertex>& out, const Vtx3 c[4],
@@ -161,7 +156,6 @@ void emitBoxFull(std::vector<TerrainVertex>& out, Vec3 center, Vec3 half, float 
 
 } // 匿名命名空间
 
-// ---------------------------------------------------------------------------
 const MobModel* mobModel(EntityKind kind) {
     switch (kind) {
     case EntityKind::Player:    return &kModelPlayer;
@@ -200,12 +194,11 @@ const char* mobName(EntityKind kind) {
     }
 }
 
-// ---------------------------------------------------------------------------
 void buildMobMesh(std::vector<TerrainVertex>& out, const Entity& e, const MobAnimState& an) {
     // 环境亮度：白天 1.0、夜里约 0.3（与地形的昼夜曲线同量级）
     float light = 0.30f + 0.70f * mobs::dayLight();
 
-    // ---- 没有原版模型的实体：直接拼盒模型 ----
+    // 没有原版模型的实体：直接拼盒模型
     switch (e.kind) {
     case EntityKind::EndCrystal: {
         float ph = an.age * 1.5f;
@@ -233,7 +226,7 @@ void buildMobMesh(std::vector<TerrainVertex>& out, const Entity& e, const MobAni
     const MobModel* m = mobModel(e.kind);
     if (!m) return;
 
-    // ---- 部件变换 ----
+    // 部件变换
     const float hs = m->quadruped ? 0.6662f : 1.0f;   // 四足的头偏航要打折（原版）
     const int n = m->partN;
     Xf xf[24];
@@ -255,7 +248,7 @@ void buildMobMesh(std::vector<TerrainVertex>& out, const Entity& e, const MobAni
         case AN_ARM_L:  rx -= sw * 0.5f;  break;
         case AN_WING_R:
         case AN_WING_L:
-            // 鸡翅膀：悬空时拍打，落地时收着
+            // 鸡翅膀：悬空时拍打，落地时收着。
             if (an.flying) rz += sinf(an.age * 20.0f) * 0.6f * (p.anim == AN_WING_R ? 1.0f : -1.0f);
             break;
         case AN_ROD:
@@ -270,7 +263,7 @@ void buildMobMesh(std::vector<TerrainVertex>& out, const Entity& e, const MobAni
         xf[i] = (p.parent >= 0 && p.parent < i) ? mulXf(xf[p.parent], local) : local;
     }
 
-    // ---- 逐 cube 出面 ----
+    // 逐 cube 出面
     // uv 直接从"局部角点位置"推导（变形/缩放都不影响贴图对位），
     // 再把角点位置过部件变换与模型→世界变换。
     const float cy = cosf(e.yaw), sy = sinf(e.yaw);
@@ -332,14 +325,14 @@ void buildMobMesh(std::vector<TerrainVertex>& out, const Entity& e, const MobAni
                         vv[i2] = V + d + sv * h;
                         break;
                     }
-                    // 位置过部件变换 → 模型像素 → 相对脚部的方块偏移
+                    // 位置过部件变换 → 模型像素 → 相对脚部的方块偏移。
                     float mx, my, mz;
                     applyXf(xf[i], lp.x, lp.y, lp.z, mx, my, mz);
                     q[i2].x = (mx * cy - mz * sy) / 16.0f;
                     q[i2].y = 1.501f - my / 16.0f;
                     q[i2].z = (-mx * sy - mz * cy) / 16.0f;
                 }
-                // 羊毛层这类覆盖贴图的 cube 用 cube.tile，其余用模型贴图
+                // 羊毛层这类覆盖贴图的 cube 用 cube.tile，其余用模型贴图。
                 uint8_t tile = cube.tile ? cube.tile : m->tile;
                 pushQuad(out, q, uu, vv, tile, m->texW, m->texH,
                          kFaceShade[f] * light, cube.mirror);

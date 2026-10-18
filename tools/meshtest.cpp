@@ -3,8 +3,8 @@
 //  2) 贪心合并：大平面合并成少量矩形，但**覆盖的总面积必须一格不差**；
 //  3) 合并的前提：整方块 + 整张贴图 + 四角亮度相等，缺一即逐格出；
 //  4) 水的叠层只留最上层顶面。
-// 期望值全部写死在下面（不用被测函数生成期望）。
-// 用法: meshtest
+// 期望值全部写死在下面（不用被测函数生成期望）
+// 用法: meshtest。
 #include "mesher.hpp"
 #include "world.hpp"
 #include <cmath>
@@ -97,7 +97,7 @@ int main() {
     {
         MeshView v;
         v.blocks.fill(B_AIR);
-        // 连四周邻居一起填满，这样区块内每个方块的六面邻居都是石头
+        // 连四周邻居一起填满，这样区块内每个方块的六面邻居都是石头。
         fillBox(v, -1, 0, -1, 16, WORLD_HEIGHT - 1, 16, B_STONE);
         ChunkMeshData m = buildChunkMesh(v);
         Geom g = opaqueGeom(m);
@@ -150,7 +150,7 @@ int main() {
         const long long floorQuads = quads(m);
         v.set(5, 9, 5, B_STONE);                  // 地板上放一块，周围一圈顶面 AO 变差
         ChunkMeshData m2 = buildChunkMesh(v);
-        // 新方块自己露出 5 个面（底面被脚下的地板剔掉），同时盖掉地板的 1 张顶面
+        // 新方块自己露出 5 个面（底面被脚下的地板剔掉），同时盖掉地板的 1 张顶面。
         checkEq(opaqueGeom(m2).area, floorArea + 4, "地板上多一块方块：净增 4 个面");
         check(quads(m2) > floorQuads, "AO 变化处的面不再参与合并");
     }
@@ -223,7 +223,7 @@ int main() {
     {
         MeshView v;
         v.blocks.fill(B_AIR);
-        // 连四周邻居一起填满：每个分段的六个面两边全是不透明
+        // 连四周邻居一起填满：每个分段的六个面两边全是不透明。
         fillBox(v, -1, 0, -1, 16, WORLD_HEIGHT - 1, 16, B_STONE);
         uint64_t pass = buildFaceMask(v, WORLD_HEIGHT - 1);
         check(pass == 0, "整块实心：没有任何一面能穿过");

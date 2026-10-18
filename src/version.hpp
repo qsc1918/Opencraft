@@ -7,10 +7,10 @@ namespace version {
 // 版本名（运行时优先读 exe 旁的 version.txt，便于手动改）
 const std::string& name();
 
-// 编译时的本地时间戳 YYYYMMDD-HHMMSS
+// 编译时的本地时间戳 YYYYMMDD-HHMMSS。
 const char* buildStamp();
 
-// 完整版本号：版本名-编译时间戳
+// 完整版本号：版本名-编译时间戳。
 const std::string& full();
 
 } // namespace version

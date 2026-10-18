@@ -1,9 +1,6 @@
-// ===========================================================================
 // mobs.cpp — 生物 AI、物理与弹射物（数值与架构对齐 MC Java 26.2）
-//
 // 运动一律按"刻"算（World::tickEntities 用 TICK_DT 定步长驱动），
 // 所以 vel 的单位是 格/刻，直接用原版常量不再乘 dt。
-// ===========================================================================
 #include "mobs.hpp"
 #include "blockupdate.hpp"
 #include "blocks.hpp"
@@ -21,19 +18,6 @@ float g_dayLight = 1.0f;          // 0..1（1=正午）
 DimensionId g_dim = DIM_OVERWORLD;
 
 inline float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
-constexpr float PI = 3.14159265f;
-
-// 全局随机源（AI 用的随机不需要存档一致）
-uint64_t g_rng = 0x123456789ABCDEFULL;
-inline uint32_t rnd() {
-    g_rng += 0x9e3779b97f4a7c15ULL;
-    uint64_t z = g_rng;
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-    return (uint32_t)(z ^ (z >> 31));
-}
-inline float rndF() { return (rnd() >> 8) * (1.0f / 16777216.0f); }
-inline int rndInt(int n) { return n <= 0 ? 0 : (int)(rndF() * n); }
 
 inline bool isFluid(uint8_t b) { return b == B_WATER || b == B_LAVA; }
 inline bool mobInFluid(const Mob& m) {
@@ -42,19 +26,13 @@ inline bool mobInFluid(const Mob& m) {
                                      (int)std::floor(m.pos.z)));
 }
 
-// 视线：起点到终点之间有没有不透明方块挡着
+// 视线：起点到终点之间有没有不透明方块挡着。
 bool hasLineOfSight(const World& w, const Vec3& from, const Vec3& to) {
     Vec3 d = to - from;
     float len = length(d);
     if (len < 1e-4f) return true;
     RayHit h = raycastWorld(w, from, d / len, len);
     return !h.hit;
-}
-
-inline float wrapPi(float a) {
-    while (a > PI) a -= 2 * PI;
-    while (a <= -PI) a += 2 * PI;
-    return a;
 }
 
 } // 匿名命名空间
@@ -154,9 +132,7 @@ void explode(World& w, const Vec3& center, float power, bool fire) {
 
 } // namespace mobs
 
-// ---------------------------------------------------------------------------
 // Mob：原版 serverAiStep + travel 的每整刻流程
-// ---------------------------------------------------------------------------
 Mob::Mob() : nav(*this) {
     nav.evaluator().setCanFloat(true);   // 原版 FloatGoal 构造时设置
 }
@@ -194,7 +170,7 @@ void Mob::tick(World& w, float dt) {
     }
     if (dead) return;
 
-    // ---- 目标选择（NearestAttackableTargetGoal 等价：35 格内最近玩家）----
+    // 目标选择（NearestAttackableTargetGoal 等价：35 格内最近玩家）
     if (hostile) {
         if (!target || target->dead || length(pos - target->pos) > 35.0f) {
             Entity* p = mobs::findPlayer(w);
@@ -202,9 +178,9 @@ void Mob::tick(World& w, float dt) {
         }
     }
 
-    // ---- serverAiStep：goals → navigation → move → jump → look（原版顺序）----
+    // serverAiStep：goals → navigation → move → jump → look（原版顺序）
     // 性能：原版靠"实体更新半径"决定远处生物是否 tick；本工程没有那套机制，
-    // 用 48 格近似 —— 更远的生物只保留物理（下落/燃烧），不跑 AI/寻路。
+    // 用 48 格近似 —— 更远的生物只保留物理（下落/燃烧），不跑 AI/寻路
     // 70 只怪同时寻路时这一条能把帧时间从 ~19ms 拉回 ~5ms。
     bool aiActive = true;
     {
@@ -229,10 +205,10 @@ void Mob::tick(World& w, float dt) {
     }
     if (dead) return;
 
-    // ---- travel（LivingEntity.travelInAir：输入 → 移动 → 重力/阻力）----
+    // travel（LivingEntity.travelInAir：输入 → 移动 → 重力/阻力）
     travel(w);
 
-    // ---- BodyRotationControl（简化）----
+    // BodyRotationControl（简化）
     // 移动时身体就是移动朝向（MoveControl 已设 yaw），头最多偏 50°；
     // 静止且头偏离超过 15° 时身体慢慢转向头（原版 headStableTime>10 后开始）。
     float headDiff = wrapPi(yHeadRot - yaw);
@@ -250,7 +226,7 @@ void Mob::tick(World& w, float dt) {
                 type->id, pos.x, pos.y, pos.z, vel.x, vel.y, vel.z,
                 speed, zza, nav.isDone() ? 1 : 0, (void*)target, yaw, yHeadRot, onGround ? 1 : 0);
 
-    // 走路动画：每走 0.3 格一个摆腿周期
+    // 走路动画：每走 0.3 格一个摆腿周期。
     float hs = std::sqrt(vel.x * vel.x + vel.z * vel.z);
     limbSwing += hs * 21.0f;
     limbAmount += ((hs > 0.02f ? 1.0f : 0.0f) - limbAmount) * 0.25f;
@@ -266,7 +242,7 @@ float Mob::hurt(float dmg) {
     return dmg;
 }
 
-// ---- travel（LivingEntity.travelInAir 的移植）----
+// travel（LivingEntity.travelInAir 的移植）
 void Mob::travel(World& w) {
     // applyInput：输入衰减 0.98（原版 LivingEntity.applyInput）
     xxa *= 0.98f;
@@ -285,7 +261,7 @@ void Mob::travel(World& w) {
     }
     if (noJumpDelay > 0) noJumpDelay--;
 
-    // moveRelative：getFrictionInfluencedSpeed —— 地面 = speed，液体/空中 = 0.02。
+    // moveRelative：getFrictionInfluencedSpeed —— 地面 = speed，液体/空中 = 0.02
     // 注意原版 Mob.setSpeed 会把 zza 同步为 speed，所以 input 长度 ≤ 1，
     // 不会触发归一化 → 加速度 = speed²（这就是原版生物的实际加速度）。
     float spd = (onGround && !inFluid) ? speed : 0.02f;
@@ -356,9 +332,7 @@ void Mob::moveWithCollisions(World& w) {
     if (pos.y < WORLD_MIN_Y) { health = 0; dead = true; }
 }
 
-// ---------------------------------------------------------------------------
 // Goal 注册（各生物的 registerGoals 抄自原版同名方法，没实现的 Goal 略去）
-// ---------------------------------------------------------------------------
 void PassiveMob::registerGoals() {
     // 猪/牛/羊/鸡：Sheep.registerGoals（Pig 相同，略去 Breed/Tempt/FollowParent/EatBlock）
     addGoal<ai::FloatGoal>(0);
@@ -427,9 +401,7 @@ void Skeleton::registerGoals() {
     addGoal<ai::RandomLookAroundGoal>(9);
 }
 
-// ---------------------------------------------------------------------------
 // 各生物构造与特殊行为
-// ---------------------------------------------------------------------------
 Pig::Pig() {
     kind = EntityKind::Pig; type = &ENTITY_PIG;
     maxHealth = health = 10.0f; moveSpeed = 0.25f; hostile = false;
@@ -451,7 +423,7 @@ Chicken::Chicken() {
     yHeadRot = yaw; registerGoals();
 }
 void Chicken::aiExtra(World&) {
-    // 原版鸡下落慢：竖直速度每刻乘 0.6
+    // 原版鸡下落慢：竖直速度每刻乘 0.6。
     if (!onGround && vel.y < 0.0f) vel.y *= 0.6f;
 }
 
@@ -471,7 +443,7 @@ Creeper::Creeper() {
     yHeadRot = yaw; registerGoals();
 }
 void Creeper::aiExtra(World& w) {
-    // 原版 SwellGoal：3 格内点燃引信，30 刻爆炸；退到 7 格外取消。
+    // 原版 SwellGoal：3 格内点燃引信，30 刻爆炸；退到 7 格外取消
     // 引信期间导航停止（站定不动）。
     if (target && !target->dead) {
         float dx = target->pos.x - pos.x, dz = target->pos.z - pos.z;
@@ -596,9 +568,7 @@ void Enderman::teleportRandom(World& w) {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 玩家实体 / 弹射物（与之前一致）
-// ---------------------------------------------------------------------------
 PlayerEntity::PlayerEntity() {
     kind = EntityKind::Player;
     type = &ENTITY_PLAYER;
@@ -636,7 +606,7 @@ void Arrow::tick(World& w, float dt) {
     (void)dt;
     age += 0.05f;
     Vec3 next = pos + vel;
-    // 命中方块：钉住消失
+    // 命中方块：钉住消失。
     if (mobs::boxSolid(w, next.x - 0.05f, next.y - 0.05f, next.z - 0.05f,
                        next.x + 0.05f, next.y + 0.05f, next.z + 0.05f)) {
         dead = true;

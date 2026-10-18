@@ -1,9 +1,7 @@
 #include "mcnoise.hpp"
 #include <cmath>
 
-// ---------------------------------------------------------------------------
-// SimplexNoise.getValue(x, y)锛氬師鐗堜簩缁?simplex锛屾湯鍦板舰鐘跺櫔澹扮殑鏍稿績
-// ---------------------------------------------------------------------------
+// SimplexNoise.getValue(x, y)：原版二维 simplex，地形起伏的核心。
 double McSimplexNoise::getValue2D(double xin, double yin) const {
     static const double SQRT3 = 1.7320508075688772;
     const double F2 = 0.5 * (SQRT3 - 1.0);
@@ -40,11 +38,10 @@ double McSimplexNoise::getValue2D(double xin, double yin) const {
     return 70.0 * (n0 + n1 + n2);
 }
 
-// ---------------------------------------------------------------------------
-// PerlinNoise锛氫綆鍏害鍒?0 鐨勫叓搴﹁〃锛屾尟骞呭叏 1锛堝師鐗?makeAmplitudes锛?// ---------------------------------------------------------------------------
+// PerlinNoise：低八度到 0 的八度表，振幅全 1（原版 makeAmplitudes）。
 McPerlinNoise::McPerlinNoise(McCnRandom& rnd, int lowOctave) {
     firstOctave = -lowOctave;
-    int octaves = lowOctave + 1;  // 鍏害 lowOctave..0
+    int octaves = lowOctave + 1;  // 八度 lowOctave..0
     int zeroIdx = -firstOctave;
     levels.assign(octaves, nullptr);
 
@@ -90,13 +87,12 @@ double McPerlinNoise::edgeValue(double noiseValue) const {
     return value;
 }
 
-// ---------------------------------------------------------------------------
-// BlendedNoise锛氬師鐗?base_3d_noise锛堜富鍣０鎻掑€?min/max 涓ゅ眰锛?// ---------------------------------------------------------------------------
+// BlendedNoise：原版 base_3d_noise（主世界三组噪声的混合方式）。
 McBlendedNoise::McBlendedNoise(uint64_t seed, double xzScale_, double yScale,
                                double xzFactor_, double yFactor_, double smear)
     : xzMultiplier(684.412 * xzScale_), yMultiplier(684.412 * yScale),
       xzFactor(xzFactor_), yFactor(yFactor_), smearScaleMultiplier(smear) {
-    // 鍘熺増鎸?min / max / main 鐨勯『搴忓叡鐢ㄥ悓涓€涓殢鏈烘簮锛岄『搴忎笉鑳芥敼
+    // 原版按 min / max / main 的顺序共用同一个随机源，顺序不能改。
     McCnRandom rnd(seed);
     minLimit = new McPerlinNoise(rnd, 15);
     maxLimit = new McPerlinNoise(rnd, 15);

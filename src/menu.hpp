@@ -63,8 +63,8 @@ public:
     bool init(VkCtx& ctx, Window& win, const std::string& assetDir);
     void shutdown(VkCtx& ctx);
 
-    // 渲染指定界面，返回本帧点击的按钮 id（未点击为 MENU_NONE）。
-    // cx,cy 为客户端光标坐标；mouseDown 表示本次刚按下。
+    // 渲染指定界面，返回本帧点击的按钮 id（未点击为 MENU_NONE）
+    // cx,cy 为客户端光标坐标；mouseDown 表示本次刚按下
     int renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
                    float cx, float cy, bool mouseDown);
 
@@ -124,7 +124,7 @@ private:
     bool sliderDragging_ = false;
     int  dragSlider_ = -1;     // 正在拖动的滑块下标
 
-    // Vulkan 资源
+    // Vulkan 资源。
     VkImage    img_ = VK_NULL_HANDLE;
     VkDeviceMemory imgMem_ = VK_NULL_HANDLE;
     VkImageView view_ = VK_NULL_HANDLE;
@@ -141,7 +141,7 @@ private:
     bool texReady_ = false;
     uint64_t frameIdx_ = 0;
 
-    // 按钮矩形，每帧填充，用于命中测试
+    // 按钮矩形，每帧填充，用于命中测试。
     struct Btn { int id; float x, y, w, h; };
     std::vector<Btn> btns_;
     bool prevMouseDown_ = false;

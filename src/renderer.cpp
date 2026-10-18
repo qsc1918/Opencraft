@@ -1,5 +1,6 @@
 #include "renderer.hpp"
 #include "camera.hpp"
+#include "vkutil.hpp"
 #include "entities.hpp"
 #include "mobs.hpp"
 #include "mobmodel.hpp"
@@ -13,153 +14,6 @@
 #include <tuple>
 #include <vector>
 
-// ---------------------------------------------------------------------------
-// 辅助函数
-// ---------------------------------------------------------------------------
-static std::vector<char> readFile(const std::string& path) {
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
-    std::vector<char> data;
-    if (!f) return data;
-    std::streamsize size = f.tellg();
-    f.seekg(0, std::ios::beg);
-    data.resize((size_t)size);
-    f.read(data.data(), size);
-    return data;
-}
-
-static VkShaderModule loadModule(VkDevice dev, const std::string& path) {
-    auto data = readFile(path);
-    if (data.empty()) return VK_NULL_HANDLE;
-    VkShaderModuleCreateInfo ci = {};
-    ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    ci.codeSize = data.size();
-    ci.pCode = (const uint32_t*)data.data();
-    VkShaderModule m;
-    if (vkCreateShaderModule(dev, &ci, nullptr, &m) != VK_SUCCESS) return VK_NULL_HANDLE;
-    return m;
-}
-
-static bool createBuffer(VkCtx& ctx, VkDeviceSize size, VkBufferUsageFlags usage,
-                         VkMemoryPropertyFlags props, Buffer2& out) {
-    VkBufferCreateInfo ci = {};
-    ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    ci.size = size;
-    ci.usage = usage;
-    ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(ctx.device, &ci, nullptr, &out.b) != VK_SUCCESS) return false;
-    VkMemoryRequirements mr;
-    vkGetBufferMemoryRequirements(ctx.device, out.b, &mr);
-    uint32_t mt = ctx.findMemoryType(mr.memoryTypeBits, props);
-    if (mt == UINT32_MAX) {
-        if (props & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
-            mt = ctx.findMemoryType(mr.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    }
-    if (mt == UINT32_MAX) return false;
-    VkMemoryAllocateInfo ai = {};
-    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    ai.allocationSize = mr.size;
-    ai.memoryTypeIndex = mt;
-    if (vkAllocateMemory(ctx.device, &ai, nullptr, &out.m) != VK_SUCCESS) return false;
-    vkBindBufferMemory(ctx.device, out.b, out.m, 0);
-    return true;
-}
-
-static VkPipeline makePipeline(VkCtx& ctx, VkRenderPass rp, VkPipelineLayout layout,
-                               const std::string& shaderDir, const char* vs, const char* fs,
-                               VkVertexInputBindingDescription bindings[], VkVertexInputAttributeDescription attrs[],
-                               uint32_t bindingCount, uint32_t attrCount,
-                               VkPrimitiveTopology topo, VkCullModeFlags cull,
-                               bool blend, bool depthTest, bool depthWrite) {
-    auto vert = loadModule(ctx.device, shaderDir + "/" + vs);
-    auto frag = loadModule(ctx.device, shaderDir + "/" + fs);
-    if (!vert || !frag) return VK_NULL_HANDLE;
-
-    VkPipelineShaderStageCreateInfo stages[2] = {};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vert;
-    stages[0].pName = "main";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = frag;
-    stages[1].pName = "main";
-
-    VkPipelineVertexInputStateCreateInfo vi = {};
-    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vi.vertexBindingDescriptionCount = bindingCount;
-    vi.pVertexBindingDescriptions = bindings;
-    vi.vertexAttributeDescriptionCount = attrCount;
-    vi.pVertexAttributeDescriptions = attrs;
-
-    VkPipelineInputAssemblyStateCreateInfo ia = {};
-    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    ia.topology = topo;
-
-    VkPipelineViewportStateCreateInfo vp = {};
-    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    vp.viewportCount = 1;
-    vp.scissorCount = 1;
-
-    VkPipelineRasterizationStateCreateInfo rs = {};
-    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rs.polygonMode = VK_POLYGON_MODE_FILL;
-    rs.cullMode = cull;
-    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rs.lineWidth = 1.0f;
-
-    VkPipelineMultisampleStateCreateInfo ms = {};
-    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo ds = {};
-    ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    ds.depthTestEnable = depthTest ? VK_TRUE : VK_FALSE;
-    ds.depthWriteEnable = depthWrite ? VK_TRUE : VK_FALSE;
-    ds.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-
-    VkPipelineColorBlendAttachmentState ba = {};
-    ba.colorWriteMask = 0xF;
-    if (blend) {
-        ba.blendEnable = VK_TRUE;
-        ba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        ba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        ba.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        ba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    }
-    VkPipelineColorBlendStateCreateInfo cb = {};
-    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    cb.attachmentCount = 1;
-    cb.pAttachments = &ba;
-
-    VkDynamicState dyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    VkPipelineDynamicStateCreateInfo dynCI = {};
-    dynCI.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynCI.dynamicStateCount = 2;
-    dynCI.pDynamicStates = dyn;
-
-    VkGraphicsPipelineCreateInfo pi = {};
-    pi.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pi.stageCount = 2;
-    pi.pStages = stages;
-    pi.pVertexInputState = &vi;
-    pi.pInputAssemblyState = &ia;
-    pi.pViewportState = &vp;
-    pi.pRasterizationState = &rs;
-    pi.pMultisampleState = &ms;
-    pi.pDepthStencilState = &ds;
-    pi.pColorBlendState = &cb;
-    pi.pDynamicState = &dynCI;
-    pi.layout = layout;
-    pi.renderPass = rp;
-    pi.subpass = 0;
-
-    VkPipeline p;
-    VkResult r = vkCreateGraphicsPipelines(ctx.device, VK_NULL_HANDLE, 1, &pi, nullptr, &p);
-    vkDestroyShaderModule(ctx.device, vert, nullptr);
-    vkDestroyShaderModule(ctx.device, frag, nullptr);
-    return r == VK_SUCCESS ? p : VK_NULL_HANDLE;
-}
-
 // 地形 UBO 的 C++ 镜像：布局必须与 shaders/terrain.vert 里的 Ubo 完全一致
 // （每个块 16 字节对齐，tileRect 放最后）。
 struct TerrainUbo {
@@ -172,9 +26,7 @@ struct TerrainUbo {
     float tileRect[kAtlasMaxTiles][4];   // xy=图集内原点, zw=宽高（像素）
 };
 
-// ---------------------------------------------------------------------------
 // 初始化 / 销毁
-// ---------------------------------------------------------------------------
 bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
                     const std::string& shaderDir) {
     ctxPtr_ = &ctx;
@@ -186,7 +38,7 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     createAtlasTexture(ctx);
     createDescriptors(ctx);
 
-    // --- 管线布局 ---
+    // 管线布局
     VkPushConstantRange terrPC = {VK_SHADER_STAGE_VERTEX_BIT, 0, 16};
     VkPipelineLayoutCreateInfo pl = {};
     pl.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -208,22 +60,22 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     pl.pSetLayouts = &skyDSL_;
     vkCreatePipelineLayout(ctx.device, &pl, nullptr, &skyLayout_);
 
-    // --- 每帧缓冲（主机可见，仅映射一次） ---
-    // 地形 UBO 要装下 tileRect[]（每图块 4 float），比原来的 96 字节大得多
+    // 每帧缓冲（主机可见，仅映射一次）
+    // 地形 UBO 要装下 tileRect[]（每图块 4 float），末尾必须留够对齐。
     const VkDeviceSize kTerrainUboSize = sizeof(TerrainUbo);
     for (int i = 0; i < VkCtx::MAX_FRAMES_IN_FLIGHT; i++) {
-        createBuffer(ctx, kTerrainUboSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        vkutil::createBuffer(ctx, kTerrainUboSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, terrainUBO_[i]);
         vkMapMemory(ctx.device, terrainUBO_[i].m, 0, kTerrainUboSize, 0, &terrainUBOMap_[i]);
-        createBuffer(ctx, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        vkutil::createBuffer(ctx, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, skyUBO_[i]);
         vkMapMemory(ctx.device, skyUBO_[i].m, 0, 64, 0, &skyUBOMap_[i]);
-        createBuffer(ctx, 1 << 20, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        vkutil::createBuffer(ctx, 1 << 20, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uiBuf_[i]);
         vkMapMemory(ctx.device, uiBuf_[i].m, 0, VK_WHOLE_SIZE, 0, &uiMap_[i]);
     }
 
-    // --- 描述符集 ---
+    // 描述符集
     VkDescriptorImageInfo tii = {atlasSampler_, atlasView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkDescriptorImageInfo nii = {atlasNearSampler_, atlasView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkDescriptorImageInfo uii = {atlasSampler_, atlasView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -270,26 +122,26 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
         vkUpdateDescriptorSets(ctx.device, 1, &w3, 0, nullptr);
     }
 
-    // --- 管线 ---
+    // 管线
     VkVertexInputBindingDescription terrBinding = {0, 12, VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription terrAttrs[2] = {};
     terrAttrs[0] = {0, 0, VK_FORMAT_R16G16B16A16_SINT, 0};
     terrAttrs[1] = {1, 0, VK_FORMAT_R8G8B8A8_UINT, 8};
 
-    terrainPipe_ = makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
+    terrainPipe_ = vkutil::makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
                                 "terrain.vert.spv", "terrain.frag.spv",
                                 &terrBinding, terrAttrs, 1, 2,
                                 VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_BACK_BIT,
                                 false, true, true);
-    waterPipe_ = makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
+    waterPipe_ = vkutil::makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
                               "water.vert.spv", "water.frag.spv",
                               &terrBinding, terrAttrs, 1, 2,
                               // 水面只有顶层一张面（网格化时就剔掉了侧面/底面），
-                              // 从水下抬头看的这张面是背面，开背面剔除会整片消失
+                              // 从水下抬头看的这张面是背面，开背面剔除会整片消失。
                               VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
                               true, true, false);
 
-    skyPipe_ = makePipeline(ctx, ctx.renderPass, skyLayout_, shaderDir,
+    skyPipe_ = vkutil::makePipeline(ctx, ctx.renderPass, skyLayout_, shaderDir,
                             "sky.vert.spv", "sky.frag.spv",
                             nullptr, nullptr, 0, 0,
                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
@@ -300,7 +152,7 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     uiAttrs[0] = {0, 0, VK_FORMAT_R32G32_SFLOAT, 0};
     uiAttrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, 8};
     uiAttrs[2] = {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 16};
-    uiPipe_ = makePipeline(ctx, ctx.renderPass, uiLayout_, shaderDir,
+    uiPipe_ = vkutil::makePipeline(ctx, ctx.renderPass, uiLayout_, shaderDir,
                            "ui.vert.spv", "ui.frag.spv",
                            &uiBinding, uiAttrs, 1, 3,
                            VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
@@ -315,16 +167,16 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     // 实体管线：复用 terrain 的布局与描述符，但用 entity 着色器
     //（uv 按 0..255 映射整张贴图，生物模型才能按原版 texOffs 精确取子矩形），
     // 不剔面（盒模型内外面都可能可见），写深度。
-    entityPipe_ = makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
+    entityPipe_ = vkutil::makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
                                "entity.vert.spv", "entity.frag.spv",
                                &terrBinding, terrAttrs, 1, 2,
                                VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
                                false, true, true);
     if (!entityPipe_) fprintf(stderr, "[renderer] WARNING: entity pipeline creation failed\n");
 
-    // 实体动态顶点缓冲：CPU 每帧构建，256KB 约够 3.6K 个方块面（12 字节/顶点）
+    // 实体动态顶点缓冲：CPU 每帧构建盒模型，256KB 约够 3.6K 个方块面（12 字节/顶点）。
     for (int i = 0; i < VkCtx::MAX_FRAMES_IN_FLIGHT; i++) {
-        createBuffer(ctx, 256 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        vkutil::createBuffer(ctx, 256 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, entityVB_[i]);
         vkMapMemory(ctx.device, entityVB_[i].m, 0, VK_WHOLE_SIZE, 0, &entityMap_[i]);
     }
@@ -377,7 +229,7 @@ void Renderer::createAtlasTexture(VkCtx& ctx) {
     vkBindImageMemory(ctx.device, atlasImage_, atlasMem_, 0);
 
     Buffer2 staging;
-    if (!createBuffer(ctx, (VkDeviceSize)w * h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    if (!vkutil::createBuffer(ctx, (VkDeviceSize)w * h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging)) {
         fprintf(stderr, "[renderer] atlas staging alloc failed\n");
         return;
@@ -412,7 +264,7 @@ void Renderer::createAtlasTexture(VkCtx& ctx) {
     bic.imageExtent = {(uint32_t)w, (uint32_t)h, 1};
     vkCmdCopyBufferToImage(cb, staging.b, atlasImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bic);
 
-    // 逐级生成 mip
+    // 逐级生成 mip。
     for (uint32_t m = 1; m < mips; m++) {
         VkImageMemoryBarrier br = {};
         br.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -500,7 +352,7 @@ void Renderer::createAtlasTexture(VkCtx& ctx) {
     sm.anisotropyEnable = VK_TRUE;
     sm.maxAnisotropy = 16.0f;
     sm.minLod = 0.0f;
-    // 32px 单元里只有 16px 贴图 + 8px 边缘扩展：mip 4 时单元仅剩 2px，
+
     // 再往下就会把邻格颜色混进来，所以 LOD 封顶。
     sm.maxLod = (float)(mips > 5 ? 4 : (mips - 1));
     vkCreateSampler(ctx.device, &sm, nullptr, &atlasSampler_);
@@ -544,7 +396,6 @@ void Renderer::createDescriptors(VkCtx& ctx) {
     li.bindingCount = 1;
     li.pBindings = &sky0;
     vkCreateDescriptorSetLayout(ctx.device, &li, nullptr, &skyDSL_);
-
 
     VkDescriptorPoolSize sizes[2] = {};
     sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -624,7 +475,7 @@ void Renderer::updateTerrainUBO(VkCtx& ctx, const Camera& cam, float renderDist,
 
     struct SkyUbo { float hx, hy, hz, ha; float zx, zy, zz, za; } s;
     // 天空色按维度区分（下界/末地无昼夜循环，颜色固定）
-    // dimType 已在上面 terrain UBO 处声明
+    // dimType 已在上面 terrain UBO 处声明。
     Vec3 horizon, zenith;
     if (world_ && world_->getDimension() != DIM_OVERWORLD) {
         // 下界/末地：天空色固定（环境光由维度配置 ambient_light 控制）
@@ -632,7 +483,7 @@ void Renderer::updateTerrainUBO(VkCtx& ctx, const Camera& cam, float renderDist,
         horizon = Vec3(r * 0.8f, g * 0.8f, b * 0.8f);  // 地平线压暗一点
         zenith = Vec3(r, g, b);
     } else {
-        // 主世界：按昼夜循环插值
+        // 主世界：按昼夜循环插值。
         Vec3 dayHorizon(0.60f, 0.77f, 0.90f);
         Vec3 dayZenith(0.35f, 0.55f, 0.86f);
         Vec3 nHorizon(0.10f, 0.12f, 0.22f);
@@ -646,9 +497,7 @@ void Renderer::updateTerrainUBO(VkCtx& ctx, const Camera& cam, float renderDist,
     memcpy(skyUBOMap_[slot], &s, sizeof(SkyUbo));
 }
 
-// ---------------------------------------------------------------------------
-// 区块 GPU 上传
-// ---------------------------------------------------------------------------
+// 区块 GPU 上传。
 void Renderer::retireBuffer(VkBuffer b, VkDeviceMemory m, bool opaque, Chunk& c) {
     if (!b && !m) return;
     VkDeviceSize sz = opaque ? (VkDeviceSize)c.opaqueAlloc : (VkDeviceSize)c.waterAlloc;
@@ -698,7 +547,7 @@ void Renderer::uploadPart(VkCtx& ctx, Chunk& c, bool opaque,
         }
     }
     if (!reused) {
-        if (!createBuffer(ctx, needed, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        if (!vkutil::createBuffer(ctx, needed, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, nb))
             return;
         // 用 VK_WHOLE_SIZE 映射一次，缓冲销毁前不再解映射。
@@ -737,7 +586,6 @@ void Renderer::flushRetired(VkCtx& ctx, uint64_t submittedFrames) {
         }
     }
 }
-
 
 void Renderer::gpuSync(VkCtx&) {
     // 多帧在飞时区块缓冲从不原地改写或释放：上传总是写新缓冲，旧缓冲等读取它的
@@ -786,9 +634,7 @@ void Renderer::destroyChunkBuffers(VkCtx& ctx, Chunk& c) {
     (void)ctx;
 }
 
-// ---------------------------------------------------------------------------
 // 渲染
-// ---------------------------------------------------------------------------
 bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, float dt,
                       float renderDist, bool drawUI) {
     windowW_ = ctx.extent.width;
@@ -829,7 +675,7 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
     rp.clearValueCount = 2;
     rp.pClearValues = clears;
 
-    // 必须在 render pass 之前上传待处理网格：uploadPart 里的创建/分配不能出现在 pass 内。
+    // 必须在 render pass 之前上传待处理网格：uploadPart 里的创建/分配不能出现在 pass 内
     if (world_) {
         world_->snapshotChunks(snapshot_);
         for (auto& si : snapshot_) {
@@ -877,7 +723,7 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
             shotW_ = ctx.extent.width;
             shotH_ = ctx.extent.height;
             Buffer2 b;
-            if (createBuffer(ctx, (VkDeviceSize)shotW_ * shotH_ * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            if (vkutil::createBuffer(ctx, (VkDeviceSize)shotW_ * shotH_ * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, b)) {
                 shotBuf_ = b.b;
                 shotMem_ = b.m;
@@ -942,14 +788,7 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
 
 // 生物 → Mob 基类的向下转型（编译关了 RTTI，用 kind 判断；kind 与类一一对应）
 static const Mob* asMob(const Entity& e) {
-    switch (e.kind) {
-    case EntityKind::Pig: case EntityKind::Cow: case EntityKind::Sheep:
-    case EntityKind::Chicken: case EntityKind::Zombie: case EntityKind::Skeleton:
-    case EntityKind::Creeper: case EntityKind::Spider: case EntityKind::Blaze:
-    case EntityKind::Enderman:
-        return static_cast<const Mob*>(&e);
-    default: return nullptr;
-    }
+    return isMobKind(e.kind) ? static_cast<const Mob*>(&e) : nullptr;
 }
 
 void Renderer::drawEntities(VkCtx& ctx, const Camera& cam) {
@@ -1020,14 +859,10 @@ void Renderer::drawEntities(VkCtx& ctx, const Camera& cam) {
     }
 }
 
-// drawEntities 的调用点应放在 drawChunks 结束大括号之后
-
-// ---------------------------------------------------------------------------
-// 遮挡剔除：把世界切成 16x16x16 的分段做可见性洪泛。
+// 遮挡剔除：把世界切成 16x16x16 的分段做可见性洪泛
 // 两个相邻分段之间能不能看见，看它们共享的那张 16x16 面有没有被完全不透明
 // 地挡死（位定义见 world.hpp）。到不了的分段一定被挡死，画了也看不见；
 // 判定永远保守 —— 邻居没加载/没构网格都按"能看见"处理，只会多画不会漏画。
-// ---------------------------------------------------------------------------
 bool Renderer::updateOcclusion(const Camera& cam) {
     occValid_ = false;
     if (snapshot_.empty()) return false;
@@ -1059,14 +894,14 @@ bool Renderer::updateOcclusion(const Camera& cam) {
     auto secIdx = [&](int dx, int dz, int s) {
         return (size_t)(dx * occSpanCz_ + dz) * 8 + s;
     };
-    // 相机所在分段及 26 邻域都是起点：卡在方块里也得能看见外面
+    // 相机所在分段及 26 邻域都是起点：卡在方块里也得能看见外面。
     const int camDx = (int)std::floor(cam.pos.x / CHUNK_SIZE) - minCx;
     const int camDz = (int)std::floor(cam.pos.z / CHUNK_SIZE) - minCz;
     int camSec = (int)std::floor(cam.pos.y / 16.0f);
     if (camSec < 0) camSec = 0;
     if (camSec > 7) camSec = 7;
 
-    // occVisit_ 位 0 = "可能看得见"、位 1 = "已入队（还能继续往外传）"。
+    // occVisit_ 位 0 = "可能看得见"、位 1 = "已入队（还能继续往外传）"
     // 挡死的面指的是"视线穿不过去"，但那一侧的表面依然看得见（洞壁就是这么来的），
     // 所以相邻分段一律标可见，只有能穿过去才继续往里传。
     std::vector<int> queue;
@@ -1098,7 +933,7 @@ bool Renderer::updateOcclusion(const Camera& cam) {
             }
         }
 
-    // 走一步要看"离开的那个分段"的共享面有没有被挡死
+    // 走一步要看"离开的那个分段"的共享面有没有被挡死。
     static const int kStep[6][4] = {
         {1, 0, 0, 0}, {-1, 0, 0, 1}, {0, 0, 1, 2}, {0, 0, -1, 3}, {0, 1, 0, 4}, {0, -1, 0, 5},
     };
@@ -1115,12 +950,12 @@ bool Renderer::updateOcclusion(const Camera& cam) {
             if (ns < 0 || ns > 7) continue;
             int ndx = dx + st[0], ndz = dz + st[2];
             if (ndx < 0 || ndx >= occSpanCx_ || ndz < 0 || ndz >= occSpanCz_) continue;
-            // 向下走时共享面归下面那一段管，其它方向归当前这段管
+            // 向下走时共享面归下面那一段管，其它方向归当前这段管。
             const int ownerSec = st[3] == 5 ? ns : s;
             const int ownerDir = st[3] == 5 ? 4 : st[3];
             const uint64_t bit = chunkFaceBit(ownerSec, ownerDir);
             // 穿不过去也要标"看得见"：那一侧的表面本身就是可见的（洞壁）；
-            // 只有能穿过去才继续往外传
+            // 只有能穿过去才继续往外传。
             reach(ndx, ndz, ns, (pass & bit) != 0);
         }
     }
@@ -1128,7 +963,7 @@ bool Renderer::updateOcclusion(const Camera& cam) {
     return true;
 }
 
-// 某区块的任一分段可达即视为可见
+// 某区块的任一分段可达即视为可见。
 bool Renderer::chunkOccluded(int cx, int cz) const {
     if (!occValid_) return false;
     const int dx = cx - occMinCx_, dz = cz - occMinCz_;
@@ -1177,7 +1012,7 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
     // 实体在第 1 遍（不透明）之后、第 2 遍（水）之前绘制。
 
     int draws = 0;
-    // 第 1 遍：绘制全部不透明几何
+    // 第 1 遍：绘制全部不透明几何。
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainPipe_);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, terrainLayout_, 0, 1, &terrainSet_[curFrame_], 0, nullptr);
     for (auto& v : visible) {
@@ -1213,9 +1048,7 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
     debugDraws_ = draws;
 }
 
-// ---------------------------------------------------------------------------
 // 叠加 UI
-// ---------------------------------------------------------------------------
 void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
     // 方块高亮：把目标方块的棱边投影到屏幕，用 UI 管线画细四边形。
     Vec3 fwd = cam.forward();
@@ -1223,7 +1056,7 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
 
     Mat4 vp = cachedVP_;
 
-    // 构建 UI 四边形
+    // 构建 UI 四边形。
     if (in.keys['1']) selectedSlot_ = 0;
     if (in.keys['2']) selectedSlot_ = 1;
     if (in.keys['3']) selectedSlot_ = 2;
@@ -1256,7 +1089,7 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
         for (auto& v : q) quads.push_back(v);
     };
 
-    // 把目标方块的 12 条棱画成屏幕空间细四边形
+    // 把目标方块的 12 条棱画成屏幕空间细四边形。
     if (hit.hit) {
         float m[16];
         for (int i = 0; i < 16; i++) m[i] = vp.m[i];
@@ -1269,7 +1102,7 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
             oy = (c1 / c3 * 0.5f + 0.5f) * (float)windowH_;
             return true;
         };
-        // 用定向四边形（平行四边形）代替屏幕空间线段
+        // 用定向四边形（平行四边形）代替屏幕空间线段。
         auto pushLineQuad = [&](float ax, float ay, float bx, float by, float t,
                                 float r, float g, float b, float a) {
             float dx = bx - ax, dy = by - ay;
@@ -1355,7 +1188,7 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
         float gridH = rows * invSlot + (rows - 1) * invGap;
         float gx0 = (windowW_ - gridW) * 0.5f;
         float gy0 = (windowH_ - gridH) * 0.5f;
-        // 半透明背景遮罩
+        // 半透明背景遮罩。
         pushQuad(0, 0, (float)windowW_, (float)windowH_, T_WHITE, 0.05f, 0.05f, 0.05f, 0.55f);
         // 标签按钮（石头=方块页，铁镐=物品页）
         const float tabW = 64.0f, tabH = 28.0f, tabGap = 8.0f;
@@ -1373,7 +1206,7 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
         }
         int currentIdx = -1;
         if (invPage_ == 0) {
-            // 选中格是方块时，找出它在方块页中的索引
+            // 选中格是方块时，找出它在方块页中的索引。
             int cur = hotbar_[selectedSlot_];
             for (int i = 0; i < kInvCount; i++)
                 if (cur < kItemTag && kInvBlocks[i] == (uint8_t)cur) { currentIdx = i; break; }
@@ -1450,7 +1283,7 @@ void Renderer::shutdown(VkCtx& ctx) {
         if (r.m) vkFreeMemory(ctx.device, r.m, nullptr);
     }
     freePool_.clear();
-    // 实体动态缓冲
+    // 实体动态缓冲。
     for (int i = 0; i < VkCtx::MAX_FRAMES_IN_FLIGHT; i++) {
         if (entityMap_[i]) vkUnmapMemory(ctx.device, entityVB_[i].m);
         entityVB_[i].destroy(ctx.device);
@@ -1473,11 +1306,4 @@ void Renderer::shutdown(VkCtx& ctx) {
     if (atlasImage_) vkDestroyImage(ctx.device, atlasImage_, nullptr);
     if (atlasMem_) vkFreeMemory(ctx.device, atlasMem_, nullptr);
 }
-
-
-
-
-
-
-
 

@@ -1,5 +1,4 @@
 // blockupdatetest — 方块更新自检（PP 更新传播 + 计划刻 + 下落的方块）
-//
 // 用法: blockupdatetest <seed>
 // 用例的期望值全部写死，不调用被测函数生成期望。
 #include "blockupdate.hpp"
@@ -22,7 +21,7 @@ static void check(bool cond, const char* name) {
 static const int kX = 8, kZ = 8;
 static const int kFloorY = 100;
 
-// 用"不产生更新"的方式搭台子，再单独触发更新，保证起点确定
+// 用"不产生更新"的方式搭台子，再单独触发更新，保证起点确定。
 static void buildPad(World& w) {
     w.forceGenerateChunk(0, 0);
     for (int y = kFloorY - 1; y <= kFloorY + 6; y++)
@@ -46,13 +45,13 @@ static int countFalling(const World& w) {
 int main(int argc, char** argv) {
     uint32_t seed = argc > 1 ? (uint32_t)std::strtoul(argv[1], nullptr, 10) : 12345u;
 
-    // ---- 用例 1：沙子失去支撑 → 变成下落的方块 → 落地还原成沙子 ----
+    // 用例 1：沙子失去支撑 → 变成下落的方块 → 落地还原成沙子
     {
         World w(seed);
         buildPad(w);
         w.setBlock(kX, kFloorY + 1, kZ, B_SAND, bu::U_NO_ALL);
         check(w.getBlock(kX, kFloorY + 1, kZ) == B_SAND, "搭台：沙子已在石头上");
-        // 抽掉下方的石头（正常更新）→ PP 更新传到沙子 → 计划刻 → 下落
+        // 抽掉下方的石头（正常更新）→ PP 更新传到沙子 → 计划刻 → 下落。
         w.setBlock(kX, kFloorY, kZ, B_AIR);
         ticks(w, 3);
         check(w.getBlock(kX, kFloorY + 1, kZ) == B_AIR, "抽掉支撑后原格变空");
@@ -68,7 +67,7 @@ int main(int argc, char** argv) {
         printf("    (落点 y=%d)\n", landY);
     }
 
-    // ---- 用例 2：沙子柱整列坍塌 ----
+    // 用例 2：沙子柱整列坍塌
     {
         World w(seed);
         buildPad(w);
@@ -84,7 +83,7 @@ int main(int argc, char** argv) {
         check(sand == 3, "3 格沙子一块不少（没有凭空消失）");
     }
 
-    // ---- 用例 3：地面火把失去支撑 → 延迟破坏 ----
+    // 用例 3：地面火把失去支撑 → 延迟破坏
     {
         World w(seed);
         buildPad(w);
@@ -92,7 +91,7 @@ int main(int argc, char** argv) {
         w.setBlock(kX, kFloorY, kZ, B_AIR);
         ticks(w, 4);
         check(w.getBlock(kX, kFloorY + 1, kZ) == B_AIR, "火把失去支撑后消失");
-        // 有支撑时不该消失
+        // 有支撑时不该消失。
         w.setBlock(kX, kFloorY, kZ, B_STONE, bu::U_NO_ALL);
         w.setBlock(kX, kFloorY + 1, kZ, B_TORCH, bu::U_NO_ALL);
         w.setBlock(kX + 1, kFloorY, kZ, B_STONE);   // 旁边放块石头触发更新
@@ -100,7 +99,7 @@ int main(int argc, char** argv) {
         check(w.getBlock(kX, kFloorY + 1, kZ) == B_TORCH, "有支撑的火把不受影响");
     }
 
-    // ---- 用例 4：墙上火把失去附着的墙 → 延迟破坏 ----
+    // 用例 4：墙上火把失去附着的墙 → 延迟破坏
     {
         World w(seed);
         buildPad(w);
@@ -110,7 +109,7 @@ int main(int argc, char** argv) {
         w.setBlock(kX, kFloorY, kZ, B_AIR);
         ticks(w, 4);
         check(w.getBlock(kX + 1, kFloorY, kZ) == B_AIR, "墙上火把失去墙面后消失");
-        // 墙还在时不受影响
+        // 墙还在时不受影响。
         w.setBlock(kX, kFloorY, kZ, B_STONE, bu::U_NO_ALL);
         w.setBlock(kX + 1, kFloorY, kZ, B_WALL_TORCH_E, bu::U_NO_ALL);
         w.setBlock(kX, kFloorY + 2, kZ, B_STONE);
@@ -118,16 +117,16 @@ int main(int argc, char** argv) {
         check(w.getBlock(kX + 1, kFloorY, kZ) == B_WALL_TORCH_E, "墙还在时墙上火把保留");
     }
 
-    // ---- 用例 5：紫颂植株悬空 → 消失（原版 canSurvive）----
+    // 用例 5：紫颂植株悬空 → 消失（原版 canSurvive）
     {
         World w(seed);
         buildPad(w);
         w.setBlock(kX, kFloorY + 1, kZ, B_CHORUS_PLANT, bu::U_NO_ALL);
-        // 在植株旁边放方块：PP 更新只传到改动方块的 6 个邻居，必须挑相邻的格
+        // 在植株旁边放方块：PP 更新只传到改动方块的 6 个邻居，必须挑相邻的格。
         w.setBlock(kX + 1, kFloorY + 1, kZ, B_STONE);
         ticks(w, 4);
         check(w.getBlock(kX, kFloorY + 1, kZ) == B_AIR, "悬空的紫颂植株被破坏");
-        // 长在末地石上则保留
+        // 长在末地石上则保留。
         w.setBlock(kX, kFloorY, kZ, B_END_STONE, bu::U_NO_ALL);
         w.setBlock(kX, kFloorY + 1, kZ, B_CHORUS_PLANT, bu::U_NO_ALL);
         w.setBlock(kX - 1, kFloorY + 1, kZ, B_STONE);
@@ -135,7 +134,7 @@ int main(int argc, char** argv) {
         check(w.getBlock(kX, kFloorY + 1, kZ) == B_CHORUS_PLANT, "长在末地石上的植株保留");
     }
 
-    // ---- 用例 6：世界生成写入不产生更新（悬空沙子保持不动）----
+    // 用例 6：世界生成写入不产生更新（悬空沙子保持不动）
     {
         World w(seed);
         buildPad(w);

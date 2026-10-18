@@ -23,8 +23,8 @@ bool saveWorld(World& world, const Player& player, const std::string& name,
 // 只读文件头（种子 + 出生点），供菜单列表使用。
 WorldSave saveInfo(const std::string& name, const std::string& dir);
 
-// 从磁盘加载完整世界（各维度区块 + 种子 + 出生点 + 玩家视角/飞行/所在维度）。
-// I/O 出错或版本不匹配时返回 false。
+// 从磁盘加载完整世界（各维度区块 + 种子 + 出生点 + 玩家视角/飞行/所在维度）
+// I/O 出错时返回 false。
 bool loadWorld(World& world, uint32_t& seed, float& spawnX, float& spawnY, float& spawnZ,
                float& yaw, float& pitch, bool& flying, DimensionId& playerDim,
                const std::string& name, const std::string& dir);

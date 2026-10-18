@@ -25,10 +25,10 @@ static fs::path levelPath(const std::string& name, const std::string& dir) {
     return u8(dir) / u8(name) / "level.dat";
 }
 
-// ---- 二进制格式 ----
+// 二进制格式
 // v3 文件头: magic(4) version(4) seed(4) spawnX/Y/Z(12) yaw(4) pitch(4) flying(4)
 //            playerDim(4)
-// v3 之后每个维度一段: dimId(4) count(4)，每区块: cx(4) cz(4) blocks[65536]
+// v3 之后每个维度一段: dimId(4) count(4)，每区块: cx(4) cz(4) blocks[CHUNK_VOL]
 // v2/v1 只有一段（等价主世界），v1 无 yaw/pitch/flying。
 static constexpr uint32_t SAVE_MAGIC = 0x564D5356; // "VMSV"
 static constexpr uint32_t SAVE_VERSION = 3;

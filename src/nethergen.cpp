@@ -7,10 +7,8 @@
 
 namespace {
 
-// ---------------------------------------------------------------------------
 // 原版下界 base_3d_noise（noise_settings/nether.json 的 old_blended_noise 参数）
 // 只跟世界种子有关，每线程缓存一份。
-// ---------------------------------------------------------------------------
 struct NetherNoiseSet {
     uint32_t seed = 0xFFFFFFFFu;
     bool ready = false;
@@ -32,12 +30,12 @@ const NetherNoiseSet& netherNoise(uint32_t seed) {
     return ns;
 }
 
-// 原版 y_clamped_gradient
+// 原版 y_clamped_gradient。
 inline double yGradient(int y, int fromY, int toY, double fromValue, double toValue) {
     return mcClampedMap((double)y, (double)fromY, (double)toY, fromValue, toValue);
 }
 
-// 原版 Mapped.SQUEEZE
+// 原版 Mapped.SQUEEZE。
 inline double squeeze(double v) {
     double c = v < -1.0 ? -1.0 : (v > 1.0 ? 1.0 : v);
     return c / 2.0 - c * c * c / 24.0;
@@ -53,8 +51,8 @@ inline double netherDensity(const McBlendedNoise& base3D, int wx, int wy, int wz
     return squeeze(0.64 * t);
 }
 
-inline uint8_t& ref(uint8_t* b, int x, int y, int z) { return b[x + (z << 4) + (y << 8)]; }
-inline uint8_t at(const uint8_t* b, int x, int y, int z) { return b[x + (z << 4) + (y << 8)]; }
+inline uint8_t& ref(uint8_t* b, int x, int y, int z) { return b[chunkIndex(x, y, z)]; }
+inline uint8_t at(const uint8_t* b, int x, int y, int z) { return b[chunkIndex(x, y, z)]; }
 
 } // 匿名命名空间
 

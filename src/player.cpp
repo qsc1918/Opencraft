@@ -124,7 +124,7 @@ void Player::update(Input& in, World& world, float dt) {
     }
     onGround = grounded;
 
-    // 限制在世界内（Y=0 是世界底；MC 1.18+ 主世界底为 Y=-64，见 docs/standards.md）
+    // 限制在世界内（Y 下限取 WORLD_MIN_Y，当前为 0；MC 1.18+ 主世界是 -64）
     if (p.y - eyeHeight < WORLD_MIN_Y) { p.y = eyeHeight + WORLD_MIN_Y; vel.y = 0; }
 
     cam.pos = p;

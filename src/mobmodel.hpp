@@ -1,22 +1,18 @@
 #pragma once
-// ===========================================================================
 // mobmodel.hpp — 生物/玩家模型（原版 ModelPart 层级 + Box 贴图）
-//
 // 数据全部来自 docs/mob_models.md（从 26.2 反编译源码逐字抄的 texOffs 与
 // addBox 包围盒），渲染时按原版约定换算：
 //   模型像素 → 世界偏移：wx = (mx·cos r − mz·sin r)/16
 //                       wy = 1.501 − my/16
 //                       wz = (−mx·sin r − mz·cos r)/16
 //   （r = 实体 yaw，模型 y 轴朝下，y=24 是脚底；见 mob_models.md §1.2）
-//
 // 顶点 uv 用 0..255 表示整张贴图的比例（实体着色器按 /256 取样），
 // 这样一个 64 宽的贴图正好 1 像素 = 4 个单位，逐面 texOffs 不会丢精度。
-// ===========================================================================
 #include "entity.hpp"
 #include "world.hpp"
 #include <vector>
 
-// part 的动画槽：决定这一帧要不要摆动
+// part 的动画槽：决定这一帧要不要摆动。
 enum MobAnim : uint8_t {
     AN_NONE = 0,
     AN_HEAD,
@@ -64,7 +60,7 @@ const MobModel* mobModel(EntityKind kind);
 // 实体类型的中文名（调试输出用）
 const char* mobName(EntityKind kind);
 
-// 本帧的动画参数
+// 本帧的动画参数。
 struct MobAnimState {
     float limbSwing = 0.0f;    // 走路相位
     float limbAmount = 0.0f;   // 幅度 0..1

@@ -1,10 +1,7 @@
-// ===========================================================================
-// png.cpp — PNG 编码（截图用）
-//
-// 原来用的是 WIC（Windows 独有），为了 Linux 也能跑改成自己写：
-// IHDR/IDAT/IEND + DEFLATE 存储块（不压缩）。文件会大一点，但到处能跑。
+// png.cpp — PNG 编码（截图用）。
+// 自己写 IHDR/IDAT/IEND + DEFLATE 存储块（不压缩，文件大一点），
+// 不依赖平台 API（WIC 仅 Windows），两个平台行为一致。
 // 解码在 png_decode.cpp。
-// ===========================================================================
 #include "png.hpp"
 #include <cstdio>
 #include <cstring>

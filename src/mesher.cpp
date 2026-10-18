@@ -25,13 +25,13 @@ const int kNormal[6][3] = {
     {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1},
 };
 
-// me 朝 nb 的面是否需要剔除（同类玻璃/树叶之间也剔除）。
+// me 朝 nb 的面是否需要剔除（同类玻璃/树叶之间也剔除）
 // 邻居遮挡按"整面"判断：末地门框架只有 13/16 高，遮不住邻居的整个面，
 // 所以它旁边的方块（比如框顶上方那块）该画的面必须画，否则会透出方块内部。
 inline bool cullFace(uint8_t me, uint8_t nb) {
     if (me == B_GLASS && nb == B_GLASS) return true;
     if (me == B_LEAVES && nb == B_LEAVES) return true;
-    // 两个框架贴着时遮挡形状相同，接触面重合，剔掉避免 z-fighting
+    // 两个框架贴着时遮挡形状相同，接触面重合，剔掉避免 z-fighting。
     if (blockIsPortalFrame(me) && blockIsPortalFrame(nb)) return true;
     if (blockIsPortalFrame(nb)) return false;
     if (blockIsOpaque(nb)) return true;
@@ -68,11 +68,9 @@ inline bool emissiveBlock(uint8_t id) {
     return id < B_COUNT && BLOCK_DEFS[id].lightEmission >= 10;
 }
 
-// ---------------------------------------------------------------------------
-// 方块模型：一个方块由若干长方体（原版 element）拼成，坐标 1/16 格、0..16。
+// 方块模型：一个方块由若干长方体（原版 element）拼成，坐标 1/16 格、0..16
 // 与原版一致，UV 与位置分开：每个面有自己的图块与 UV 矩形（0..16 像素），
 // cullface 只写在贴在方块边界上的面上，没写的面（模型内部面）永不被邻居剔除。
-// ---------------------------------------------------------------------------
 struct BoxFace {
     uint8_t tile = T_WHITE;
     uint8_t u0 = 0, v0 = 0, u1 = 16, v1 = 16;
@@ -245,14 +243,12 @@ inline int buildChorusFlower(Box* out, uint8_t id) {
     return n;
 }
 
-// ---------------------------------------------------------------------------
 // 末地传送门框架：原版 models/block/end_portal_frame(_filled).json
 //  - element0 [0,0,0]->[16,13,16]：down=end_stone(cullface)、up=frame_top(无 cullface)、
 //    四侧 uv [0,3,16,16]（侧面贴图顶部 3 行是透明的，正好跳过）(cullface 同名)。
 //  - element1 [4,13,4]->[12,16,12]（仅"有眼"）：up uv [4,4,12,12](cullface up)、
-//    四侧 uv [4,0,12,3]（无 cullface，绝不因邻居消失）、没有 down 面。
-// 眼块是"居中"的 8×8 柱子、凸出框顶 3/16（对应原版 SHAPE_FULL），不随朝向偏移。
-// ---------------------------------------------------------------------------
+//    四侧 uv [4,0,12,3]（无 cullface，绝不因邻居消失）、没有 down 面
+// 眼块是"居中"的 8×8 柱子、凸出框顶 3/16（对应原版 SHAPE_FULL），不随朝向偏移
 // 火把（原版 models/block/template_torch.json 的轴对齐还原）：
 // 一根 2×2×10 的小杆立在方块中心，顶面是焰心、四侧是杆身竖条。
 inline int buildTorch(Box* out) {
@@ -361,10 +357,8 @@ inline int buildParts(uint8_t id, Box* out, uint8_t conn) {
     return 1;
 }
 
-// ---------------------------------------------------------------------------
 // AO：在原版里是"面外侧那一层"（法线方向偏移一格）的角点邻居，
 // 角点朝外的两个方向由该角落在 element 的 min 还是 max 侧决定。
-// ---------------------------------------------------------------------------
 inline int aoForFace(const MeshView& view, int x, int y, int z, int f, int c) {
     int na = f >> 1;                 // 法线轴：0=X,1=Y,2=Z（Face 枚举成对排列）
     int a1 = (na + 1) % 3, a2 = (na + 2) % 3;
@@ -391,11 +385,9 @@ inline uint8_t bakeShade(int face, int ao, bool water) {
     return kShade[face][ao][water ? 1 : 0];
 }
 
-// ---------------------------------------------------------------------------
-// 贪心网格化：把同一朝向、同贴图、同亮度的整方块面合并成一张大矩形。
+// 贪心网格化：把同一朝向、同贴图、同亮度的整方块面合并成一张大矩形
 // 前提是"合并后必须和逐格出面逐像素一致"，所以一张面只有在**四个角亮度全相等**
 // 时才参与合并（见 canMergeFace）；多 element 模型、自定义 UV 的面走原来的路径。
-// ---------------------------------------------------------------------------
 
 // 每个朝向的面内两条轴、uv 由哪条轴驱动；由 kCorner/kUvCorner 现推，避免手抄表
 struct FaceLayout {
@@ -418,7 +410,7 @@ struct LayoutInit {
             for (int comp = 0; comp < 2; comp++) {
                 for (int s = 0; s < 2; s++) {
                     // 取 uv 大端的两个角点必须落在该轴同一侧、另两个落在对侧，
-                    // 满足这条的轴就是驱动该 uv 分量的轴
+                    // 满足这条的轴就是驱动该 uv 分量的轴。
                     int want = -1;
                     bool ok = true;
                     for (int c = 0; c < 4; c++) {
@@ -469,7 +461,7 @@ struct GreedyGrid {
 };
 thread_local GreedyGrid g_grid;
 
-// 水面只有顶面，一层一张表就够；相邻水面高度不同就不共面，所以 y 也要参与比较
+// 水面只有顶面，一层一张表就够；相邻水面高度不同就不共面，所以 y 也要参与比较。
 struct WaterCell {
     uint8_t tile = 0, shade = 0, y = 0;
     bool present = false, used = false;
@@ -480,7 +472,7 @@ inline bool sameWater(const WaterCell& a, const WaterCell& b) {
 
 // uv 是 uint8（以 1/16 格为单位），合并超过 15 格就溢出 255，按这个上限截断
 const int kMaxMergeBlocks = 15;
-// 顶点 w 分量交给着色器：合并出的大面 uv 会超出单个图块，需要按图块平铺
+// 顶点 w 分量交给着色器：合并出的大面 uv 会超出单个图块，需要按图块平铺。
 enum : int16_t { kWrapU = 1, kWrapV = 2 };
 
 // 输出一张轴对齐矩形：coord=每条轴的起点（1/16 格），span=跨度（法线轴为 0）
@@ -530,7 +522,7 @@ inline bool uniformFaceShade(const MeshView& view, int x, int y, int z, int f, u
     return true;
 }
 
-// 某个朝向的所有面做一轮二维贪心：沿法线轴分层，层内在另外两条轴上合并成矩形
+// 某个朝向的所有面做一轮二维贪心：沿法线轴分层，层内在另外两条轴上合并成矩形。
 static void mergeFaceLayer(int f, int maxY, std::vector<TerrainVertex>& ov,
                            std::vector<uint32_t>& oi) {
     const FaceLayout& L = kLayout[f];
@@ -550,13 +542,13 @@ static void mergeFaceLayer(int f, int maxY, std::vector<TerrainVertex>& ov,
                 uint32_t& c0 = cellAt(p, i0, i1);
                 if (!facePresent(c0) || faceUsed(c0)) continue;
                 const uint32_t key = c0 & (kFacePresent | 0xFFFFu);
-                // 先沿 slot0 尽量延长
+                // 先沿 slot0 尽量延长。
                 int w = 1;
                 while (w < kMaxMergeBlocks && i0 + w < dim0 &&
                        (cellAt(p, i0 + w, i1) & (kFacePresent | kFaceUsed | 0xFFFFu)) == key &&
                        faceTile(cellAt(p, i0 + w, i1)) == faceTile(c0))
                     w++;
-                // 再沿 slot1 成行延长
+                // 再沿 slot1 成行延长。
                 int h = 1;
                 while (h < kMaxMergeBlocks && i1 + h < dim1) {
                     bool row = true;
@@ -584,12 +576,11 @@ static void mergeFaceLayer(int f, int maxY, std::vector<TerrainVertex>& ov,
     }
 }
 
-
 } // 匿名命名空间
 
 // 统计每个 16^3 分段的共享面里，哪些"视线能穿过去"（位定义见 world.hpp）：
 // 只要面上有一格两边都不是不透明，就认为能穿过。反过来（整面被不透明堵死）
-// 只说明视线过不去，那一侧的表面本身还是看得见的（洞壁就是这么回事）。
+// 只说明视线过不去，那一侧的表面本身还是看得见的（洞壁就是这么回事）
 // 邻居没加载时按空气算 → 能穿过（保守）；世界上下界外没有方块，同样按能穿过。
 uint64_t buildFaceMask(const MeshView& view, int maxY) {
     uint64_t pass = 0;
@@ -623,7 +614,7 @@ uint64_t buildFaceMask(const MeshView& view, int maxY) {
             if (anyPass) pass |= chunkFaceBit(s, 4);
         }
     }
-    // maxY 之上的分段全是空气（主循环没扫到），一律按"能穿过"记
+    // maxY 之上的分段全是空气（主循环没扫到），一律按"能穿过"记。
     for (int s = secTop + 1; s < 8; s++) {
         for (int d = 0; d < 4; d++) pass |= chunkFaceBit(s, d);
         if (s < 7) pass |= chunkFaceBit(s, 4);
@@ -683,7 +674,7 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
 
                 if (!blockIsRenderable(id)) continue;
 
-                // 紫颂植株按六面邻块决定"长不长凸起"，先算连接掩码
+                // 紫颂植株按六面邻块决定"长不长凸起"，先算连接掩码。
                 uint8_t conn = 0;
                 if (id == B_CHORUS_PLANT) {
                     for (int f = 0; f < 6; f++)
@@ -761,9 +752,9 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
             }
         }
     }
-    // ---- 贪心合并：六个朝向各来一轮，最后是水面那一层 ----
+    // 贪心合并：六个朝向各来一轮，最后是水面那一层
     for (int f = 0; f < 6; f++) mergeFaceLayer(f, maxY, ov, oi);
-    // 主循环只扫到 maxY，上面的分段全是空气，必须清掉
+    // 主循环只扫到 maxY，上面的分段全是空气，必须清掉。
     if (loY != INT_MAX) {
         m.geomMinY = (uint16_t)loY;
         m.geomMaxY = (uint16_t)hiY;
@@ -776,7 +767,7 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
         for (int i0 = 0; i0 < CHUNK_SIZE; i0++) {
             WaterCell& c0 = waterPlane[i0 + i1 * CHUNK_SIZE];
             if (!c0.present || c0.used) continue;
-            // 只有同高度的水面才是真正的共面，合并时必须连 y 一起比
+            // 只有同高度的水面才是真正的共面，合并时必须连 y 一起比。
             int w = 1;
             while (w < kMaxMergeBlocks && i0 + w < CHUNK_SIZE &&
                    sameWater(waterPlane[i0 + w + i1 * CHUNK_SIZE], c0))

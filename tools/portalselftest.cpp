@@ -1,11 +1,11 @@
 // portalselftest.cpp — 末地门 5×5 方环的几何自检（朝向规则）
-// 用法: portalselftest
+// 用法: portalselftest。
 #include "blocks.hpp"
 #include "portal.hpp"
 #include <cstdio>
 #include <map>
 
-// 简单方块表：模拟 World.getBlock
+// 简单方块表：模拟 World.getBlock。
 static std::map<std::pair<int, int>, uint8_t> g_blocks;
 static uint8_t getBlock(int x, int, int z) {
     auto it = g_blocks.find({x, z});
@@ -22,7 +22,7 @@ static void check(bool ok, const char* what) {
 // expectedFacing(dx,dz) 用"写死的期望值"，不调用被测的 frameRequiredFacing，
 // 否则规则写错时自检会跟着一起错（这个坑踩过）。
 static int expectedFacing(int dx, int dz) {
-    // 环坐标（0..4，环心 2,2）：西→东、东→西、北→南、南→北
+    // 环坐标（0..4，环心 2,2）：西→东、东→西、北→南、南→北。
     if (dx == 0) return FRAME_EAST;
     if (dx == 4) return FRAME_WEST;
     if (dz == 0) return FRAME_SOUTH;
@@ -74,13 +74,13 @@ int main() {
     g_blocks.erase({2, 0});
     check(!portal::isCompleteRingAt(getBlock, 0, 64, 0), "缺一个框架 → 不激活");
 
-    // 四角与中心本来就不该有框架，多放了也不影响
+    // 四角与中心本来就不该有框架，多放了也不影响。
     buildRing(0, 64, 0, true, true);
     g_blocks[{0, 0}] = B_STONE;
     g_blocks[{2, 2}] = B_STONE;
     check(portal::isCompleteRingAt(getBlock, 0, 64, 0), "四角/中心放别的方块 → 不影响");
 
-    // 偏移一个方块的环不该被判成同一环
+    // 偏移一个方块的环不该被判成同一环。
     buildRing(3, 64, 3, true, true);
     check(portal::isCompleteRingAt(getBlock, 3, 64, 3), "偏移后的环仍能识别");
     check(!portal::isCompleteRingAt(getBlock, 0, 64, 0), "偏移后原基准位置不成立");

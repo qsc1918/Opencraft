@@ -28,6 +28,15 @@ inline float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi 
 inline float maxf(float a, float b) { return a > b ? a : b; }
 inline float minf(float a, float b) { return a < b ? a : b; }
 
+constexpr float PI = 3.14159265f;
+
+// 把弧度折到 (-π, π]；角度插值、朝向差都先过它，否则 ±π 附近会绕错方向
+inline float wrapPi(float a) {
+    while (a > PI) a -= 2 * PI;
+    while (a <= -PI) a += 2 * PI;
+    return a;
+}
+
 struct Mat4 {
     float m[16] = {0}; // column-major
 
@@ -80,7 +89,7 @@ struct Mat4 {
 struct Frustum {
     float planes[6][4];
     void extract(const Mat4& vp) {
-        // Gribb-Hartmann 平面提取，按列主序写。
+        // Gribb-Hartmann 平面提取，按列主序写
         // 点 p=(x,y,z,1) 满足 -cw<=cx<=cw、-cw<=cy<=cw、0<=cz<=cw 时可见。
         const float* m = vp.m;
         // 左:  cx + cw >= 0
@@ -114,13 +123,29 @@ struct Frustum {
     }
 };
 
-// 快速确定性随机
+// 快速确定性随机。
 inline uint32_t hash32(uint32_t x) {
     x ^= x >> 16; x *= 0x7feb352dU;
     x ^= x >> 15; x *= 0x846ca68bU;
     x ^= x >> 16;
     return x;
 }
+
+// 全局随机源（splitmix64）：AI/刷新/随机刻这类"不需要存档一致"的随机都走这里
+// 只限主线程使用；工作线程要确定性序列请另建 Rng 实例。
+inline uint64_t g_rng_state = 0x123456789ABCDEFULL;
+
+inline uint32_t rndNext() {
+    g_rng_state += 0x9e3779b97f4a7c15ULL;
+    uint64_t z = g_rng_state;
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    return (uint32_t)(z ^ (z >> 31));
+}
+
+inline float rndF() { return (rndNext() >> 8) * (1.0f / 16777216.0f); }
+
+inline int rndInt(int n) { return n <= 0 ? 0 : (int)(rndF() * n); }
 
 struct Rng {
     uint64_t s;

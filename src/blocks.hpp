@@ -1,11 +1,9 @@
 #pragma once
 #include <cstdint>
 
-// ---------------------------------------------------------------------------
 // 方块运行时 ID（存档/内存中的 uint8 索引）
 // 规范 ID 是 BLOCK_DEFS[].id 的命名空间字符串（资源定位符），
 // 两者由注册表一一对应。见 docs/standards.md §方块。
-// ---------------------------------------------------------------------------
 enum Block : uint8_t {
     B_AIR = 0,
     B_STONE = 1,
@@ -26,7 +24,7 @@ enum Block : uint8_t {
     B_WATER = 16,
     B_SNOW = 17,
     B_GLASS = 18,
-    // --- 地狱方块 ---
+    // 地狱方块
     B_NETHERRACK = 19,
     B_SOUL_SAND  = 20,
     B_GLOWSTONE  = 21,
@@ -34,7 +32,7 @@ enum Block : uint8_t {
     B_OBSIDIAN    = 23,
     B_LAVA        = 24,
     B_NETHER_PORTAL = 25,
-    // --- 末地方块 ---
+    // 末地方块
     B_END_STONE       = 26,
     B_END_PORTAL_FRAME = 27,
     B_END_PORTAL       = 28,
@@ -42,8 +40,8 @@ enum Block : uint8_t {
     B_DRAGON_EGG       = 30,
     B_END_PORTAL_FRAME_EYE = 31,  // 放了末影之眼的末地传送门框架
     B_FIRE = 32,
-    // --- 末地传送门框架：原版有 facing(4 向) + eye(有/无) 共 8 种状态。
-    // 本实现方块存储是纯 uint8 id，没有状态位，故把朝向展开成独立 id。
+    // --- 末地传送门框架：原版有 facing(4 向) + eye(有/无) 共 8 种状态
+    // 本实现方块存储是纯 uint8 id，没有状态位，故把朝向展开成独立 id
     // 基准 B_END_PORTAL_FRAME 的朝向是"南"（眼凸起在 -Z 侧），
     // 顺时针 90° 依次得到西/北/东。
     B_END_PORTAL_FRAME_W = 33,        // 西
@@ -52,13 +50,13 @@ enum Block : uint8_t {
     B_END_PORTAL_FRAME_EYE_W = 36,    // 西 + 有眼
     B_END_PORTAL_FRAME_EYE_N = 37,    // 北 + 有眼
     B_END_PORTAL_FRAME_EYE_E = 38,    // 东 + 有眼
-    // --- 末地植被 / 结构方块 ---
+    // 末地植被 / 结构方块
     B_CHORUS_PLANT = 39,
     B_CHORUS_FLOWER = 40,      // 活着的花（原版 AGE 0..4，这里只区分活/死）
     B_CHORUS_FLOWER_DEAD = 41, // 原版 AGE 5：不再生长
     B_IRON_BARS = 42,
     B_TORCH = 43,
-    // 墙上火把：没有状态位，朝向展开成 4 个 id（同末地门框架的做法）。
+    // 墙上火把：没有状态位，朝向展开成 4 个 id（同末地门框架的做法）
     // facing = 火把头指向（离开墙面的方向）：基准 44 朝南，西/北/东顺次展开。
     B_WALL_TORCH = 44,
     B_WALL_TORCH_W = 45,
@@ -67,8 +65,8 @@ enum Block : uint8_t {
     B_COUNT = 48,
 };
 
-// 图集图块 id（建图集时分配）。
-// 20 = 白色占位；21 起为程序化纹理图块（无 png，代码生成，EULA 安全）。
+// 图集图块 id（建图集时分配）
+// 20 = 白色占位；21 起为程序化纹理图块（无 png，代码生成，EULA 安全）
 // 物品图标从 items.hpp 的 T_ITEM_BASE 开始。
 enum Tile : uint8_t {
     T_GRASS_TOP = 0,   T_GRASS_SIDE = 1,  T_DIRT = 2,      T_STONE = 3,
@@ -78,7 +76,7 @@ enum Tile : uint8_t {
     T_REDSTONE = 16,   T_WATER = 17,      T_SNOW = 18,     T_GLASS = 19,
     T_WHITE = 20,
     T_END_CRYSTAL = 21,   // 末影水晶体（程序化紫晶）
-    // --- 地狱图块 ---
+    // 地狱图块
     T_NETHERRACK = 22,
     T_SOUL_SAND  = 23,
     T_GLOWSTONE  = 24,
@@ -86,7 +84,7 @@ enum Tile : uint8_t {
     T_OBSIDIAN    = 26,
     T_LAVA        = 27,
     T_NETHER_PORTAL = 28,
-    // --- 末地图块 ---
+    // 末地图块
     T_END_STONE       = 29,
     T_END_PORTAL_FRAME = 30,
     T_END_PORTAL       = 31,
@@ -95,13 +93,13 @@ enum Tile : uint8_t {
     T_END_PORTAL_FRAME_EYE = 34,  // 放了眼的有眼框架
     T_END_PORTAL_FRAME_SIDE = 35, // 末地传送门框架侧面
     T_FIRE = 36,
-    // --- 末地植被 / 结构 ---
+    // 末地植被 / 结构
     T_CHORUS_PLANT = 37,
     T_CHORUS_FLOWER = 38,
     T_CHORUS_FLOWER_DEAD = 39,
     T_IRON_BARS = 40,
     T_TORCH = 41,
-    // --- 实体贴图（assets/entity/，物理解像度入图集，不做正方形裁剪）---
+    // 实体贴图（assets/entity/，物理解像度入图集，不做正方形裁剪）
     // 生物模型用原版 texOffs 逐面取子矩形，所以必须保留 64×64 / 64×32 的原始比例。
     T_ENTITY_PIG = 42,
     T_ENTITY_COW = 43,
@@ -122,9 +120,8 @@ enum Tile : uint8_t {
 // 面索引（MC 语义: F_PY 顶面, F_NY 底面, ±X/±Z 四侧面）
 enum Face : int { F_PX = 0, F_NX = 1, F_PY = 2, F_NY = 3, F_PZ = 4, F_NZ = 5 };
 
-// ---------------------------------------------------------------------------
 // 方块注册表（对齐 MC: 每种方块 = 命名空间 ID + 一组规范属性）
-//  - id:            命名空间 ID（默认命名空间 opencraft:，规范见
+//  - id:            命名空间 ID（默认命名空间 opencraft:，规范见。
 //                   docs/standards.md §命名空间ID）。存档/联机/模组
 //                   以此字符串为准，运行时 uint8 只是内部索引。
 //  - name:          显示名（中文）。
@@ -133,7 +130,6 @@ enum Face : int { F_PX = 0, F_NX = 1, F_PY = 2, F_NY = 3, F_PZ = 4, F_NZ = 5 };
 //  - lightEmission: 发光等级 0..15；当前无光源，全 0，为光照引擎预留。
 //  - opacity:       光照衰减 0..15（不透明 15，树叶/水 1，空气/玻璃 0）。
 //  - tileTop/Side/Bottom: 图集图块（F_PY / 侧面 / F_NY）。
-// ---------------------------------------------------------------------------
 struct BlockDef {
     const char* id;
     const char* name;
@@ -166,7 +162,7 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
     /*B_WATER    */ {"opencraft:water",          "水",       false, false, 0, 1,  T_WATER,   T_WATER,   T_WATER  },
     /*B_SNOW     */ {"opencraft:snow",           "雪块",     true,  true,  0, 15, T_SNOW,    T_SNOW,    T_SNOW   },
     /*B_GLASS    */ {"opencraft:glass",          "玻璃",     false, true,  0, 0,  T_GLASS,   T_GLASS,   T_GLASS  },
-    // --- 地狱 ---
+    // 地狱
     /*B_NETHERRACK*/ {"opencraft:netherrack",    "地狱岩",   true,  true,  0, 15, T_NETHERRACK, T_NETHERRACK, T_NETHERRACK},
     /*B_SOUL_SAND */ {"opencraft:soul_sand",     "灵魂沙",   true,  true,  0, 15, T_SOUL_SAND,  T_SOUL_SAND,  T_SOUL_SAND},
     /*B_GLOWSTONE */ {"opencraft:glowstone",     "萤石",     true,  true,  15, 1,  T_GLOWSTONE,  T_GLOWSTONE,  T_GLOWSTONE},
@@ -174,7 +170,7 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
     /*B_OBSIDIAN  */ {"opencraft:obsidian",      "黑曜石",   true,  true,  0, 15, T_OBSIDIAN,  T_OBSIDIAN,  T_OBSIDIAN},
     /*B_LAVA      */ {"opencraft:lava",          "岩浆",     false, false, 15, 1,  T_LAVA,      T_LAVA,      T_LAVA  },
     /*B_NETHER_PORTAL*/ {"opencraft:nether_portal","传送门", false, false, 11, 0,  T_NETHER_PORTAL, T_NETHER_PORTAL, T_NETHER_PORTAL},
-    // --- 末地 ---
+    // 末地
     /*B_END_STONE */ {"opencraft:end_stone",     "末地石",   true,  true,  0, 15, T_END_STONE, T_END_STONE, T_END_STONE},
     // 框架：顶面/侧面纹理不同，只有 13/16 高（高度见 mesher 的 blockHeight16）
     /*B_END_PORTAL_FRAME*/ {"opencraft:end_portal_frame","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
@@ -182,16 +178,16 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
     /*B_END_GATEWAY*/ {"opencraft:end_gateway",  "折跃门",   false, false, 15, 0,  T_END_GATEWAY, T_END_GATEWAY, T_END_GATEWAY},
     /*B_DRAGON_EGG*/ {"opencraft:dragon_egg",    "龙蛋",     true,  true,  1,  15, T_DRAGON_EGG, T_DRAGON_EGG, T_DRAGON_EGG},
     /*B_END_PORTAL_FRAME_EYE*/ {"opencraft:end_portal_frame_eye","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
-    // --- 火 ---
+    // 火
     /*B_FIRE     */ {"opencraft:fire",           "火",       false, false, 15, 0,  T_FIRE,    T_FIRE,    T_FIRE   },
-    // --- 末地传送门框架朝向变体（见 Block 枚举里的说明）---
+    // 末地传送门框架朝向变体（见 Block 枚举里的说明）
     /*B_END_PORTAL_FRAME_W*/ {"opencraft:end_portal_frame_west","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
     /*B_END_PORTAL_FRAME_N*/ {"opencraft:end_portal_frame_north","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
     /*B_END_PORTAL_FRAME_E*/ {"opencraft:end_portal_frame_east","末地传送门框架", true, true, 0, 15, T_END_PORTAL_FRAME, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
     /*B_END_PORTAL_FRAME_EYE_W*/ {"opencraft:end_portal_frame_eye_west","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
     /*B_END_PORTAL_FRAME_EYE_N*/ {"opencraft:end_portal_frame_eye_north","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
     /*B_END_PORTAL_FRAME_EYE_E*/ {"opencraft:end_portal_frame_eye_east","末地传送门框架(有眼)", true, true, 0, 15, T_END_PORTAL_FRAME_EYE, T_END_PORTAL_FRAME_SIDE, T_END_STONE},
-    // --- 末地植被 / 结构 ---
+    // 末地植被 / 结构
     // 紫颂植株/花都不是整方块（植株是 8×8 细柱 + 凸起，花四角内凹），
     // opaque=false：别去剔邻居的面，也别挡光。
     /*B_CHORUS_PLANT*/ {"opencraft:chorus_plant", "紫颂植株", false, true,  0, 0, T_CHORUS_PLANT, T_CHORUS_PLANT, T_CHORUS_PLANT},
@@ -207,7 +203,7 @@ inline constexpr BlockDef BLOCK_DEFS[B_COUNT] = {
 static_assert(sizeof(BLOCK_DEFS) / sizeof(BLOCK_DEFS[0]) == B_COUNT,
               "BLOCK_DEFS 必须按 Block id 顺序逐一列出，新增方块要同步补在这里");
 
-// ---- 末地传送门框架：朝向 / 有眼查询 ----
+// 末地传送门框架：朝向 / 有眼查询
 enum FrameFacing : int { FRAME_SOUTH = 0, FRAME_WEST = 1, FRAME_NORTH = 2, FRAME_EAST = 3 };
 
 inline bool blockIsPortalFrame(uint8_t id) {
@@ -222,7 +218,7 @@ inline bool blockFrameHasEye(uint8_t id) {
            id == B_END_PORTAL_FRAME_EYE_N || id == B_END_PORTAL_FRAME_EYE_E;
 }
 
-// 未列出的 id 按南处理
+// 未列出的 id 按南处理。
 inline int blockFrameFacing(uint8_t id) {
     switch (id) {
     case B_END_PORTAL_FRAME_W: case B_END_PORTAL_FRAME_EYE_W: return FRAME_WEST;
@@ -240,7 +236,7 @@ inline uint8_t frameId(int facing, bool eye) {
     return eye ? kEye[facing & 3] : kPlain[facing & 3];
 }
 
-// ---- 墙上火把：朝向查询 / 由指向向量取 id（朝向语义与 frameFacingDir 一致）----
+// 墙上火把：朝向查询 / 由指向向量取 id（朝向语义与 frameFacingDir 一致）
 inline bool blockIsWallTorch(uint8_t id) {
     return id == B_WALL_TORCH || id == B_WALL_TORCH_W ||
            id == B_WALL_TORCH_N || id == B_WALL_TORCH_E;
@@ -280,7 +276,7 @@ inline const BlockDef& blockDef(uint8_t id) {
     return BLOCK_DEFS[id < B_COUNT ? id : (uint8_t)B_AIR];
 }
 
-// ---- 属性查询（注册表驱动；越界 id 沿用旧行为: 不透明/有碰撞）----
+// 属性查询（注册表驱动；越界 id 沿用旧行为: 不透明/有碰撞）
 inline bool blockIsOpaque(uint8_t id) {
     return id < B_COUNT ? BLOCK_DEFS[id].opaque : true;
 }

@@ -1,18 +1,14 @@
 #pragma once
-// ===========================================================================
 // items.hpp — 物品注册表（对齐 MC 1.0 物品体系）
-//
-// 物品 = 命名空间 ID + 类别 + 属性，与 blocks.hpp 的 BLOCK_DEFS 平行。
-// 见 docs/standards.md。
-//
-// 暂无生存模式：物品只作"目录 + 背包图标"。
-// 工具等级/盔甲槽位等字段为将来预留。
-// 图标图块从 T_ITEM_BASE 起排在图集 (atlas.cpp) 中。
-// ===========================================================================
+// 物品 = 命名空间 ID + 类别 + 属性，与 blocks.hpp 的 BLOCK_DEFS 平行
+// 见 docs/standards.md
+// 暂无生存模式：物品只作"目录 + 背包图标"
+// 工具等级/盔甲槽位等字段为将来预留
+// 图标图块从 T_ITEM_BASE 起排在图集 (atlas.cpp) 中
 #include <cstdint>
 #include "blocks.hpp" // T_COUNT：物品图标排在全部方块图块之后
 
-// 图标图块基址 = blocks.hpp 的 T_COUNT。
+// 图标图块基址 = blocks.hpp 的 T_COUNT
 // 不能写死数字：方块图块扩到 41 后，写死的 37 起的物品图标把紫颂植株/紫颂花/
 // 铁栏杆/火把的贴图覆盖成了工具图标（铁栏杆显示成木剑就是这里）。
 inline constexpr uint8_t T_ITEM_BASE = T_COUNT;
@@ -43,18 +39,18 @@ enum ToolTier : uint8_t {
 // 物品运行时 id（uint16，0 = 无；规范 ID 见 ITEM_DEFS[].id）
 enum ItemId : uint16_t {
     I_NONE = 0,
-    // ---- 工具 5 材质 x 4 类 ----
+    // 工具 5 材质 x 4 类
     I_WOODEN_PICKAXE, I_WOODEN_AXE, I_WOODEN_SHOVEL, I_WOODEN_SWORD,
     I_STONE_PICKAXE,  I_STONE_AXE,  I_STONE_SHOVEL,  I_STONE_SWORD,
     I_IRON_PICKAXE,   I_IRON_AXE,   I_IRON_SHOVEL,   I_IRON_SWORD,
     I_GOLDEN_PICKAXE, I_GOLDEN_AXE, I_GOLDEN_SHOVEL, I_GOLDEN_SWORD,
     I_DIAMOND_PICKAXE, I_DIAMOND_AXE, I_DIAMOND_SHOVEL, I_DIAMOND_SWORD,
-    // ---- 盔甲 4 材质 x 4 部位 ----
+    // 盔甲 4 材质 x 4 部位
     I_LEATHER_HELMET, I_LEATHER_CHESTPLATE, I_LEATHER_LEGGINGS, I_LEATHER_BOOTS,
     I_IRON_HELMET,    I_IRON_CHESTPLATE,    I_IRON_LEGGINGS,    I_IRON_BOOTS,
     I_GOLDEN_HELMET,  I_GOLDEN_CHESTPLATE,  I_GOLDEN_LEGGINGS,  I_GOLDEN_BOOTS,
     I_DIAMOND_HELMET, I_DIAMOND_CHESTPLATE, I_DIAMOND_LEGGINGS, I_DIAMOND_BOOTS,
-    // ---- 杂项 ----
+    // 杂项
     I_FLINT_AND_STEEL, I_ENDER_PEARL, I_EYE_OF_ENDER,
     I_COUNT,
 };

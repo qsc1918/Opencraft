@@ -60,6 +60,23 @@ struct Args {
     bool showVersion = false; // --version：打印版本号后退出
 };
 
+// 调试参数的 "x,y,z[,id]" 解析：凑不齐字段返回 false，调用方跳过该条。
+static bool parseXYZ(const std::string& s, int& x, int& y, int& z) {
+    return sscanf(s.c_str(), "%d,%d,%d", &x, &y, &z) == 3;
+}
+
+static bool parseXYZId(const std::string& s, int& x, int& y, int& z, int& id) {
+    return sscanf(s.c_str(), "%d,%d,%d,%d", &x, &y, &z, &id) == 4;
+}
+
+// --pos 覆盖出生点：没给或格式不对时用 fallback。
+static Vec3 parsePosOr(const std::string& s, const Vec3& fallback) {
+    if (s.empty()) return fallback;
+    float x = 0, y = 80, z = 0;
+    if (sscanf(s.c_str(), "%f,%f,%f", &x, &y, &z) < 1) return fallback;
+    return Vec3(x, y, z);
+}
+
 static Args parseArgs(int argc, char** argv) {
     Args a;
     // 留一个核给主线程，否则生成/构网格会把渲染线程挤掉（进新维度时卡顿）
@@ -184,7 +201,7 @@ int main(int argc, char** argv) {
     if (!menu.init(ctx, win, platform::join(exeDir(), "assets"))) { printf("Menu init failed\n"); return 1; }
     
 
-    // ---- 游戏状态 ----
+    // 游戏状态
     enum class GS { MainMenu, SaveSelect, NewWorld, Options, Video, Pause, Play };
     // Linux 上还没有菜单（menu.cpp 是 GDI 实现的），所以一律直接进世界；
     // 存档/种子等通过命令行参数与控制台指令来。
@@ -246,7 +263,7 @@ int main(int argc, char** argv) {
         worldName = name;
         player = Player();
         // 玩家也是一个实体（MC Player extends LivingEntity）：注册进 World，
-        // 生物才能找到它、攻击它，射线也能打中它
+        // 生物才能找到它、攻击它，射线也能打中它。
         player.ent = static_cast<PlayerEntity*>(
             world->spawnEntity(std::make_unique<PlayerEntity>()));
         if (a.dimArg == "nether") { player.dim = DIM_NETHER; world->setDimension(DIM_NETHER); }
@@ -282,12 +299,7 @@ int main(int argc, char** argv) {
             // 恢复存档里玩家所在的维度（否则会站在主世界看下界的区块）
             player.dim = savedDim;
             world->setDimension(savedDim);
-            if (!a.posStr.empty()) {
-                float x = 0, y = 80, z = 0;
-                if (sscanf(a.posStr.c_str(), "%f,%f,%f", &x, &y, &z) >= 1) player.cam.pos = Vec3(x, y, z);
-            } else {
-                player.cam.pos = Vec3(savedSpawnX, savedSpawnY, savedSpawnZ);
-            }
+            player.cam.pos = parsePosOr(a.posStr, Vec3(savedSpawnX, savedSpawnY, savedSpawnZ));
             // 恢复存档的视角与飞行状态，避免读档后朝向默认或从空中坠落。
             player.cam.yaw = savedYaw;
             player.cam.pitch = savedPitch;
@@ -295,10 +307,9 @@ int main(int argc, char** argv) {
             player.flying = savedFlying;
         } else {
             // 新世界：围绕出生点生成区块。
-            if (!a.posStr.empty()) {
-                float x = 0, y = 80, z = 0;
-                if (sscanf(a.posStr.c_str(), "%f,%f,%f", &x, &y, &z) >= 1) player.cam.pos = Vec3(x, y, z);
-            } else {
+            player.cam.pos = parsePosOr(a.posStr, Vec3(0, 80, 0));
+            // 只有没给 --pos 时才做出生点搜索；给了就以 --pos 为准。
+            if (a.posStr.empty()) {
                 auto hasHeadroom = [&](int x, int z, int surfaceY, int needed) {
                     for (int y = surfaceY + 1; y <= surfaceY + needed; y++) {
                         if (y >= WORLD_HEIGHT) return false;
@@ -307,7 +318,7 @@ int main(int argc, char** argv) {
                     }
                     return true;
                 };
-                // 区块坐标换算统一走 specs.hpp（floor 语义，负坐标正确）。
+                // 区块坐标换算统一走 specs.hpp（floor 语义，负坐标正确）
                 // 出生锚点：区块 (0,0) 中心方块，与 MC 出生搜索一致。
                 const int anchor = CHUNK_SIZE / 2;
                 int spawnX = anchor, spawnZ = anchor, spawnTopY = 0;
@@ -404,7 +415,7 @@ int main(int argc, char** argv) {
                     fprintf(stderr, "[main] 未知生物：%s\n", name);
                     continue;
                 }
-                // 在玩家面前 6 格横向摆开，别叠在一起
+                // 在玩家面前 6 格横向摆开，别叠在一起。
                 float t = ((float)i - (n - 1) * 0.5f) * 1.8f;
                 Vec3 at = player.cam.pos + fwd * 6.0f + rt * t;
                 // 从脚部高度生成，脚下没地面就让它自己掉下去（原版 summon 同理）
@@ -444,7 +455,7 @@ int main(int argc, char** argv) {
         gs = GS::Play;
     };
 
-    // 等玩家周围区块就绪，保证开局流畅
+    // 等玩家周围区块就绪，保证开局流畅。
     auto settle = [&]() {
         auto t0 = std::chrono::steady_clock::now();
         while (true) {
@@ -459,11 +470,11 @@ int main(int argc, char** argv) {
         }
     };
 
-    // 维度传送：切 player.dim 与 world 维度，再设玩家位置。
+    // 维度传送：切 player.dim 与 world 维度，再设玩家位置
     // 下界门：主世界与下界互传，坐标按下界缩放系数 8.0 换算；目的地按原版
     //   PortalForcer 那套处理（先找已有门，找不到就螺旋选址造一扇新门），
-    //   落点在门内，因此不会把玩家丢进岩浆或方块里。
-    // 末地门：主世界与末地互传（进末地落在中央黑曜石平台上）。
+    //   落点在门内，因此不会把玩家丢进岩浆或方块里
+    // 末地门：主世界与末地互传（进末地落在中央黑曜石平台上）
     // srcX/srcY/srcZ 是源门方块坐标（INT_MIN 表示没有源门，如调试传送）。
     float portalCooldown = 0.0f; // 防止出入口来回反复传送
     auto performTeleport = [&](DimensionId toDim, int srcX, int srcY, int srcZ) {
@@ -484,7 +495,7 @@ int main(int argc, char** argv) {
         player.dim = toDim;
         world->setDimension(toDim);
 
-        // 安全落点：目标列及其 4 格邻域里找"两格净空、脚下实心、且不泡岩浆"的位置。
+        // 安全落点：目标列及其 4 格邻域里找"两格净空、脚下实心、且不泡岩浆"的位置
         // （原版 PortalShape.findCollisionFreePosition 的等价简化；邻域搜索半径小是
         //   为了避免为找落点生成一大片区块）
         auto safeGroundY = [&](int bx, int bz, int startY) {
@@ -540,7 +551,7 @@ int main(int argc, char** argv) {
             player.cam.pitch = 0.0f;
         } else if (toDim == DIM_NETHER || fromDim == DIM_NETHER) {
             int tx = (int)std::floor(px), ty = (int)std::floor(py), tz = (int)std::floor(pz);
-            // 新门选址最多离线 16 格，3×3 区块足以覆盖
+            // 新门选址最多离线 16 格，3×3 区块足以覆盖。
             for (int cx = blockToChunkCoord(tx) - 1; cx <= blockToChunkCoord(tx) + 1; cx++)
                 for (int cz = blockToChunkCoord(tz) - 1; cz <= blockToChunkCoord(tz) + 1; cz++)
                     world->forceGenerateChunk(cx, cz);
@@ -591,10 +602,10 @@ int main(int argc, char** argv) {
                 DimensionId curDim = world->getDimension();
                 DimensionId toDim = curDim;
                 if (pb == B_NETHER_PORTAL) {
-                    // 下界门：主世界与下界双向。
+                    // 下界门：主世界与下界双向
                     toDim = (curDim == DIM_NETHER) ? DIM_OVERWORLD : DIM_NETHER;
                 } else if (pb == B_END_PORTAL) {
-                    // 末地门：主世界与末地双向。
+                    // 末地门：主世界与末地双向
                     toDim = (curDim == DIM_END) ? DIM_OVERWORLD : DIM_END;
                 }
                 if (toDim != curDim) {
@@ -613,7 +624,7 @@ int main(int argc, char** argv) {
         return false;
     };
 
-    // ---- 控制台指令 ----
+    // 控制台指令
     auto dimToName = [](DimensionId d) -> const char* {
         switch (d) {
         case DIM_NETHER: return "下界";
@@ -674,7 +685,7 @@ int main(int argc, char** argv) {
             }
             int n = 1;
             if (tok.size() >= 3) { try { n = std::max(1, std::stoi(tok[2])); } catch (...) {} }
-            // 生成在玩家面前 3 格、脚部高度
+            // 生成在玩家面前 3 格、脚部高度。
             Vec3 fwd = player.cam.forward();
             Vec3 at = player.cam.pos + fwd * 3.0f;
             at.y = player.cam.pos.y - player.eyeHeight;
@@ -685,19 +696,12 @@ int main(int argc, char** argv) {
             int killed = 0;
             for (auto& e : world->entities()) {
                 if (!e || e->dead) continue;
-                switch (e->kind) {
-                case EntityKind::Pig: case EntityKind::Cow: case EntityKind::Sheep:
-                case EntityKind::Chicken: case EntityKind::Zombie: case EntityKind::Skeleton:
-                case EntityKind::Creeper: case EntityKind::Spider: case EntityKind::Blaze:
-                case EntityKind::Enderman: {
+                if (isMobKind(e->kind)) {
                     Vec3 d = e->pos - player.cam.pos;
                     if (std::fabs(d.x) < 32 && std::fabs(d.y) < 16 && std::fabs(d.z) < 32) {
                         e->dead = true;
                         killed++;
                     }
-                    break;
-                }
-                default: break;
                 }
             }
             printf("[cmd] 清掉 %d 只生物\n", killed);
@@ -732,8 +736,8 @@ int main(int argc, char** argv) {
         player.vel = Vec3(0, 0, 0);
     };
 
-    // 第三人称相机：0=第一人称 1=背视（相机在身后看背影）2=前视（相机在面前看脸）。
-    // 沿视线移 4 格，撞墙时贴到墙前（原版 F5 循环）。
+    // 第三人称相机：0=第一人称 1=背视（相机在身后看背影）2=前视（相机在面前看脸）
+    // 沿视线移 4 格，撞墙时贴到墙前（原版 F5 循环）
     // 截图循环与主循环都要用，所以放外面。
     auto makeViewCam = [&]() {
         Camera c = player.cam;
@@ -773,25 +777,26 @@ int main(int argc, char** argv) {
         
         if (!a.breakBlock.empty()) {
             int bx = 0, by = 0, bz = 0;
-            sscanf(a.breakBlock.c_str(), "%d,%d,%d", &bx, &by, &bz);
-            fprintf(stderr, "[main] break (%d,%d,%d)\n", bx, by, bz);
-            uint8_t old = world->getBlock(bx, by, bz);
-            portal::onBlockRemoved(*world, bx, by, bz, old);
-            world->setBlock(bx, by, bz, B_AIR);
+            if (parseXYZ(a.breakBlock, bx, by, bz)) {
+                fprintf(stderr, "[main] break (%d,%d,%d)\n", bx, by, bz);
+                uint8_t old = world->getBlock(bx, by, bz);
+                portal::onBlockRemoved(*world, bx, by, bz, old);
+                world->setBlock(bx, by, bz, B_AIR);
+            }
         }
         // 调试：放置方块，格式 x,y,z,id（可多次）
         for (const std::string& p : a.placeBlocks) {
             int px = 0, py = 0, pz = 0, pid = 0;
-            if (sscanf(p.c_str(), "%d,%d,%d,%d", &px, &py, &pz, &pid) == 4) {
+            if (parseXYZId(p, px, py, pz, pid)) {
                 world->forceGenerateChunk(blockToChunkCoord(px), blockToChunkCoord(pz));
                 world->setBlock(px, py, pz, (uint8_t)pid);
                 fprintf(stderr, "[main] place (%d,%d,%d)=%d\n", px, py, pz, pid);
             }
         }
-        // 调试：模拟对末地门框架用末影之眼（x,y,z，可多次），用来验证激活链路
+        // 调试：模拟对末地门框架用末影之眼（x,y,z，可多次），用来验证激活链路。
         for (const std::string& e : a.useEyes) {
             int ex = 0, ey = 0, ez = 0;
-            if (sscanf(e.c_str(), "%d,%d,%d", &ex, &ey, &ez) == 3) {
+            if (parseXYZ(e, ex, ey, ez)) {
                 world->forceGenerateChunk(blockToChunkCoord(ex), blockToChunkCoord(ez));
                 bool lit = portal::tryPlaceEyeOfEnder(*world, ex, ey, ez);
                 fprintf(stderr, "[main] use eye (%d,%d,%d) activated=%d\n", ex, ey, ez, (int)lit);
@@ -800,7 +805,7 @@ int main(int argc, char** argv) {
         // 调试：模拟用打火石点燃下界门（x,y,z 指向门洞内任意空位）
         for (const std::string& e : a.lightPortals) {
             int ex = 0, ey = 0, ez = 0;
-            if (sscanf(e.c_str(), "%d,%d,%d", &ex, &ey, &ez) == 3) {
+            if (parseXYZ(e, ex, ey, ez)) {
                 world->forceGenerateChunk(blockToChunkCoord(ex), blockToChunkCoord(ez));
                 bool lit = portal::tryLightNetherPortal(*world, ex, ey, ez);
                 fprintf(stderr, "[main] light portal (%d,%d,%d) lit=%d\n", ex, ey, ez, (int)lit);
@@ -824,7 +829,7 @@ int main(int argc, char** argv) {
                 if (i == shotAt) renderer.requestScreenshot(a.screenshot);
                 Input& in = win.input();
                 if (a.drive) { in.keys['W'] = true; player.cam.pitch = -0.1f; player.cam.markDirty(); }
-                // 截图分支也处理控制台指令：调试时可以先 tp 再截图
+                // 截图分支也处理控制台指令：调试时可以先 tp 再截图。
                 {
                     std::string cmdline;
                     for (int ci = 0; ci < 8 && consoleInput.poll(cmdline); ci++)
@@ -855,19 +860,14 @@ int main(int argc, char** argv) {
                     tris += (c->opaqueCount + c->waterCount) / 3;
                 });
                 // 顶点/三角形总数是"GPU 上要处理多少几何"的直接指标，
-                // draws 是最后一帧真正提交的不透明绘制次数（剔除效果的体现）。
+                // draws 是最后一帧真正提交的不透明绘制次数（剔除效果的体现）
                 // 顺带报一下实体统计与玩家位置（截图调试时最常问的两个问题）
                 int nMob = 0, nPassive = 0;
                 for (auto& up : world->entities()) {
                     if (!up || up->dead) continue;
-                    switch (up->kind) {
-                    case EntityKind::Pig: case EntityKind::Cow: case EntityKind::Sheep:
-                    case EntityKind::Chicken:
-                        nMob++; nPassive++; break;
-                    case EntityKind::Zombie: case EntityKind::Skeleton: case EntityKind::Creeper:
-                    case EntityKind::Spider: case EntityKind::Blaze: case EntityKind::Enderman:
-                        nMob++; break;
-                    default: break;
+                    if (isMobKind(up->kind)) {
+                        nMob++;
+                        if (!isHostileKind(up->kind)) nPassive++;
                     }
                 }
                 fprintf(stderr, "[main] screenshot: %d chunks meshed, %zu verts, %zu tris, %d draws"
@@ -889,7 +889,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // 种子输入解析
+    // 种子输入解析。
     auto seedFromText = [&]() -> uint32_t {
         if (seedText.empty()) return (uint32_t)std::chrono::steady_clock::now().time_since_epoch().count();
         try {
@@ -897,13 +897,13 @@ int main(int argc, char** argv) {
             unsigned long long v = std::stoull(seedText, &pos);
             if (pos == seedText.size()) return (uint32_t)v;
         } catch (...) {}
-        // 非纯数字：哈希成种子
+        // 非纯数字：哈希成种子。
         uint32_t h = 2166136261u;
         for (char ch : seedText) { h ^= (uint8_t)ch; h *= 16777619u; }
         return h;
     };
 
-    // 生成不重名的世界名
+    // 生成不重名的世界名。
     int saveSeq = 0;
     auto newWorldName = [&]() -> std::string {
         std::string n = "世界" + std::to_string(++saveSeq);
@@ -954,7 +954,7 @@ int main(int argc, char** argv) {
         escPrev = esc;
         ePrev = eKey;
 
-        // 控制台指令：每帧最多处理 8 条，防止刷屏卡帧
+        // 控制台指令：每帧最多处理 8 条，防止刷屏卡帧。
         {
             std::string cmdline;
             for (int ci = 0; ci < 8 && consoleInput.poll(cmdline); ci++)
@@ -978,7 +978,7 @@ int main(int argc, char** argv) {
             }
             if (a.drive) { in.keys['W'] = true; player.cam.pitch = -0.1f; player.cam.markDirty(); }
 
-            // F5 第三人称（原版同键位）：相机往后拉 4 格，撞墙就拉近
+            // F5 第三人称（原版同键位）：相机往后拉 4 格，撞墙就拉近。
             if (in.pressed[KEY_F5]) {
                 thirdPerson = (thirdPerson + 1) % 3;
                 renderer.setThirdPerson(thirdPerson != 0);
@@ -1019,12 +1019,12 @@ int main(int argc, char** argv) {
                 // 死亡回出生点（原版：保留物品栏，扣经验；这里只做回血+传送）
                 checkPlayerDeath();
 
-                // ---- 传送检测：脚下方块是传送门就切维度 ----
+                // 传送检测：脚下方块是传送门就切维度
                 checkTeleport();
 
                 RayHit hit = raycastWorld(*world, player.cam.pos, player.cam.forward(), 6.0f);
                 if (in.mouse[0] && !in_prevL) {
-                    // 先测实体（生物/龙/水晶），再测方块。
+                    // 先测实体（生物/龙/水晶），再测方块
                     // 射线起点在玩家自己的碰撞箱里，会先"命中"自己 —— 必须排除，
                     // 否则 !entHit 永远不成立，一个方块都挖不掉。
                     Vec3 entityHit;
@@ -1093,7 +1093,7 @@ int main(int argc, char** argv) {
             world->update(player.cam.pos.x, player.cam.pos.z, renderDist);
             renderer.render(ctx, makeViewCam(), player, in, dt, (float)renderDist, !a.noUI);
         } else {
-            // ---- 菜单界面 ----
+            // 菜单界面
             if (escEdge) {
                 switch (gs) {
                     case GS::SaveSelect: gs = GS::MainMenu; break;
@@ -1178,7 +1178,7 @@ int main(int argc, char** argv) {
                     saveOptions(Options{ctx.vsync, renderDist, gpuSel, texSharp});
                     break;
                 default:
-                    // 存档列表按钮
+                    // 存档列表按钮。
                     if (clicked >= MENU_SAVE_FIRST && clicked < MENU_SAVE_FIRST + (int)saves.size() && gs == GS::SaveSelect) {
                         int i = clicked - MENU_SAVE_FIRST;
                         enterWorld(saves[i].seed, saves[i].name, saves[i].name);

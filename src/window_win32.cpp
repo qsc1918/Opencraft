@@ -64,7 +64,7 @@ bool Window::init(int w, int h, const char* title) {
                                 nullptr, nullptr, inst, nullptr);
     if (!hwnd) return false;
     hwnd_ = hwnd;
-    // 标题需转宽字符，否则 Unicode 显示乱码
+    // 标题需转宽字符，否则 Unicode 显示乱码。
     int wlen = MultiByteToWideChar(CP_UTF8, 0, title, -1, nullptr, 0);
     if (wlen > 1) {
         std::wstring wtitle(wlen - 1, 0);
@@ -95,7 +95,7 @@ void Window::endFrame() { in_.clear(); }
 
 void Window::setTitle(const char* utf8) {
     if (!hwnd_) return;
-    // 标题要转宽字符，否则 Unicode 显示乱码
+    // 标题要转宽字符，否则 Unicode 显示乱码。
     int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, nullptr, 0);
     if (wlen > 1) {
         std::wstring wtitle(wlen - 1, 0);

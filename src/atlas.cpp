@@ -42,7 +42,7 @@ static const char* kItemFiles[] = {
     "flint_and_steel.png", "ender_pearl.png",  "ender_eye.png",
 };
 
-// 实体贴图（assets/entity/），下标 = tile - T_ENTITY_PIG。
+// 实体贴图（assets/entity/），下标 = tile - T_ENTITY_PIG
 // 顺序必须与 blocks.hpp 里 T_ENTITY_* 的枚举顺序一致。
 static const char* kEntityFiles[] = {
     "pig.png", "cow.png", "sheep.png",   "chicken.png", "zombie.png",   "skeleton.png",
@@ -101,16 +101,14 @@ const Tint kTileTint[T_COUNT] = {
     {1, 1, 1},             // 枯萎的紫颂花
     {1, 1, 1},             // 铁栏杆
     {1, 1, 1},             // 火把
-    // 实体贴图：原版皮肤自带颜色，一律不着色
+    // 实体贴图：原版皮肤自带颜色，一律不着色。
     {1,1,1},{1,1,1},{1,1,1},{1,1,1},{1,1,1},{1,1,1},
     {1,1,1},{1,1,1},{1,1,1},{1,1,1},{1,1,1},{1,1,1},
     {1,1,1},   // 羊毛层
 };
 
-// ---------------------------------------------------------------------------
-// 程序化 tile：为没有 png 的 tile 代码生成 16x16 纹理（非 MC 素材）。
-// extract_assets 提取的同名 png 会覆盖它；这些 tile 目前没有 png，始终走程序化。
-// ---------------------------------------------------------------------------
+// 程序化 tile：为没有 png 的 tile 代码生成 16x16 纹理（非 MC 素材）
+// extract_assets 提取的同名 png 会覆盖它；列在这里的 tile 目前没有 png，始终走程序化。
 #include "util.hpp" // 需要 hash32
 // 程序化 tile 一律先在 16×16 缓冲里画，最后按该 tile 的实际分辨率缩放写进图集
 // （材质包换成 32×32 时程序化贴图跟着放大，不会显得糊一块）。
@@ -164,7 +162,7 @@ static void fillProceduralTile(int t, Atlas& a) {
                 uint8_t r = (uint8_t)(110 + (n & 31));
                 uint8_t g = (uint8_t)(85 + ((n >> 3) & 15));
                 uint8_t b = (uint8_t)(50 + ((n >> 5) & 7));
-                // 脸纹简化：4×4 暗区
+                // 脸纹简化：4×4 暗区。
                 int lx = x % 8, ly = y % 8;
                 if ((lx >= 1 && lx <= 2 && ly >= 1 && ly <= 2) ||
                     (lx >= 5 && lx <= 6 && ly >= 1 && ly <= 2) ||
@@ -194,7 +192,7 @@ static void fillProceduralTile(int t, Atlas& a) {
         for (int y = 0; y < 16; y++)
             for (int x = 0; x < 16; x++) {
                 uint8_t n = hval(x, y, 0x400);
-                // 砖块布局：每 8 高一行，交错偏移 4
+                // 砖块布局：每 8 高一行，交错偏移 4。
                 int row = y / 4;
                 int off = (row & 1) ? 4 : 0;
                 bool mortar = ((x + off) % 8 == 0) || (y % 4 == 0);
@@ -240,7 +238,7 @@ static void fillProceduralTile(int t, Atlas& a) {
         break;
     }
     case T_NETHER_PORTAL: {
-        // 紫色漩涡纹理
+        // 紫色漩涡纹理。
         for (int y = 0; y < 16; y++)
             for (int x = 0; x < 16; x++) {
                 uint8_t n = hval(x, y, 0x700);
@@ -255,7 +253,7 @@ static void fillProceduralTile(int t, Atlas& a) {
         break;
     }
     case T_END_STONE: {
-        // 浅黄灰色石头
+        // 浅黄灰色石头。
         for (int y = 0; y < 16; y++)
             for (int x = 0; x < 16; x++) {
                 uint8_t n = hval(x, y, 0x800);
@@ -365,12 +363,10 @@ float Atlas::tileV(int tile, int corner) const {
     }
 }
 
-// ---------------------------------------------------------------------------
 // 末地门：原版是 17 层叠加（shaders/core/rendertype_end_portal.fsh）——
 // 底色 = end_sky × COLORS[0]，再叠 16 层"星空贴图各转一个角度/缩放/位移
 // 后乘一个固定颜色"。引擎每像素只采一次样，所以建图集时按同一套参数把
 // 这些层预先合成到一张贴图上，运行时一次采样即可得到原版观感。
-// ---------------------------------------------------------------------------
 static const float kEndPortalColors[16][3] = {
     {0.022087f, 0.098399f, 0.110818f}, {0.011892f, 0.095924f, 0.089485f},
     {0.027636f, 0.101689f, 0.100326f}, {0.046564f, 0.109883f, 0.114838f},
@@ -458,7 +454,7 @@ static std::vector<uint8_t> compositeEndPortal(int size,
             }
             // c 就是原版着色器算出的显示色（原版输出到非 sRGB 帧缓冲，算出的值
             // 直接就是显示值）。贴图字节也是显示色，采样时由 sRGB 视图解回线性、
-            // 交换链再编码回去，所以这里直接按显示色写字节即可。
+            // 交换链再编码回去，所以这里直接按显示色写字节即可
             size_t d = ((size_t)y * size + x) * 4;
             for (int k = 0; k < 3; k++) {
                 float v = c[k] * 255.0f;
@@ -479,7 +475,7 @@ struct TileSrc {
 };
 
 Atlas buildAtlas(const std::string& dir) {
-    // dir = <assets>/block；物品图标在 <assets>/item/。
+    // dir = <assets>/block；物品图标在 <assets>/item/
     std::string assetRoot = dir;
     size_t cut = assetRoot.find_last_of("/\\");
     if (cut != std::string::npos) assetRoot = assetRoot.substr(0, cut);
@@ -487,14 +483,14 @@ Atlas buildAtlas(const std::string& dir) {
     a.rect.assign(kAtlasMaxTiles, Atlas::Rect{});
     const int itemCount = (int)(sizeof(kItemFiles) / sizeof(kItemFiles[0]));
 
-    // ---- 1. 读所有贴图，决定每个 tile 的原生尺寸 ----
+    // 1. 读所有贴图，决定每个 tile 的原生尺寸
     std::vector<TileSrc> src(kAtlasMaxTiles);
     auto loadInto = [](TileSrc& s, const std::string& path) {
         std::vector<uint8_t> img;
         int w = 0, h = 0;
         if (!loadPNG(path.c_str(), img, w, h) || img.empty()) return;
         // 动画条（如 fire_0 16x512）：高是宽的整倍数 → 取首帧
-        // 其他非正方形：按左上角裁成正方形
+        // 其他非正方形：整图缩放进该尺寸的矩形（不裁剪）
         int size = w;
         if (h != w) {
             if (h > w && (h % w) == 0) size = w;
@@ -540,7 +536,7 @@ Atlas buildAtlas(const std::string& dir) {
         src[T_END_PORTAL].sw = src[T_END_PORTAL].sh = size;
     }
 
-    // 程序化贴图按"材质包主流分辨率"生成：取已加载贴图里最常见的尺寸
+    // 程序化贴图按"材质包主流分辨率"生成：取已加载贴图里最常见的尺寸。
     int common = a.baseTile;
     {
         int bestCount = 0;
@@ -554,7 +550,8 @@ Atlas buildAtlas(const std::string& dir) {
     for (int t = 0; t < kAtlasMaxTiles; t++)
         if (src[t].procedural) src[t].w = src[t].h = common;
 
-    // ---- 2. 书架式排版：每个 tile 独立矩形 + 四周 pad ----
+    // 2. 书架式排版：每个 tile 独立矩形 + 四周 pad
+    // pad 取短边的一半（与 atlas.hpp 的说明一致），夹在 [2,32]。
     auto padOf = [](int size) { return size / 2 > 32 ? 32 : (size / 2 < 2 ? 2 : size / 2); };
     struct Item { int tile; int w, h, pad; };
     std::vector<Item> items;
@@ -584,7 +581,7 @@ Atlas buildAtlas(const std::string& dir) {
     a.height = totalH > 0 ? totalH : common;
     a.rgba.assign((size_t)a.width * a.height * 4, 255);
 
-    // ---- 3. 写入像素：按目标尺寸缩放 + 四周边缘扩展（clamp 采样）----
+    // 3. 写入像素：按目标尺寸缩放 + 四周边缘扩展（clamp 采样）
     // 边缘扩展让 mipmap 每一级都不会把隔壁 tile 的颜色混进来。
     auto blitTile = [&](int tile, const std::vector<uint8_t>& img, int sw, int sh) {
         if (img.empty()) return;                 // 缺失贴图保持白

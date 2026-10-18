@@ -1,5 +1,5 @@
 // X11 表面头要 Xlib 的 Display/Window 类型，且必须在 vk.hpp（会带出 volk.h，
-// volk.h 自己就会 include vulkan_xlib.h）之前包含。
+// volk.h 自己就会 include vulkan_xlib.h）之前包含
 // Xlib 有个 typedef Window 与本工程同名，临时改名。
 #include <vulkan/vulkan.h>
 #ifdef _WIN32
@@ -36,9 +36,7 @@ static const char* kDeviceExts[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
-// ---------------------------------------------------------------------------
 // GPU 与驱动信息（启动时打印到控制台）
-// ---------------------------------------------------------------------------
 static const char* deviceTypeName(VkPhysicalDeviceType t) {
     switch (t) {
         case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:  return "Discrete (独立显卡)";
@@ -49,7 +47,7 @@ static const char* deviceTypeName(VkPhysicalDeviceType t) {
     }
 }
 
-// 菜单按钮用的简短类型名
+// 菜单按钮用的简短类型名。
 static const char* deviceTypeShort(VkPhysicalDeviceType t) {
     switch (t) {
         case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:   return "独立显卡";
@@ -122,14 +120,13 @@ static void printDeviceInfo(int index, VkPhysicalDevice d, bool usable) {
     printf("  ----------------------------------------------------------\n");
 }
 
-
 bool VkCtx::init(Window& win, int w, int h) {
     if (volkInitialize() != VK_SUCCESS) {
         lastError = "volkInitialize failed";
         return false;
     }
 
-    // ---- 实例 ----
+    // 实例
     uint32_t instExtCount = 0;
     vkEnumerateInstanceExtensionProperties(nullptr, &instExtCount, nullptr);
     std::vector<VkExtensionProperties> instExts(instExtCount);
@@ -176,7 +173,7 @@ bool VkCtx::init(Window& win, int w, int h) {
     }
     volkLoadInstance(instance);
 
-    // ---- 窗口表面（Win32 / X11 两套创建流程）----
+    // 窗口表面（Win32 / X11 两套创建流程）
 #ifdef _WIN32
     VkWin32SurfaceCreateInfoKHR sci = {};
     sci.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
@@ -198,7 +195,7 @@ bool VkCtx::init(Window& win, int w, int h) {
     }
 #endif
 
-    // ---- 物理设备 ----
+    // 物理设备
     uint32_t devCount = 0;
     vkEnumeratePhysicalDevices(instance, &devCount, nullptr);
     if (devCount == 0) {
@@ -253,7 +250,7 @@ bool VkCtx::init(Window& win, int w, int h) {
         int score = (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 100 : 50);
         printDeviceInfo((int)di, d, hasGfx && hasSwap);
         bool usable = hasGfx && hasSwap;
-        // 供菜单显卡选择展示
+        // 供菜单显卡选择展示。
         {
             GpuInfo gi;
             gi.name = props.deviceName;
@@ -302,7 +299,7 @@ bool VkCtx::init(Window& win, int w, int h) {
     printf("======================================================================\n\n");
     fflush(stdout);
 
-    // ---- 逻辑设备 ----
+    // 逻辑设备
     uint32_t qfCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(phys, &qfCount, nullptr);
     std::vector<VkQueueFamilyProperties> qfs(qfCount);
@@ -337,7 +334,7 @@ bool VkCtx::init(Window& win, int w, int h) {
     depthFormat = pickDepthFormat();
     selectSwapFormat();
 
-    // ---- 渲染通道（只建一次：格式稳定，不随缩放重建）----
+    // 渲染通道（只建一次：格式稳定，不随缩放重建）
     VkAttachmentDescription color = {};
     color.format = swapFormat;
     color.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -407,7 +404,7 @@ bool VkCtx::init(Window& win, int w, int h) {
         return false;
     }
 
-    // 同步原语按在飞帧分配，与交换链图像数无关（后者随缩放变化）。
+    // 同步原语按在飞帧分配，与交换链图像数无关（后者随缩放变化）
     // 每道栅栏初始即为已发出状态。
     frames.resize(MAX_FRAMES_IN_FLIGHT);
     for (Frame& fr : frames) {

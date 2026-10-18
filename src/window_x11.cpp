@@ -1,13 +1,10 @@
-// ===========================================================================
 // window_x11.cpp — X11 窗口与输入（Linux 后端）
-//
 // 与 window_win32.cpp 实现同一个 Window 接口：
 //   * 主循环 pump() 抽事件，endFrame() 清瞬时状态；
 //   * 捕获鼠标后每帧把指针 warp 回窗口中心，靠位移差算视角转动（原版同做法）；
 //   * 键位统一映射到 platform.hpp 的 Key（取值与 Win32 虚拟键码一致），
-//     所以游戏代码里 in.keys['W'] / in.pressed[KEY_F5] 两边行为相同。
-// 需要 Xlib（libx11-dev）。Vulkan surface 用 VkXlibSurfaceKHR（vk.cpp 里选）。
-// ===========================================================================
+//     所以游戏代码里 in.keys['W'] / in.pressed[KEY_F5] 两边行为相同
+// 需要 Xlib（libx11-dev）。Vulkan surface 用 VkXlibSurfaceKHR（vk.cpp 里选）
 // 本工程的窗口类也叫 Window，而 X11 有同名的 typedef（XID）——
 // 包含 Xlib 之前先把 Xlib 那个改名，否则和我们的类在同一作用域里撞车。
 #define Window XWindow
@@ -109,7 +106,7 @@ bool Window::init(int w, int h, const char* title) {
                               ButtonReleaseMask | PointerMotionMask | StructureNotifyMask |
                               FocusChangeMask);
     XStoreName(dpy, win, title);
-    // 关闭按钮：让 WM 发 ClientMessage，我们才能走正常退出流程
+    // 关闭按钮：让 WM 发 ClientMessage，我们才能走正常退出流程。
     g_wmDeleteWindow = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
     XSetWMProtocols(dpy, win, &g_wmDeleteWindow, 1);
     XMapWindow(dpy, win);
@@ -143,7 +140,7 @@ void Window::shutdown() {
 
 bool Window::pump() {
     if (!g_display) return false;
-    // 捕获时把指针锁回中心：warp 本身会产生一个 Motion 事件，用 g_warpPending 忽略掉
+    // 捕获时把指针锁回中心：warp 本身会产生一个 Motion 事件，用 g_warpPending 忽略掉。
     if (capture_ && !g_warpPending) {
             XWindowAttributes attr;
         if (XGetWindowAttributes(g_display, g_win, &attr)) {
@@ -163,7 +160,7 @@ bool Window::pump() {
             if (!g_input) break;
             KeySym ks = XLookupKeysym(&ev.xkey, 0);
             int k = keysymToKey(ks);
-            // 字符键（字母数字）直接用 ASCII，Shift 的大小写由 XLookupString 决定
+            // 字符键（字母数字）直接用 ASCII，Shift 的大小写由 XLookupString 决定。
             if (k == KEY_NONE && ks >= 32 && ks < 127) k = (int)ks;
             if (k > 0 && k < 256) {
                 if (!g_input->keys[k]) g_input->pressed[k] = true;   // 过滤自动重复
@@ -226,7 +223,7 @@ void Window::pollMouse(float& dx, float& dy) {
     XWindow child;
     int rx = 0, ry = 0;
     if (XTranslateCoordinates(g_display, g_win, RootWindow(g_display, g_screen), 0, 0, &rx, &ry, &child)) {
-        // 屏幕坐标 → 窗口内坐标
+        // 屏幕坐标 → 窗口内坐标。
         px = rx - attr.x;
         py = ry - attr.y;
     }

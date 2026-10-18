@@ -4,11 +4,6 @@
 #include <fstream>
 #include <string>
 
-// exe 所在目录，version.txt 与 exe 放在一起
-static std::string exeDir() {
-    return platform::exeDir();
-}
-
 // 取 version.txt 中 [current] 行的版本名；失败返回空串
 static std::string readVersionName(const std::string& path) {
     std::ifstream f(path);

@@ -1,13 +1,9 @@
-// ===========================================================================
 // png_decode.cpp — 自带的极简 PNG 解码器（不依赖 WIC / zlib / libpng）
-//
 // 为什么不用 WIC：WIC 是 Windows 独有的，为了让 Linux 也能跑就把解码器
 // 换成自带的。这个实现只依赖 C++ 标准库，Windows / Linux 行为完全一致
-// （原版贴图都是 8bit、非隔行的标准 PNG，足够覆盖；隔行(Adam7)不支持）。
-//
+// （原版贴图都是 8bit、非隔行的标准 PNG，足够覆盖；隔行(Adam7)不支持）
 // 支持：位深 1/2/4/8/16，颜色类型 0(灰) 2(RGB) 3(调色板) 4(灰+A) 6(RGBA)，
 //       tRNS 透明色，DEFLATE 的 stored/fixed/dynamic 三种块。
-// ===========================================================================
 #include "png.hpp"
 #include <cstdio>
 #include <cstring>
@@ -16,7 +12,7 @@
 
 namespace {
 
-// ---- DEFLATE (RFC 1951) --------------------------------------------------
+// DEFLATE (RFC 1951)
 struct BitReader {
     const uint8_t* p;
     size_t n, pos = 0;
@@ -43,7 +39,7 @@ struct BitReader {
     void align() { bitCnt = 0; }
 };
 
-// 规范霍夫曼表：按码长统计
+// 规范霍夫曼表：按码长统计。
 struct Huff {
     int count[16] = {0};
     std::vector<int> symbol;
@@ -171,7 +167,7 @@ bool inflate(const uint8_t* src, size_t n, std::vector<uint8_t>& out) {
     return true;
 }
 
-// ---- PNG ----------------------------------------------------------------
+// PNG
 inline int paeth(int a, int b, int c) {
     int p = a + b - c;
     int pa = p > a ? p - a : a - p;
@@ -283,13 +279,13 @@ bool loadPNG(const char* path, std::vector<uint8_t>& rgba, int& w, int& h) {
         src += stride;
     }
 
-    // 展开成 RGBA8
+    // 展开成 RGBA8。
     rgba.assign((size_t)pw * ph * 4, 255);
     for (uint32_t y = 0; y < ph; y++) {
         const uint8_t* row = &img[stride * y];
         for (uint32_t x = 0; x < pw; x++) {
             uint8_t* dst = &rgba[((size_t)y * pw + x) * 4];
-            // 取第 idx 个样本（0..channels-1），支持 1/2/4/8/16 位深。
+            // 取第 idx 个样本（0..channels-1），支持 1/2/4/8/16 位深
             // scaleTo8：位深小于 8 时把灰度值归一化到 0..255；
             // 调色板索引不能归一化（那就不是索引了），所以由调用方决定。
             const bool scaleTo8 = (colorType != 3);

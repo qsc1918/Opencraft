@@ -1,13 +1,10 @@
 #pragma once
-// ===========================================================================
 // platform.hpp — 平台抽象层（Windows / Linux 共用同一套接口）
-//
 // 只放"操作系统相关、且没法用标准库替代"的东西：
 //   * 键位：游戏代码用 Key 枚举，不再直接用 Win32 的 VK_*；
 //     字母/数字的取值与 ASCII 一致（所以 in.keys['W'] 这种写法两边都能用）。
 //   * 窗口：见 window.hpp（Win32 与 X11 两套实现，同一个类）。
 //   * 可执行文件目录、线程优先级、鼠标指针显示、控制台输入。
-// ===========================================================================
 #include <cstdint>
 #include <string>
 
@@ -55,7 +52,7 @@ void setThreadPriorityLow();
 // 显示/隐藏鼠标指针（菜单里要显示，游戏中隐藏）
 void showCursor(bool on);
 
-// 控制台输入线程：start() 起后台线程读整行，poll() 主线程取。
+// 控制台输入线程：start() 起后台线程读整行，poll() 主线程取
 // Windows 侧额外做 OEM(GBK) → UTF-8 转换；Linux 侧终端本来就是 UTF-8，原样收。
 class ConsoleInput {
 public:

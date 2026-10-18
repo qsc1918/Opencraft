@@ -23,11 +23,7 @@
 #include <unordered_set>
 #include <vector>
 
-// 世界常量与坐标换算函数都在 specs.hpp，属世界结构规范，别在本文件重定义。
-// 见 docs/standards.md。
-inline int chunkIndex(int x, int y, int z) { return x + (z << 4) + (y << 8); }
-
-// 地形/水面网格共用的紧凑顶点。
+// 地形/水面网格共用的紧凑顶点
 // 位置是 1/16 格为单位的整数（亚方块精度：末地门框架 13/16 高、眼睛 element 4..12），
 // 由着色器除以 16 还原；区块内坐标 0..16 格 → 0..256，实体世界坐标 ±2048 格内够用。
 struct TerrainVertex {
@@ -52,7 +48,8 @@ struct ChunkMeshData {
     bool     geomValid = false;
     // 遮挡剔除：16³ 分段之间共享面的可见性（位号 = 段号*5 + 面号，
     // 面号 0..3 = +X/-X/+Z/-Z，4 = 与上一段之间）
-    uint64_t facePass = 0;    // 置位 = 面上有格子两边都不是不透明，视线能穿过去
+    // 置位 = 该面上格子两边都不是不透明，视线能穿过去。
+    uint64_t facePass = 0;
 };
 
 struct Chunk {
@@ -75,9 +72,8 @@ struct Chunk {
     uint64_t waterVertBytes = 0;
     uint16_t geomMinY = 0, geomMaxY = 0;  // 网格实际覆盖的 y 范围（紧密视锥 AABB）
     bool     geomValid = false;
-    // 遮挡剔除：16³ 分段之间共享面的可见性（位号 = 段号*5 + 面号，
-    // 面号 0..3 = +X/-X/+Z/-Z，4 = 与上一段之间）
-    uint64_t facePass = 0;    // 置位 = 面上有格子两边都不是不透明，视线能穿过去
+    // 遮挡剔除：定义见上面的 ChunkMeshData::facePass，两处必须一致。
+    uint64_t facePass = 0;
     void*    opaqueMap = nullptr; // 常驻映射指针（HOST_COHERENT，无需手动刷新）
     void*    waterMap = nullptr;
 };
@@ -99,7 +95,7 @@ inline bool worldTaskLess(const WorldTask& a, const WorldTask& b) {
     return a.cx != b.cx ? a.cx > b.cx : a.cz > b.cz;
 }
 
-// 构网格用的本地副本：本区块 + 四邻，18x18x128。
+// 构网格用的本地副本：本区块 + 四邻，18x18x128
 // 本地坐标 x,z ∈ [-1,16]、y ∈ [0,WORLD_HEIGHT)，索引用 (x+1)+(z+1)*18+y*18*18，
 // 使 -1..16 恰好映射到 0..17，无需越界判断。
 struct MeshView {
@@ -113,9 +109,9 @@ struct MeshView {
     }
 };
 
-// ---- 遮挡剔除的位定义（mesher 填、renderer 用）----
+// 遮挡剔除的位定义（mesher 填、renderer 用）
 // 把世界切成 16^3 分段后，两个相邻分段之间能不能看见，取决于它们共享的那张
-// 16x16 面：只要面上每对贴面方块至少有一个不透明，视线就一定穿不过去。
+// 16x16 面：只要面上每对贴面方块至少有一个不透明，视线就一定穿不过去
 // 每个分段 8 位：0..3 = +X/-X/+Z/-Z 四个侧面被挡死，4 = 与上一段（y 更高）之间
 // 的水平面被挡死。位为 0 一律按"能看见"处理，所以默认值 0 永远保守。
 inline uint64_t chunkFaceBit(int sec, int dir) {
@@ -142,7 +138,7 @@ public:
     void startWorkers(int n);
     void stopWorkers();
 
-    // ---- 维度切换 ----
+    // 维度切换
     void setDimension(DimensionId dim) { currentDim_ = dim; }
     DimensionId getDimension() const { return currentDim_; }
 
@@ -151,7 +147,7 @@ public:
 
     // 读方块（主线程，当前维度）；未生成的区块按空气处理。
     uint8_t getBlock(int x, int y, int z) const;
-    // 改方块（当前维度）；真正改变才返回 true。
+    // 改方块（当前维度）；真正改变才返回 true
     // flags 见 bu::U_*：默认会按原版流程产生 NC 更新 + PP 更新；
     // 结构/传送门这类批量写入应传 bu::U_NO_ALL。
     bool setBlock(int x, int y, int z, uint8_t id, uint32_t flags = 0);
@@ -175,9 +171,6 @@ public:
 
     void markDirty(int cx, int cz);
 
-    const std::vector<std::array<int, 4>>& editLog() const { return editLog_; }
-    void clearEditLog() { editLog_.clear(); }
-
     void forceGenerateChunk(int cx, int cz);
     void loadChunkFromDisk(int cx, int cz, std::istream& f);
     void loadChunkFromDiskInDim(DimensionId dim, int cx, int cz, std::istream& f);
@@ -192,7 +185,7 @@ public:
 
     uint32_t seed;
 
-    // ---- 实体管理（主线程模拟；渲染线程只读）----
+    // 实体管理（主线程模拟；渲染线程只读）
     // 内部按 TICK_DT 固定步长推进（实体/AI/方块更新都是按刻的），
     // 到达整刻时依次跑实体 tick 与计划刻。
     Entity* spawnEntity(std::unique_ptr<Entity> e);
@@ -200,7 +193,7 @@ public:
     void tickEntities(float dt);
     Entity* raycastEntity(Vec3 origin, Vec3 dir, float maxDist, Vec3* hit = nullptr);
 
-    // ---- 方块更新（blockupdate 模块用；见 blockupdate.hpp）----
+    // 方块更新（blockupdate 模块用；见 blockupdate.hpp）
     std::vector<bu::TickEntry>& blockTicks() { return blockTicks_; }
     uint32_t nextTickOrder() { return tickOrder_++; }
 
@@ -214,7 +207,7 @@ private:
     void enqueue(DimensionId dim, bool isMesh, int cx, int cz, uint64_t prio);
     bool popTask(WorldTask& out);
 
-    // 按维度访问快捷方式
+    // 按维度访问快捷方式。
     DimStorage& dc() { return dims_[currentDim_]; }
     const DimStorage& dc() const { return dims_[currentDim_]; }
 
@@ -233,12 +226,10 @@ private:
     std::vector<std::thread> workers_;
     std::atomic<bool> running_{false};
 
-    std::vector<std::array<int, 4>> editLog_;
-
     std::vector<std::unique_ptr<Entity>> entities_;
     EntityId nextEntityId_ = 1;
 
-    // 方块更新的计划刻队列与插入序号
+    // 方块更新的计划刻队列与插入序号。
     std::vector<bu::TickEntry> blockTicks_;
     uint32_t tickOrder_ = 0;
     float tickAcc_ = 0.0f;   // 累积到整刻才推进（TICK_DT）

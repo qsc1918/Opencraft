@@ -3,6 +3,7 @@
 #include "items.hpp"
 #include "util.hpp"
 #include "vk.hpp"
+#include "vkutil.hpp"
 #include "window.hpp"
 #include "world.hpp"
 #include <string>
@@ -14,16 +15,6 @@ struct UIVertex {
     float x, y;     // NDC 坐标
     float u, v;     // 图集 uv
     float r, g, b, a;
-};
-
-struct Buffer2 {
-    VkBuffer b = VK_NULL_HANDLE;
-    VkDeviceMemory m = VK_NULL_HANDLE;
-    void destroy(VkDevice d) {
-        if (b) vkDestroyBuffer(d, b, nullptr);
-        if (m) vkFreeMemory(d, m, nullptr);
-        b = VK_NULL_HANDLE; m = VK_NULL_HANDLE;
-    }
 };
 
 class Renderer {
@@ -58,7 +49,7 @@ public:
     float fps() const { return fps_; }
     int debugDraws() const { return debugDraws_; }
 
-    // 物品栏（E）界面
+    // 物品栏（E）界面。
     void setInventoryOpen(bool open);
     bool inventoryOpen() const { return invOpen_; }
     void setInventoryPage(int page) { invPage_ = page; }  // 0=方块 1=物品
@@ -124,7 +115,7 @@ private:
     void* uiMap_[VkCtx::MAX_FRAMES_IN_FLIGHT] = {};
     VkDescriptorSet uiSet_[VkCtx::MAX_FRAMES_IN_FLIGHT] = {};
 
-    // 实体动态缓冲：每帧 CPU 构建盒模型，仅主线程绘制
+    // 实体动态缓冲：每帧 CPU 构建盒模型，仅主线程绘制。
     Buffer2 entityVB_[VkCtx::MAX_FRAMES_IN_FLIGHT];
     void* entityMap_[VkCtx::MAX_FRAMES_IN_FLIGHT] = {};
 
@@ -176,12 +167,12 @@ private:
     // 世界区块的裸指针快照，复用以避免每帧拷贝 shared_ptr。
     std::vector<World::ChunkInfo> snapshot_;
     std::vector<TerrainVertex> entityVerts_;  // 每帧构建的实体盒模型顶点
-    // 每个实体一段顶点：push constant 用它的位置当原点
+    // 每个实体一段顶点：push constant 用它的位置当原点。
     struct EntityDraw { Vec3 origin; uint32_t first, count; };
     std::vector<EntityDraw> entityDraws_;
     bool thirdPerson_ = false;
 
-    // ---- 遮挡剔除（以 16³ 分段为单位的可见性洪泛）----
+    // 遮挡剔除（以 16³ 分段为单位的可见性洪泛）
     // 只有"整个分段全是不透明方块"才挡视线：有缝隙就可能看得见，
     // 判定永远保守，只会多画不会漏画。
     bool updateOcclusion(const Camera& cam);

@@ -7,16 +7,16 @@
 #include <memory>
 #include <vector>
 
-// ---------------------------------------------------------------------------
 // 实现要点（对照 方块更新.txt）：
 //  * 更新必须由一次方块放置/破坏/状态变化产生，所以入口只有 World::setBlock。
-//  * NC 更新核的传播顺序是 西、东、下、上、北、南；PP 是 西、东、北、南、下、上。
+//  * NC 更新核的传播顺序是 西、东、下、上、北、南；PP 是 西、东、北、南、下、上
 //  * 传播走深度优先：栈里每帧只推进一个方向，过程中新产生的更新先入 pending，
-//    下一轮按"后入先出"压栈；总量超过上限后不再新增（原版
-//    max-chained-neighbor-updates 同理），已在栈里的仍会执行完。
+//    下一轮按"后入先出"压栈。
+//  * pending/budget 框架对应原版 max-chained-neighbor-updates，但本工程的接收方
+//    只做计划刻入队、不产生新的邻居更新，所以上限与去重当前都未接通；接红石/流体
+//    更新时必须把 kMaxUpdates 与"同坐标不重复入队"一起补上
 //  * 接收方只实现本工程已有方块会受影响的行为（受重力、附着、支撑），
 //    红石/流体等没有对应方块的部分不实现，receiveNC 目前是空操作。
-// ---------------------------------------------------------------------------
 
 namespace {
 
@@ -30,7 +30,7 @@ constexpr int kDirs[2][6][3] = {
 
 struct Frame { int32_t x, y, z; uint8_t kind; uint8_t dir; };
 
-// 单次方块改动的传播上限：沙子整片坍塌也是这个量级，够用
+// 单次方块改动的传播上限：沙子整片坍塌也是这个量级，够用。
 constexpr int kMaxUpdates = 65536;
 
 // 原版按"上表面是否完整"(isFaceFull) 判断能不能支撑；本工程碰撞箱都是整格，
@@ -43,12 +43,11 @@ bool isChorusPart(uint8_t b) {
     return b == B_CHORUS_PLANT || b == B_CHORUS_FLOWER || b == B_CHORUS_FLOWER_DEAD;
 }
 
-// ---- 紫颂：等价于原版 ChorusPlantBlock#canSurvive / ChorusFlowerBlock#canSurvive ----
+// 紫颂：等价于原版 ChorusPlantBlock#canSurvive / ChorusFlowerBlock#canSurvive
 bool plantCanSurvive(const World& w, int x, int y, int z) {
     uint8_t below = w.getBlock(x, y - 1, z);
     bool aboveAndBelow = w.getBlock(x, y + 1, z) != B_AIR && below != B_AIR;
-    static const int off[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
-    for (const auto& o : off) {
+    for (const auto& o : kDir4) {
         int nx = x + o[0], nz = z + o[1];
         if (w.getBlock(nx, y, nz) == B_CHORUS_PLANT) {
             if (aboveAndBelow) return false;
@@ -64,8 +63,7 @@ bool flowerCanSurvive(const World& w, int x, int y, int z) {
     if (below != B_CHORUS_PLANT && below != B_END_STONE) {
         if (below != B_AIR) return false;
         bool one = false;
-        static const int off[4][2] = {{0, -1}, {1, 0}, {0, 1}, {-1, 0}};
-        for (const auto& o : off) {
+        for (const auto& o : kDir4) {
             uint8_t nb = w.getBlock(x + o[0], y, z + o[1]);
             if (nb == B_CHORUS_PLANT) {
                 if (one) return false;
@@ -79,7 +77,7 @@ bool flowerCanSurvive(const World& w, int x, int y, int z) {
     return true;
 }
 
-// ---- 接收 ----
+// 接收
 // NC 更新：原版接收方全是红石元件与流体，本工程都还没有，暂不实现。
 void receiveNC(World&, int, int, int) {
     // 红石线/中继器/比较器/投掷器…未实现；流体流动也未实现。
@@ -90,7 +88,7 @@ void receivePP(World& w, int x, int y, int z) {
     uint8_t id = w.getBlock(x, y, z);
     if (id == B_AIR) return;
     // 受重力方块：支撑不住就排 1 刻后变成下落的方块（原版 SandBlock#tick 延迟 2 刻，
-    // 这里取 1 刻，效果一样：给同一次更新链里的其它方块先落地）
+    // 本工程 delay=1 实际也是 2 刻后到期：先 delay-- 再判 <=0，见 runScheduledTicks）
     if (bu::isFallingBlock(id)) {
         if (y > WORLD_MIN_Y && !canSupport(w, x, y - 1, z)) bu::scheduleTick(w, x, y, z, 1);
         return;
@@ -109,7 +107,7 @@ void propagate(World& w, uint8_t kind, int x, int y, int z) {
     push({x, y, z, kind, 0});
     while (!stack.empty() || !pending.empty()) {
         if (!pending.empty()) {
-            // 后产生的先压栈 → 深度优先
+            // 后产生的先压栈 → 深度优先。
             for (size_t i = pending.size(); i-- > 0;) stack.push_back(pending[i]);
             pending.clear();
         }
@@ -141,7 +139,7 @@ void spawnFalling(World& w, int x, int y, int z, uint8_t id) {
 namespace bu {
 
 bool isFallingBlock(uint8_t id) {
-    // 原版受重力列表里本工程已有的：沙子、沙砾、龙蛋
+    // 原版受重力列表里本工程已有的：沙子、沙砾、龙蛋。
     return id == B_SAND || id == B_GRAVEL || id == B_DRAGON_EGG;
 }
 
@@ -212,7 +210,7 @@ void runScheduledTicks(World& w) {
             if (t.y > WORLD_MIN_Y && !canSupport(w, t.x, t.y - 1, t.z))
                 spawnFalling(w, t.x, t.y, t.z, id);
         } else if (!blockCanSurvive(w, t.x, t.y, t.z)) {
-            // 原版是掉落为物品；本工程还没有物品实体，直接消失
+            // 原版是掉落为物品；本工程还没有物品实体，直接消失。
             w.setBlock(t.x, t.y, t.z, B_AIR);
         }
     }

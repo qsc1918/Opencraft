@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
     for (int cz = -radius; cz <= radius; cz++) {
         for (int cx = -radius; cx <= radius; cx++) {
             endgen::generateEnd(seed, cx, cz, buf.data());
-            // 只统计地形（末地石），结构方块单独看
+            // 只统计地形（末地石），结构方块单独看。
             for (size_t i = 0; i < buf.size(); i++) counts[buf[i]]++;
         }
     }
@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
         int lx = blockToChunkLocal(x);
         int top = -1;
         for (int y = WORLD_HEIGHT - 1; y >= 0; y--)
-            if (buf[lx + (8 << 4) + (y << 8)] == B_END_STONE) { top = y; break; }
+            if (buf[chunkIndex(lx, y, 8)] == B_END_STONE) { top = y; break; }
         printf("%6d", top);
     }
     printf("\n");

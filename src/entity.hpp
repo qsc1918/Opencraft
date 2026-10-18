@@ -1,10 +1,8 @@
 #pragma once
-// ===========================================================================
 // entity.hpp — 实体规范（对齐 Minecraft 实体模型）
-// 实体 = 带命名空间 ID、按 tick 模拟、有类型碰撞箱的动态对象。
-// 字段为存档/联机预留，对应 MC NBT：Pos=pos、Motion=vel、Rotation=yaw/pitch。
+// 实体 = 带命名空间 ID、按 tick 模拟、有类型碰撞箱的动态对象
+// 字段为存档/联机预留，对应 MC NBT：Pos=pos、Motion=vel、Rotation=yaw/pitch
 // 注意 pos 是脚部中心；MC 用角度制，这里内部用弧度制。
-// ===========================================================================
 #include "util.hpp"
 #include <cstdint>
 
@@ -31,11 +29,11 @@ enum class EntityKind : uint8_t {
     EnderDragon,   // 末影龙
     FallingBlock,  // 下落的方块（沙子/沙砾/龙蛋失去支撑后）
     Player,        // 玩家（本工程只有一个；注册进 World 以便生物能找到它）
-    // --- 被动生物 ---
+    // 被动生物
     Pig, Cow, Sheep, Chicken,
-    // --- 敌对生物 ---
+    // 敌对生物
     Zombie, Skeleton, Creeper, Spider, Blaze, Enderman,
-    // --- 弹射物 ---
+    // 弹射物
     Arrow, Fireball,
 };
 
@@ -45,7 +43,7 @@ inline constexpr EntityType ENTITY_ENDER_DRAGON{"opencraft:ender_dragon", 13.0f,
 // 下落的方块：原版 0.98×0.98（见 实体.txt 实体表）
 inline constexpr EntityType ENTITY_FALLING_BLOCK{"opencraft:falling_block", 0.98f, 0.98f, 0.49f};
 
-// 生物碰撞箱（原版实体表）：宽×高都按格计，眼高取头部高度
+// 生物碰撞箱（原版实体表）：宽×高都按格计，眼高取头部高度。
 inline constexpr EntityType ENTITY_PIG{"opencraft:pig",      0.9f, 0.9f,  0.45f};
 inline constexpr EntityType ENTITY_COW{"opencraft:cow",      0.9f, 1.4f,  0.90f};
 inline constexpr EntityType ENTITY_SHEEP{"opencraft:sheep",  0.9f, 1.3f,  0.95f};
@@ -60,7 +58,28 @@ inline constexpr EntityType ENTITY_ENDERMAN{"opencraft:enderman", 0.6f, 2.9f, 2.
 inline constexpr EntityType ENTITY_ARROW{"opencraft:arrow",       0.5f,    0.5f,   0.25f};
 inline constexpr EntityType ENTITY_FIREBALL{"opencraft:small_fireball", 0.3125f, 0.3125f, 0.15f};
 
-// 实体基类，按 tick 模拟（由 World::tickEntities 在主线程驱动）。
+// 生物（Mob 子类）的种类判定。加新生物只改这里，别再在各处抄 switch。
+inline bool isMobKind(EntityKind k) {
+    switch (k) {
+    case EntityKind::Pig: case EntityKind::Cow: case EntityKind::Sheep:
+    case EntityKind::Chicken: case EntityKind::Zombie: case EntityKind::Skeleton:
+    case EntityKind::Creeper: case EntityKind::Spider: case EntityKind::Blaze:
+    case EntityKind::Enderman:
+        return true;
+    default: return false;
+    }
+}
+
+inline bool isHostileKind(EntityKind k) {
+    switch (k) {
+    case EntityKind::Zombie: case EntityKind::Skeleton: case EntityKind::Creeper:
+    case EntityKind::Spider: case EntityKind::Blaze: case EntityKind::Enderman:
+        return true;
+    default: return false;
+    }
+}
+
+// 实体基类，按 tick 模拟（由 World::tickEntities 在主线程驱动）
 // pos=脚部中心、vel=速度、yaw/pitch=朝向（弧度）。
 struct Entity {
     EntityId id = 0;                   // 实例 ID
