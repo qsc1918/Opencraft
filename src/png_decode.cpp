@@ -75,7 +75,7 @@ const int kLenExtra[29] = {0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5
 const int kDistBase[30] = {1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577};
 const int kDistExtra[30] = {0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13};
 
-bool inflate(const uint8_t* src, size_t n, std::vector<uint8_t>& out) {
+bool inflate(const uint8_t* src, size_t n, std::vector<uint8_t>& out, size_t maxOut) {
     BitReader br{src, n};
     Huff fixedLit, fixedDist;
     {
@@ -142,6 +142,7 @@ bool inflate(const uint8_t* src, size_t n, std::vector<uint8_t>& out) {
                 int sym = decodeSym(br, *lit);
                 if (sym < 0) return false;
                 if (sym < 256) {
+                    if (out.size() >= maxOut) return false;
                     out.push_back((uint8_t)sym);
                 } else if (sym == 256) {
                     break;
@@ -153,6 +154,8 @@ bool inflate(const uint8_t* src, size_t n, std::vector<uint8_t>& out) {
                     if (ds < 0 || ds >= 30) return false;
                     unsigned d = (unsigned)kDistBase[ds] + br.bits(kDistExtra[ds]);
                     if (d > out.size()) return false;
+                    // 几字节的 IDAT 就能靠回拷膨胀到数 GB，必须按预期解压大小封顶。
+                    if ((size_t)len > maxOut - out.size()) return false;
                     size_t start = out.size() - d;
                     for (unsigned k = 0; k < len; k++) out.push_back(out[start + k]);
                 }
@@ -243,13 +246,21 @@ bool loadPNG(const char* path, std::vector<uint8_t>& rgba, int& w, int& h) {
     default: return false;
     }
 
+    // PNG 规范里 bitDepth 只允许 1/2/4/8/16；非法值会让下面的 shift 成为负数。
+    if (bitDepth != 1 && bitDepth != 2 && bitDepth != 4 && bitDepth != 8 && bitDepth != 16) return false;
+    // 宽高来自文件，先挡住畸形值，否则下面的 reserve 会直接申请数 GB。
+    if (pw == 0 || ph == 0 || pw > 32768 || ph > 32768) return false;
+
     // IDAT 里是 zlib 流：2 字节头（CMF/FLG）+ DEFLATE 数据 + 4 字节 Adler-32
     std::vector<uint8_t> raw;
-    raw.reserve((size_t)ph * ((size_t)pw * channels * bitDepth + 7) / 8 + 16);
+    // DEFLATE 解压出来的是"每行 1 字节 filter + 像素数据"，上限必须把 filter 字节算进去，
+    // 否则像 fire_0 这种 16x512 的高贴图会被截断、整张图加载失败。
+    const size_t expectedRaw = (((size_t)pw * channels * bitDepth + 7) / 8 + 1) * (size_t)ph + 16;
+    raw.reserve(expectedRaw);
     if (idat.size() < 3) return false;
     if (((idat[0] & 0x0F) != 8) || (((idat[0] << 8) | idat[1]) % 31 != 0)) return false;  // 必须是 deflate
     if (idat[1] & 0x20) return false;   // 带预置字典的 zlib 流不支持（原版贴图没有）
-    if (!inflate(idat.data() + 2, idat.size() - 2, raw)) return false;
+    if (!inflate(idat.data() + 2, idat.size() - 2, raw, expectedRaw)) return false;
 
     // 反滤波（PNG 每行前面一个 filter 字节）
     const size_t bpp = (size_t)((channels * bitDepth + 7) / 8);   // 每像素字节数（至少 1）

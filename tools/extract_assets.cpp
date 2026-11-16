@@ -43,7 +43,8 @@ static const AssetEntry kAssets[] = {
     {"assets/minecraft/textures/block/glass.png",                  "block/glass.png"},
     {"assets/minecraft/textures/block/white_concrete.png",         "block/white_concrete.png"},
     // 下界/末地方块贴图；1.21.4 起部分贴图改名（nether_bricks、
-    // end_portal_frame_top/eye）；end_portal / end_gateway 是 entity 贴图，用程序化纹理兜底
+    // end_portal_frame_top/eye）。end_portal 在 entity/、end_sky 在 environment/、
+    // fire_0 在 block/（1.21.1 与 26.2 实测一致），别按 block/ 猜
     {"assets/minecraft/textures/block/netherrack.png",             "block/netherrack.png"},
     {"assets/minecraft/textures/block/soul_sand.png",              "block/soul_sand.png"},
     {"assets/minecraft/textures/block/glowstone.png",              "block/glowstone.png"},
@@ -52,6 +53,12 @@ static const AssetEntry kAssets[] = {
     {"assets/minecraft/textures/block/lava_still.png",             "block/lava_still.png"},
     {"assets/minecraft/textures/block/nether_portal.png",          "block/nether_portal.png"},
     {"assets/minecraft/textures/block/end_stone.png",              "block/end_stone.png"},
+    // 末地门星空合成要用的两张：end_sky 是底色，fire_0 是火焰动画条首帧。
+    // 缺了它们 atlas 会走程序化兜底（末地门退化成灰点、火变白块），且不报错。
+    // 路径以 1.21.1 / 26.2 实测为准：end_portal 在 entity/、end_sky 在 environment/。
+    {"assets/minecraft/textures/entity/end_portal.png",            "block/end_portal.png"},
+    {"assets/minecraft/textures/environment/end_sky.png",          "block/end_sky.png"},
+    {"assets/minecraft/textures/block/fire_0.png",                 "block/fire_0.png"},
     {"assets/minecraft/textures/block/end_portal_frame_top.png",   "block/end_portal_frame.png"},
     {"assets/minecraft/textures/block/end_portal_frame_side.png",  "block/end_portal_frame_side.png"},
     {"assets/minecraft/textures/block/end_portal_frame_eye.png",   "block/end_portal_frame_eye.png"},
@@ -72,16 +79,16 @@ static const AssetEntry kAssets[] = {
     {"assets/minecraft/textures/gui/sprites/widget/slider_handle_highlighted.png", "gui/slider_handle_highlighted.png"},
     // 实体贴图（assets/entity/）：生物皮肤按原版模型的 texOffs 逐面取子矩形，
     // 所以一个像素都不能裁（保留 64×64 / 64×32 的原始比例）。
-    {"assets/minecraft/textures/entity/pig/pig_temperate.png",       "entity/pig.png"},
-    {"assets/minecraft/textures/entity/cow/cow_temperate.png",       "entity/cow.png"},
+    {"assets/minecraft/textures/entity/pig/pig.png",                "entity/pig.png"},
+    {"assets/minecraft/textures/entity/cow/cow.png",                "entity/cow.png"},
     {"assets/minecraft/textures/entity/sheep/sheep.png",              "entity/sheep.png"},
-    {"assets/minecraft/textures/entity/sheep/sheep_wool.png",         "entity/sheep_wool.png"},
-    {"assets/minecraft/textures/entity/chicken/chicken_temperate.png", "entity/chicken.png"},
+    {"assets/minecraft/textures/entity/sheep/sheep_fur.png",          "entity/sheep_wool.png"},
+    {"assets/minecraft/textures/entity/chicken.png",                 "entity/chicken.png"},
     {"assets/minecraft/textures/entity/zombie/zombie.png",            "entity/zombie.png"},
     {"assets/minecraft/textures/entity/skeleton/skeleton.png",        "entity/skeleton.png"},
     {"assets/minecraft/textures/entity/creeper/creeper.png",          "entity/creeper.png"},
     {"assets/minecraft/textures/entity/spider/spider.png",            "entity/spider.png"},
-    {"assets/minecraft/textures/entity/blaze/blaze.png",              "entity/blaze.png"},
+    {"assets/minecraft/textures/entity/blaze.png",                   "entity/blaze.png"},
     {"assets/minecraft/textures/entity/enderman/enderman.png",        "entity/enderman.png"},
     {"assets/minecraft/textures/entity/player/wide/steve.png",        "entity/steve.png"},
     {"assets/minecraft/textures/entity/projectiles/arrow.png",        "entity/arrow.png"},
@@ -157,14 +164,6 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    bool haveOldTextField = false;
-    {
-        // 检查该 jar 用的是哪个 text_field 路径。
-        std::string chk = "tar -tf \"" + jar + "\" 2>nul | findstr /C:\"textures/gui/sprites/widget/text_field.png\" >nul";
-        haveOldTextField = system(chk.c_str()) == 0;
-        (void)haveOldTextField;
-    }
-
     fs::path tmp = fs::temp_directory_path() / "opencraft_assets";
     fs::remove_all(tmp);
     fs::create_directories(tmp);
@@ -185,12 +184,20 @@ int main(int argc, char** argv) {
         fs::path dst = dstRoot / e.dst;
         fs::create_directories(dst.parent_path());
         if (!fs::exists(src)) {
-            // 旧版 text_field 路径兜底。
-            fs::path alt = tmp / "assets/minecraft/textures/gui/sprites/widget/text_field.png";
-            if (std::string(e.src).find("text_field") != std::string::npos && fs::exists(alt)) {
-                src = alt;
+            // text_field 在 1.20 及以前位于 gui/ 根下，之后挪到了 gui/sprites/widget/。
+            std::string srcPath = e.src;
+            std::string rel = srcPath.find("textures/") != std::string::npos
+                                  ? srcPath.substr(srcPath.rfind("textures/") + 10)
+                                  : srcPath;
+            if (rel == "gui/sprites/widget/text_field.png") {
+                // 旧版（1.20 及以前）text_field 在 gui/ 根下。
+                fs::path p = tmp / "assets/minecraft/textures/gui/text_field.png";
+                if (fs::exists(p)) src = p;
+                else { printf("  MISSING: %s\n", e.src); missing++; continue; }
             } else {
-                printf("  MISSING: %s\n", e.src);
+                // 缺这张不会让构建失败，但 atlas 会静默走程序化兜底，
+                // 表现为"末地门是灰点/火是白块"这类难查的现象，所以这里必须显眼。
+                printf("  MISSING: %s  ← 图集会用程序化纹理顶替，画面会不对\n", e.src);
                 missing++;
                 continue;
             }

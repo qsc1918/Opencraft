@@ -327,7 +327,28 @@ inline int buildFire(Box* out) {
     return 2;
 }
 
-inline int buildParts(uint8_t id, Box* out, uint8_t conn) {
+// 下界传送门：原版 NetherPortalBlock 是 4/16 厚的居中薄板，只画法线方向的两个大面
+// （贴着板平面看过去就是一条线，侧面本来就不该有可见面）。整格立方体会把门洞堵死，
+// 也会让准星在格子边缘误命中。
+inline int buildNetherPortal(Box* out, int axis) {
+    Box& b = out[0];
+    b = Box{};
+    if (axis == 0) { b.z0 = 6; b.z1 = 10; }   // 门宽沿 X，板在 Z 方向薄
+    else { b.x0 = 6; b.x1 = 10; }              // 门宽沿 Z，板在 X 方向薄
+    for (int f = 0; f < 6; f++) b.face[f].present = false;
+    // Face 枚举是 F_PX=0,F_NX=1,F_PY=2,F_NY=3,F_PZ=4,F_NZ=5，正负不相邻，别用 +1。
+    if (axis == 0) {
+        setFace(b, F_NZ, T_NETHER_PORTAL, 0, 0, 16, 16, false);
+        setFace(b, F_PZ, T_NETHER_PORTAL, 0, 0, 16, 16, false);
+    } else {
+        setFace(b, F_NX, T_NETHER_PORTAL, 0, 0, 16, 16, false);
+        setFace(b, F_PX, T_NETHER_PORTAL, 0, 0, 16, 16, false);
+    }
+    return 1;
+}
+
+inline int buildParts(uint8_t id, Box* out, uint8_t conn, int portalAxis) {
+    if (id == B_NETHER_PORTAL) return buildNetherPortal(out, portalAxis);
     if (id == B_CHORUS_PLANT) return buildChorusPlant(out, conn);
     if (id == B_CHORUS_FLOWER || id == B_CHORUS_FLOWER_DEAD) return buildChorusFlower(out, id);
     if (id == B_TORCH) return buildTorch(out);
@@ -682,8 +703,17 @@ ChunkMeshData buildChunkMesh(const MeshView& view) {
                                                    z + kNormal[f][2]), f))
                             conn |= (uint8_t)(1 << f);
                 }
+                // 门的朝向由邻居推断：门宽方向那一侧一定有同门方块。
+                int portalAxis = 0;
+                if (id == B_NETHER_PORTAL) {
+                    bool xSide = view.at(x + 1, y, z) == B_NETHER_PORTAL ||
+                                 view.at(x - 1, y, z) == B_NETHER_PORTAL;
+                    bool zSide = view.at(x, y, z + 1) == B_NETHER_PORTAL ||
+                                 view.at(x, y, z - 1) == B_NETHER_PORTAL;
+                    portalAxis = (xSide == zSide) ? 0 : (xSide ? 0 : 1);
+                }
                 Box parts[kMaxParts]; // 植株最多 1 个内层 + 6 个凸起
-                const int partCount = buildParts(id, parts, conn);
+                const int partCount = buildParts(id, parts, conn, portalAxis);
                 for (int pi = 0; pi < partCount; pi++) {
                     const Box& box = parts[pi];
                     for (int f = 0; f < 6; f++) {

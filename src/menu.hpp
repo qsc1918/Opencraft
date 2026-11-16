@@ -94,6 +94,7 @@ private:
     std::vector<uint8_t> btnRGBA_, btnHiRGBA_, fieldRGBA_;
     std::vector<uint8_t> sliderRGBA_, handleRGBA_, handleHiRGBA_;
     int dirtW_ = 0, dirtH_ = 0, btnW_ = 0, btnH_ = 0;
+    int fieldW_ = 0, fieldH_ = 0;   // 输入框贴图尺寸，别和按钮共用
     int sliderW_ = 0, sliderH_ = 0, handleW_ = 0, handleH_ = 0;
     // 一行一个声明：`void* a = nullptr, b = nullptr;` 在 MSVC 下会被
     // 当成函数声明（最令人烦恼的解析），别那么写。

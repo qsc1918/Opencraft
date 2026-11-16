@@ -98,14 +98,14 @@ void BinaryHeap::changeCost(Node* n, float newCost) {
 
 // Path
 void Path::getNextEntityPos(float bbWidth, float& x, float& y, float& z) const {
-    const Node* n = nodes[next];
-    x = (float)n->x + (int)(bbWidth + 1.0f) * 0.5f;
-    y = (float)n->y;
-    z = (float)n->z + (int)(bbWidth + 1.0f) * 0.5f;
+    const Node& n = nodes[next];
+    x = (float)n.x + (int)(bbWidth + 1.0f) * 0.5f;
+    y = (float)n.y;
+    z = (float)n.z + (int)(bbWidth + 1.0f) * 0.5f;
 }
 void Path::getNextNodePos(int& x, int& y, int& z) const {
-    const Node* n = nodes[next];
-    x = n->x; y = n->y; z = n->z;
+    const Node& n = nodes[next];
+    x = n.x; y = n.y; z = n.z;
 }
 
 // NodeEvaluator
@@ -469,12 +469,12 @@ Path PathFinder::findPath(World& w, const Entity& mob,
 
     Path path;
     for (Node* n = bestEnd; n; n = n->cameFrom)
-        path.nodes.push_back(n);
+        path.nodes.push_back(*n);   // 按值拷出：池在 done() 就清了（见 Path 注释）
     std::reverse(path.nodes.begin(), path.nodes.end());
     path.reached = !reachedTargets.empty();
-    path.target = bestEnd;
+    path.target = *bestEnd;
+    path.hasTarget = true;
     path.next = 1;   // 第 0 个是脚下
-    if (path.nodes.size() <= 1) path.next = 1;
     return path;
 }
 

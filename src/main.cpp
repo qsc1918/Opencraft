@@ -258,6 +258,8 @@ int main(int argc, char** argv) {
     // 进入世界。loadFrom 是存档名，空表示新建世界。
     auto enterWorld = [&](uint32_t seed, const std::string& name, const std::string& loadFrom) {
         world = std::make_unique<World>(seed);
+        // 改动区块落盘目录：卸载时写、重新生成时读回，内存不再随探索距离增长。
+        world->setEditsDir(platform::join(platform::join(savesDir(), name), "chunks"));
         world->startWorkers(a.threads);
         renderer.setWorld(*world);
         worldName = name;
@@ -476,7 +478,8 @@ int main(int argc, char** argv) {
     //   落点在门内，因此不会把玩家丢进岩浆或方块里
     // 末地门：主世界与末地互传（进末地落在中央黑曜石平台上）
     // srcX/srcY/srcZ 是源门方块坐标（INT_MIN 表示没有源门，如调试传送）。
-    float portalCooldown = 0.0f; // 防止出入口来回反复传送
+    float portalCooldown = 0.0f; // 传送后的短冷却，防止落点也在门里时立刻传回来
+    bool portalArmed = true;     // 离开门后重新武装；站在门里期间只触发一次
     auto performTeleport = [&](DimensionId toDim, int srcX, int srcY, int srcZ) {
         DimensionId fromDim = player.dim;
         if (toDim == fromDim) return;
@@ -588,32 +591,55 @@ int main(int argc, char** argv) {
                 (int)toDim, px, py, pz);
     };
 
-    // 每帧检测：脚下方块是传送门就切维度。主循环与截图分支共用。
+    // 每帧检测：实体 AABB 与传送门方块形状相交才算在门内（原版
+    // Entity.checkInsideBlocks 用 getEntityInsideCollisionShape 做同样的判断）。
+    // 门是 4/16 厚的居中薄板，不能只按"脚下方块 id 是门"来判断。
+    // 另外原版是"离开门再进入"才触发下一次（portalEntrancePos 语义）：
+    // 一直站在门里只传送一次，仅靠冷却会在归零后反复来回传送。
     auto checkTeleport = [&]() {
-        if (portalCooldown > 0.0f) { portalCooldown -= 1.0f / 60.0f; return; }
-        float feetY = player.cam.pos.y - player.eyeHeight;
-        bool foundPortal = false;
-        for (int sy = 0; sy < 2 && !foundPortal; sy++) {
-            int bx = (int)std::floor(player.cam.pos.x);
-            int by = (int)std::floor(feetY + sy);
-            int bz = (int)std::floor(player.cam.pos.z);
-            uint8_t pb = world->getBlock(bx, by, bz);
-            if (portal::isPortalBlock(pb)) {
-                DimensionId curDim = world->getDimension();
-                DimensionId toDim = curDim;
-                if (pb == B_NETHER_PORTAL) {
-                    // 下界门：主世界与下界双向
-                    toDim = (curDim == DIM_NETHER) ? DIM_OVERWORLD : DIM_NETHER;
-                } else if (pb == B_END_PORTAL) {
-                    // 末地门：主世界与末地双向
-                    toDim = (curDim == DIM_END) ? DIM_OVERWORLD : DIM_END;
+        const float hw = player.halfWidth, hh = player.height;
+        const float feetY = player.cam.pos.y - player.eyeHeight;
+        const float px = player.cam.pos.x, pz = player.cam.pos.z;
+        const float k = 1.0f / 16.0f;
+        uint8_t pb = B_AIR;
+        int hitX = (int)std::floor(px), hitY = (int)std::floor(feetY), hitZ = (int)std::floor(pz);
+        for (int by = (int)std::floor(feetY); by <= (int)std::floor(feetY + hh) && pb == B_AIR; by++)
+            for (int bz = (int)std::floor(pz - hw); bz <= (int)std::floor(pz + hw) && pb == B_AIR; bz++)
+                for (int bx = (int)std::floor(px - hw); bx <= (int)std::floor(px + hw) && pb == B_AIR; bx++) {
+                    uint8_t b = world->getBlock(bx, by, bz);
+                    if (!portal::isPortalBlock(b)) continue;
+                    int axis = 0;
+                    if (b == B_NETHER_PORTAL) {
+                        bool xSide = world->getBlock(bx + 1, by, bz) == B_NETHER_PORTAL ||
+                                     world->getBlock(bx - 1, by, bz) == B_NETHER_PORTAL;
+                        bool zSide = world->getBlock(bx, by, bz + 1) == B_NETHER_PORTAL ||
+                                     world->getBlock(bx, by, bz - 1) == B_NETHER_PORTAL;
+                        axis = (xSide == zSide) ? 0 : (xSide ? 0 : 1);
+                    }
+                    BlockBox16 s = blockShape16(b, axis);
+                    bool overlap = px + hw > bx + s.x0 * k && px - hw < bx + s.x1 * k &&
+                                   feetY + hh > by + s.y0 * k && feetY < by + s.y1 * k &&
+                                   pz + hw > bz + s.z0 * k && pz - hw < bz + s.z1 * k;
+                    if (overlap) { pb = b; hitX = bx; hitY = by; hitZ = bz; }
                 }
-                if (toDim != curDim) {
-                    performTeleport(toDim, bx, by, bz);
-                }
-                foundPortal = true;
-            }
+        if (!portal::isPortalBlock(pb)) {
+            portalArmed = true;   // 已经离开门，重新武装
+            return;
         }
+        if (portalCooldown > 0.0f) { portalCooldown -= 1.0f / 60.0f; return; }
+        if (!portalArmed) return;
+        DimensionId curDim = world->getDimension();
+        DimensionId toDim = curDim;
+        if (pb == B_NETHER_PORTAL) {
+            // 下界门：主世界与下界双向
+            toDim = (curDim == DIM_NETHER) ? DIM_OVERWORLD : DIM_NETHER;
+        } else if (pb == B_END_PORTAL) {
+            // 末地门：主世界与末地双向
+            toDim = (curDim == DIM_END) ? DIM_OVERWORLD : DIM_END;
+        }
+        if (toDim == curDim) return;
+        portalArmed = false;   // 这次机会已用掉，直到离开门才重置
+        performTeleport(toDim, hitX, hitY, hitZ);
     };
 
     // 维度名 → DimensionId（--tp-dim 用）
@@ -940,7 +966,10 @@ int main(int argc, char** argv) {
         if (quitRequested) break;
         int cw = win.width(), ch = win.height();
         if (cw <= 0 || ch <= 0) { std::this_thread::sleep_for(std::chrono::milliseconds(16)); continue; }
-        if (cw != lastW || ch != lastH) { ctx.recreateSwapchain(cw, ch); menu.onResize(ctx, cw, ch); lastW = cw; lastH = ch; }
+        if (cw != lastW || ch != lastH) {
+            if (ctx.recreateSwapchain(cw, ch)) menu.onResize(ctx, cw, ch);
+            lastW = cw; lastH = ch;
+        }
 
         Input& in = win.input();
         auto now = std::chrono::steady_clock::now();
@@ -1202,7 +1231,12 @@ int main(int argc, char** argv) {
 
 shutdown_all:
     win.setCapture(false);
-    if (world) world->stopWorkers();
+    if (world) {
+        world->stopWorkers();
+        // 原版关服会 saveAllChunks。直接关窗口时保住没手动保存过的改动，
+        // 否则只留在内存/增量文件里，下次读档看不到。
+        if (!worldName.empty()) saveWorld(*world, player, worldName, savesDir());
+    }
     menu.shutdown(ctx);
     renderer.shutdown(ctx);
     ctx.shutdown();

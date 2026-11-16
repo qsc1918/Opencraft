@@ -49,7 +49,9 @@ float rawHeightValue(const McSimplexNoise& n, int sectionX, int sectionZ) {
     int chunkZ = sectionZ / 2;
     int subX = sectionX % 2;
     int subZ = sectionZ % 2;
-    float doffs = 100.0f - std::sqrt((float)(sectionX * sectionX + sectionZ * sectionZ)) * 8.0f;
+    // sectionX/Z 是区块坐标，极端坐标下 int 平方会溢出；原版语义是求距离，用 double 算。
+    double dsq = (double)sectionX * sectionX + (double)sectionZ * sectionZ;
+    float doffs = 100.0f - (float)std::sqrt(dsq) * 8.0f;
     doffs = clampf2(doffs, -100.0f, 80.0f);
 
     for (int xo = -12; xo <= 12; xo++) {
@@ -180,20 +182,26 @@ inline void put(uint8_t* out, int baseWX, int baseWZ, int x, int y, int z, uint8
 // 随机数消耗顺序与原版递归版一致。
 constexpr int CHORUS_MAX_SPREAD = 8;  // 原版 placed_feature/chorus_plant 传的 8
 
+// 读 out 的格子：超出本区块或超出世界高度都算"非空"。
+// y 也必须校验——紫颂递归最深能顶到 y≈150，而 CHUNK_VOL 只覆盖到 127，
+// 不校验就是越界读 Chunk 之后的堆内存（写有 put() 兜底、读没有）。
+inline bool chorusCellEmpty(const uint8_t* out, int baseWX, int baseWZ, int x, int y, int z) {
+    int lx = x - baseWX, lz = z - baseWZ;
+    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return false;
+    if (y < 0 || y >= WORLD_HEIGHT) return false;
+    return out[chunkIndex(lx, y, lz)] == B_AIR;
+}
+
 bool chorusNeighborsEmpty(const uint8_t* out, int baseWX, int baseWZ, int x, int y, int z, int ignore) {
     for (int i = 0; i < 4; i++) {
         if (i == ignore) continue;
-        int lx = x + kDir4[i][0] - baseWX, lz = z + kDir4[i][1] - baseWZ;
-        if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return false;
-        if (out[chunkIndex(lx, y, lz)] != B_AIR) return false;
+        if (!chorusCellEmpty(out, baseWX, baseWZ, x + kDir4[i][0], y, z + kDir4[i][1])) return false;
     }
     return true;
 }
 
 bool chorusEmpty(const uint8_t* out, int baseWX, int baseWZ, int x, int y, int z) {
-    int lx = x - baseWX, lz = z - baseWZ;
-    if (lx < 0 || lx >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) return false;
-    return out[chunkIndex(lx, y, lz)] == B_AIR;
+    return chorusCellEmpty(out, baseWX, baseWZ, x, y, z);
 }
 
 void growChorus(uint8_t* out, int baseWX, int baseWZ, int x, int y, int z, McCnRandom& rnd) {
@@ -218,7 +226,10 @@ void growChorus(uint8_t* out, int baseWX, int baseWZ, int x, int y, int z, McCnR
         if (blocked) continue;
 
         bool placedStem = false;
-        if (cur.depth < 4) {
+        // depth<4 是原版的递归上限，但每层 height 2..5 会累加到 y≈150，
+        // 超过 WORLD_HEIGHT 的层 put() 会静默丢弃、chorusCellEmpty 又判非空，
+        // 表现为"长到顶就停"。补一道 y 上限让边界确定，不靠上面的巧合。
+        if (cur.depth < 4 && cur.y + 2 < WORLD_HEIGHT) {
             int stems = rnd.nextInt(4);
             if (cur.depth == 0) stems++;
             for (int i = 0; i < stems; i++) {
@@ -379,7 +390,9 @@ void generateEnd(uint32_t seed, int cx, int cz, uint8_t* out) {
     // 采样格点：水平与垂直都每 4 格一个点（end.json 的 size_horizontal=2、
     // size_vertical=1，对应 8×8×4 方块一格；NoiseInterpolator 对每个方块插值，
     // 这里按 4 格步长直接采样，结果等价且省内存）。
-    constexpr int SN = 11;   // x/z 采样点，步长 4 格；三线性插值只用到下标 1..5，见下面插值处
+    // x/z 采样点，步长 4 格。三线性插值只用到下标 1..5（si=cx0+1，cx0=lx>>2∈0..3），
+    // 所以 6 个点（0..5）就够；开成 11 会白算 4 倍的 islandDensity（那是全场最贵的函数）。
+    constexpr int SN = 6;
     constexpr int SNY = 34;  // y 采样点 0..33 → y = 0..128
     double samples[SN][SNY][SN];
 

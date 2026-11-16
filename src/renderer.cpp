@@ -14,6 +14,14 @@
 #include <tuple>
 #include <vector>
 
+// push constant 的 C++ 镜像。着色器里声明的是 vec4（16 字节），直接传 &Vec3
+// 会让驱动多读 4 字节越界（ASan 报 stack-buffer-overflow）；着色器只用 xyz，
+// 所以补一个 pad 对齐到 16 字节即可，画面不变。
+struct PushOrigin {
+    Vec3 origin;
+    float pad = 0.0f;
+};
+
 // 地形 UBO 的 C++ 镜像：布局必须与 shaders/terrain.vert 里的 Ubo 完全一致
 // （每个块 16 字节对齐，tileRect 放最后）。
 struct TerrainUbo {
@@ -349,8 +357,11 @@ void Renderer::createAtlasTexture(VkCtx& ctx) {
     sm.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     // 各向异性过滤：大片平面斜着看时，单纯的 mip 只能在两个方向里取一个，
     // 另一方向会留下条纹状走样（下界的基岩天花板最明显）。
-    sm.anisotropyEnable = VK_TRUE;
-    sm.maxAnisotropy = 16.0f;
+    VkPhysicalDeviceFeatures devFeatures = {};
+    vkGetPhysicalDeviceFeatures(ctx.phys, &devFeatures);
+    sm.anisotropyEnable = devFeatures.samplerAnisotropy ? VK_TRUE : VK_FALSE;
+    sm.maxAnisotropy = std::min(16.0f, ctx.props.limits.maxSamplerAnisotropy);
+    if (sm.maxAnisotropy < 1.0f) sm.anisotropyEnable = VK_FALSE;
     sm.minLod = 0.0f;
 
     // 再往下就会把邻格颜色混进来，所以 LOD 封顶。
@@ -548,10 +559,19 @@ void Renderer::uploadPart(VkCtx& ctx, Chunk& c, bool opaque,
     }
     if (!reused) {
         if (!vkutil::createBuffer(ctx, needed, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, nb))
+                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, nb)) {
+            // 旧缓冲已经进 retired_ 会被回收复用，这里必须把句柄清干净，
+            // 否则本区块会拿着别人的缓冲画别的区块的几何。
+            buf = 0; mem = 0; alloc = 0; count = 0; vertBytes = 0;
+            if (opaque) c.opaqueMap = nullptr; else c.waterMap = nullptr;
             return;
+        }
         // 用 VK_WHOLE_SIZE 映射一次，缓冲销毁前不再解映射。
-        if (vkMapMemory(ctx.device, nb.m, 0, VK_WHOLE_SIZE, 0, &ptr) != VK_SUCCESS) return;
+        if (vkMapMemory(ctx.device, nb.m, 0, VK_WHOLE_SIZE, 0, &ptr) != VK_SUCCESS) {
+            buf = 0; mem = 0; alloc = 0; count = 0; vertBytes = 0;
+            if (opaque) c.opaqueMap = nullptr; else c.waterMap = nullptr;
+            return;
+        }
     }
     size_t vb = verts.size() * sizeof(TerrainVertex);
     memcpy(ptr, verts.data(), vb);
@@ -741,6 +761,8 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
             br.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             br.subresourceRange.levelCount = 1;
             br.subresourceRange.layerCount = 1;
+            br.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            br.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
             vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                                  0, 0, nullptr, 0, nullptr, 1, &br);
             VkBufferImageCopy bic = {};
@@ -751,6 +773,8 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
                                    shotBuf_, 1, &bic);
             br.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
             br.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            br.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            br.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
             vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
                                  0, 0, nullptr, 0, nullptr, 1, &br);
             shotTaken_ = true;
@@ -854,7 +878,8 @@ void Renderer::drawEntities(VkCtx& ctx, const Camera& cam) {
     // 逐实体设置 push constant（顶点存的是相对实体的局部坐标）
     for (const auto& d : entityDraws_) {
         if (!d.count) continue;
-        vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &d.origin);
+        PushOrigin pc{d.origin, 0.0f};
+        vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &pc);
         vkCmdDraw(cb, d.count, 1, d.first, 0);
     }
 }
@@ -1019,8 +1044,8 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
         Chunk& c = *v.c;
         if (!c.opaqueBuf || !c.opaqueCount) continue;
         draws++;
-        Vec3 origin((float)(v.cx * CHUNK_SIZE), 0, (float)(v.cz * CHUNK_SIZE));
-        vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &origin);
+        PushOrigin pc{Vec3((float)(v.cx * CHUNK_SIZE), 0, (float)(v.cz * CHUNK_SIZE)), 0.0f};
+        vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &pc);
         VkBuffer vb = (VkBuffer)(uintptr_t)c.opaqueBuf;
         VkDeviceSize off = 0;
         vkCmdBindVertexBuffers(cb, 0, 1, &vb, &off);
@@ -1036,8 +1061,8 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
     for (auto& v : visible) {
         Chunk& c = *v.c;
         if (!c.waterBuf || !c.waterCount) continue;
-        Vec3 origin((float)(v.cx * CHUNK_SIZE), 0, (float)(v.cz * CHUNK_SIZE));
-        vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &origin);
+        PushOrigin pc{Vec3((float)(v.cx * CHUNK_SIZE), 0, (float)(v.cz * CHUNK_SIZE)), 0.0f};
+        vkCmdPushConstants(cb, terrainLayout_, VK_SHADER_STAGE_VERTEX_BIT, 0, 16, &pc);
         VkBuffer vb = (VkBuffer)(uintptr_t)c.waterBuf;
         VkDeviceSize off = 0;
         vkCmdBindVertexBuffers(cb, 0, 1, &vb, &off);
@@ -1050,6 +1075,7 @@ void Renderer::drawChunks(VkCtx& ctx, const Camera& cam) {
 
 // 叠加 UI
 void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
+    if (!world_) return;
     // 方块高亮：把目标方块的棱边投影到屏幕，用 UI 管线画细四边形。
     Vec3 fwd = cam.forward();
     RayHit hit = raycastWorld(*world_, cam.pos, fwd, 6.0f);
@@ -1249,14 +1275,17 @@ void Renderer::drawUIOverlay(VkCtx& ctx, const Camera& cam, Input& in) {
     }
     prevMouse0_ = in.mouse[0];
 
-    memcpy(uiMap_[curFrame_], quads.data(), quads.size() * sizeof(UIVertex));
+    // UI 顶点缓冲固定 1 MB，超了就截断，避免 memcpy 越界写显存。
+    static constexpr size_t kMaxUIVerts = (1u << 20) / sizeof(UIVertex);
+    const size_t uiCount = std::min(quads.size(), kMaxUIVerts);
+    if (uiCount) memcpy(uiMap_[curFrame_], quads.data(), uiCount * sizeof(UIVertex));
     VkCommandBuffer cb = ctx.cmds[curFrame_];
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, uiPipe_);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, uiLayout_, 0, 1, &uiSet_[curFrame_], 0, nullptr);
     VkBuffer ub = uiBuf_[curFrame_].b;
     VkDeviceSize off = 0;
     vkCmdBindVertexBuffers(cb, 0, 1, &ub, &off);
-    vkCmdDraw(cb, (uint32_t)quads.size(), 1, 0, 0);
+    vkCmdDraw(cb, (uint32_t)uiCount, 1, 0, 0);
 }
 
 void Renderer::shutdown(VkCtx& ctx) {
@@ -1305,5 +1334,14 @@ void Renderer::shutdown(VkCtx& ctx) {
     if (atlasNearSampler_) vkDestroySampler(ctx.device, atlasNearSampler_, nullptr);
     if (atlasImage_) vkDestroyImage(ctx.device, atlasImage_, nullptr);
     if (atlasMem_) vkFreeMemory(ctx.device, atlasMem_, nullptr);
+
+    shotBuf_ = VK_NULL_HANDLE;  shotMem_ = VK_NULL_HANDLE;
+    pool_ = VK_NULL_HANDLE;
+    terrainDSL_ = uiDSL_ = skyDSL_ = VK_NULL_HANDLE;
+    terrainPipe_ = waterPipe_ = skyPipe_ = uiPipe_ = entityPipe_ = VK_NULL_HANDLE;
+    terrainLayout_ = skyLayout_ = uiLayout_ = VK_NULL_HANDLE;
+    atlasView_ = VK_NULL_HANDLE;
+    atlasSampler_ = atlasNearSampler_ = VK_NULL_HANDLE;
+    atlasImage_ = VK_NULL_HANDLE;  atlasMem_ = VK_NULL_HANDLE;
 }
 

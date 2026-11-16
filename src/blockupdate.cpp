@@ -100,14 +100,33 @@ void receivePP(World& w, int x, int y, int z) {
 void propagate(World& w, uint8_t kind, int x, int y, int z) {
     std::vector<Frame> stack;
     std::vector<Frame> pending;
+    // 同一坐标只保留一帧：6 个邻居都会往同一格排更新，不去重队列会涨爆。
+    // key 用 x/z 各 16 位 + y 8 位，坐标超范围时退化为不去重（不会漏更新）。
+    auto frameKey = [](int fx, int fy, int fz) -> uint64_t {
+        if (fx < -32768 || fx > 32767 || fz < -32768 || fz > 32767) return 0;
+        return ((uint64_t)(uint32_t)(fx + 32768) << 40) |
+               ((uint64_t)(uint32_t)(fz + 32768) << 24) |
+               (uint64_t)(uint32_t)(fy + 128);
+    };
+    std::vector<uint64_t> seen;
     int budget = kMaxUpdates;
     auto push = [&](const Frame& f) {
-        if (budget-- > 0) pending.push_back(f);
+        if (budget <= 0) return;
+        uint64_t k = frameKey(f.x, f.y, f.z);
+        if (k != 0) {
+            for (uint64_t s : seen) if (s == k) return;   // 已在队列里
+            seen.push_back(k);
+        }
+        budget--;
+        pending.push_back(f);
     };
-    push({x, y, z, kind, 0});
+    // 起点直接入队，不走 push 的去重（它会把起点自己挡掉）。
+    budget--;
+    pending.push_back({x, y, z, kind, 0});
+    seen.push_back(frameKey(x, y, z));
     while (!stack.empty() || !pending.empty()) {
         if (!pending.empty()) {
-            // 后产生的先压栈 → 深度优先。
+            // pending 是"本帧新产生的更新"，倒序压栈让最后产生的先执行 → 深度优先。
             for (size_t i = pending.size(); i-- > 0;) stack.push_back(pending[i]);
             pending.clear();
         }
@@ -181,11 +200,20 @@ void onBlockChanged(World& w, int x, int y, int z, uint32_t flags) {
 }
 
 void scheduleTick(World& w, int x, int y, int z, int delay) {
+    auto& q = w.blockTicks();
+    // 六个邻居都可能给同一格排计划刻，不去重会让同一格在一刻内被处理多次。
+    for (auto& e : q) {
+        if (e.x == x && e.y == y && e.z == z) {
+            int d = delay > 0 ? delay : 1;
+            if (d < e.delay) e.delay = d;   // 取更早到期
+            return;
+        }
+    }
     TickEntry t;
     t.x = x; t.y = y; t.z = z;
     t.delay = delay > 0 ? delay : 1;
     t.order = w.nextTickOrder();
-    w.blockTicks().push_back(t);
+    q.push_back(t);
 }
 
 void runScheduledTicks(World& w) {

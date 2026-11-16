@@ -70,17 +70,21 @@ private:
     std::vector<Node*> heap_;
 };
 
-// Path（找到的路径；节点指针归 NodeEvaluator 的节点池所有）
+// Path（找到的路径）。
+// 节点按值保存：NodeEvaluator::done() 会清空节点池，若只存指针，
+// 路径会在下一次寻路时被原地覆写（deque 的 clear 保留内存块），
+// 且销毁后读本身就是 UB。
 class Path {
 public:
-    std::vector<Node*> nodes;
+    std::vector<Node> nodes;
     int next = 0;
-    Node* target = nullptr;      // 路径终点（供 navigation 记录 targetPos）
+    Node target{};              // 路径终点（供 navigation 记录 targetPos）
+    bool hasTarget = false;
     bool reached = false;
 
     bool isDone() const { return next >= (int)nodes.size(); }
     void advance() { next++; }
-    Node* getNextNode() const { return nodes[next]; }
+    const Node* getNextNode() const { return &nodes[next]; }
     // 原版 getEntityPosAtNode：节点中心向 bbWidth 偏移半格。
     void getNextEntityPos(float bbWidth, float& x, float& y, float& z) const;
     void getNextNodePos(int& x, int& y, int& z) const;

@@ -4,6 +4,64 @@
 #include "platform.hpp"
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+
+namespace fs = std::filesystem;
+
+// 路径可能含中文（世界名），按 UTF-8 转 path，和 save.cpp 里的 u8() 一致。
+static fs::path u8path(const std::string& s) {
+    static_assert(sizeof(char) == sizeof(char8_t), "char8_t must be same size as char");
+    return fs::path(reinterpret_cast<const char8_t*>(s.c_str()));
+}
+
+// 一个改动区块一个文件：d<维度>_<cx>_<cz>.bin，内容就是 CHUNK_VOL 个字节的方块 id。
+// 不用 region 文件是因为这里没有跨进程/服务端需求，逐文件最好排查、也不会互相踩。
+std::string World::chunkEditsFile(const std::string& dir, DimensionId dim, int cx, int cz) {
+    char name[96];
+    std::snprintf(name, sizeof(name), "d%u_%d_%d.bin", (unsigned)dim, cx, cz);
+    return platform::join(dir, name);
+}
+
+void World::flushChunkEdits() {
+    if (editsDir_.empty()) return;
+    for (uint32_t d = 0; d < (uint32_t)DIM_COUNT; d++) {
+        auto& ds = dims_[d];
+        std::lock_guard<std::mutex> lk(mapLock_);
+        for (auto& kv : ds.chunks) {
+            auto& c = kv.second;
+            if (c->state.load() >= 1 && c->edited.load()) {
+                saveChunkEdits((DimensionId)d, (int)(int32_t)(kv.first >> 32),
+                               (int)(int32_t)kv.first, *c);
+                c->edited.store(false);   // 原版 tryMarkSaved：写完就不再是脏块
+            }
+        }
+    }
+}
+
+bool World::loadChunkEdits(DimensionId dim, int cx, int cz, Chunk& c) {
+    if (editsDir_.empty()) return false;
+    std::ifstream f(chunkEditsFile(editsDir_, dim, cx, cz), std::ios::binary);
+    if (!f) return false;
+    f.read((char*)c.blocks.data(), CHUNK_VOL);
+    if (f.gcount() != (std::streamsize)CHUNK_VOL) return false;
+    c.edited.store(false);   // 磁盘已是最新版本
+    return true;
+}
+
+void World::saveChunkEdits(DimensionId dim, int cx, int cz, const Chunk& c) {
+    if (editsDir_.empty()) return;
+    try {
+        fs::create_directories(u8path(editsDir_));
+        std::ofstream f(u8path(chunkEditsFile(editsDir_, dim, cx, cz)),
+                        std::ios::binary | std::ios::trunc);
+        if (!f) return;
+        f.write((const char*)c.blocks.data(), CHUNK_VOL);
+    } catch (...) {
+        // 落盘失败不该让游戏崩；下次 setBlock 还会把它标脏，退出前的 saveWorld 也会兜底。
+    }
+}
 
 World::World(uint32_t seed_) : seed(seed_) {
     queue_ = std::priority_queue<WorldTask, std::vector<WorldTask>,
@@ -85,6 +143,7 @@ bool World::setBlockInDim(DimensionId dim, int x, int y, int z, uint8_t id, uint
         if (c->blocks[chunkIndex(lx, y, lz)] == id) return false;
         c->blocks[chunkIndex(lx, y, lz)] = id;
     }
+    c->edited.store(true);
     auto& ds = dims_[dim];
     ds.queuedMesh.erase(chunkKey(cx, cz));
     ds.meshing.erase(chunkKey(cx, cz));
@@ -147,6 +206,7 @@ bool World::setBlock(int x, int y, int z, uint8_t id, uint32_t flags) {
         if (c->blocks[chunkIndex(lx, y, lz)] == id) return false;
         c->blocks[chunkIndex(lx, y, lz)] = id;
     }
+    c->edited.store(true);
     // 所在区块与四个边邻都要重建：边界改动会影响邻居的剔除与 AO，
     // 漏建会残留旧面，造成 z-fighting（闪烁、透缝）。
     markDirty(cx, cz);
@@ -175,6 +235,8 @@ void World::loadChunkFromDiskInDim(DimensionId dim, int cx, int cz, std::istream
     f.read((char*)c->blocks.data(), CHUNK_VOL);
     c->state.store(1);
     c->dirty.store(true);
+    // 磁盘上的方块数据可能含玩家改动，重新生成不会还原，标脏以保证卸载时落盘。
+    c->edited.store(true);
 }
 
 void World::loadChunkFromDisk(int cx, int cz, std::istream& f) {
@@ -219,6 +281,7 @@ void World::forceGenerateChunk(int cx, int cz) {
     }
     if (c->state.load() >= 1) return;
     gen::generateForDim(currentDim_, seed, cx, cz, c->blocks.data());
+    loadChunkEdits(currentDim_, cx, cz, *c);
     c->state.store(1);
     c->dirty.store(true);
     scheduleMesh(currentDim_, cx, cz);
@@ -293,6 +356,8 @@ bool World::popTask(WorldTask& out) {
 void World::generateChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chunk>& c) {
     auto& d = dims_[dim];
     gen::generateForDim(dim, seed, cx, cz, c->blocks.data());
+    // 玩家之前改过这一块并已随卸载写盘：重新生成会抹掉改动，必须读回。
+    loadChunkEdits(dim, cx, cz, *c);
     c->state.store(1);
     scheduleMesh(dim, cx, cz);
     scheduleMesh(dim, cx + 1, cz);
@@ -486,8 +551,11 @@ Entity* World::raycastEntity(Vec3 origin, Vec3 dir, float maxDist, Vec3* hit) {
 
 void World::update(float px, float pz, int renderDist) {
     auto& dim = dc();
-    dim.lastPx = px;
-    dim.lastPz = pz;
+    {
+        std::lock_guard<std::mutex> lk(queueLock_);
+        dim.lastPx = px;
+        dim.lastPz = pz;
+    }
     int ccx = blockToChunkCoord((int)std::floor(px));
     int ccz = blockToChunkCoord((int)std::floor(pz));
 
@@ -546,6 +614,7 @@ void World::update(float px, float pz, int renderDist) {
     if (++dim.unloadCounter >= 15) {
     dim.unloadCounter = 0;
     std::vector<uint64_t> toErase;
+    std::vector<std::shared_ptr<Chunk>> toDestroy;
     {
         std::lock_guard<std::mutex> lk(mapLock_);
         for (auto& kv : dim.chunks) {
@@ -566,10 +635,27 @@ void World::update(float px, float pz, int renderDist) {
         for (uint64_t key : toErase) {
             auto it = dim.chunks.find(key);
             if (it != dim.chunks.end()) {
-                if (onDestroyChunk) onDestroyChunk(*it->second);
+                // 改动过的区块先写盘再丢弃内存：重新生成时会读回，改动不丢，
+                // 内存也不会随探索距离增长（原版 ChunkMap.scheduleUnload 同理）。
+                if (it->second->edited.load())
+                    saveChunkEdits(currentDim_, (int)(int32_t)(key >> 32),
+                                   (int)(int32_t)key, *it->second);
+                toDestroy.push_back(it->second);
                 dim.chunks.erase(it);
+                // 卸载后必须让 cache 里对应的槽失效。cache 命中时 chunkAt 不查 map，
+                // 不清就会一直返回已卸载的旧 Chunk：setBlock 写进幽灵区块、改动静默
+                // 丢失，走回来又会被新生成的区块覆盖（表现为方块时有时无）。
+                // 只清 shared_ptr 即可，chunkAt 会检查 second 非空才命中。
+                for (auto& slot : dim.cache) {
+                    if (slot.first == key) slot.second.reset();
+                }
             }
         }
+    }
+    // onDestroyChunk 会触发 Vulkan 资源释放，别在持 mapLock_ 时调：
+    // 渲染侧可能反过来要拿这把锁，形成死锁。
+    for (auto& c : toDestroy) {
+        if (onDestroyChunk) onDestroyChunk(*c);
     }
     } // 卸载限流
 }

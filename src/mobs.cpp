@@ -164,7 +164,9 @@ void Mob::tick(World& w, float dt) {
                                    (int)std::floor(pos.z));
     if (headBlock == B_WATER || headBlock == B_LAVA) {
         if (airSupply > 0) airSupply--;
-        else if (((int)age * 20) % 20 == 0) hurt(headBlock == B_LAVA ? 4.0f : 2.0f);
+        // 原版每 20 刻（1 秒）掉一次血。age 是秒，取整数秒部分即可；
+        // 之前写成 (int)age*20 % 20，那是 20 的倍数，恒为真 → 每刻都掉血秒杀。
+        else if ((int)age != lastDrownAge) { lastDrownAge = (int)age; hurt(headBlock == B_LAVA ? 4.0f : 2.0f); }
     } else if (airSupply < 300) {
         airSupply += 4;
     }
@@ -261,9 +263,11 @@ void Mob::travel(World& w) {
     }
     if (noJumpDelay > 0) noJumpDelay--;
 
-    // moveRelative：getFrictionInfluencedSpeed —— 地面 = speed，液体/空中 = 0.02
+    // moveRelative：getFrictionInfluencedSpeed —— 地面 = speed，液体/空中 = 0.02。
     // 注意原版 Mob.setSpeed 会把 zza 同步为 speed，所以 input 长度 ≤ 1，
-    // 不会触发归一化 → 加速度 = speed²（这就是原版生物的实际加速度）。
+    // 不会触发归一化 → 地面加速度 = speed²（这就是原版生物的实际加速度）。
+    // 空中/液体里 input 不再被 speed 放大，只乘 0.02，所以腾空与游泳时几乎无法
+    // 主动变向（原版行为）；之前漏乘这一项，生物在空中能有 50 倍的方向控制。
     float spd = (onGround && !inFluid) ? speed : 0.02f;
     float len2 = xxa * xxa + zza * zza;
     if (len2 > 1e-7f) {
@@ -272,6 +276,8 @@ void Mob::travel(World& w) {
             float inv = 1.0f / std::sqrt(len2);
             ix *= inv; iz *= inv;
         }
+        ix *= spd;
+        iz *= spd;
         float sy = std::sin(yaw), cy = std::cos(yaw);
         vel.x += ix * cy + iz * sy;
         vel.z += iz * cy - ix * sy;

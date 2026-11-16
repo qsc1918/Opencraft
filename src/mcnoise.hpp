@@ -68,7 +68,10 @@ inline double mcClampedMap(double v, double fa, double fb, double ta, double tb)
 }
 // 原版 Mth.getSeed：结构定位种子。
 inline int64_t mcPosSeed(int x, int y, int z) {
-    int64_t l = (int64_t)(x * 3129871) ^ ((int64_t)z * 116129781LL) ^ (int64_t)y;
+    // 原版 Mth.getSeed 这里先做 int 乘法（Java 保证 32 位回绕）再转 long。
+    // 用 uint32_t 复现回绕：直接写 int64 乘法会消除溢出、改变结构/噪声定位结果。
+    int32_t xmul = (int32_t)((uint32_t)x * 3129871u);
+    int64_t l = (int64_t)xmul ^ ((int64_t)z * 116129781LL) ^ (int64_t)y;
     l = l * l * 42317861LL + l * 11LL;
     return l >> 16;
 }

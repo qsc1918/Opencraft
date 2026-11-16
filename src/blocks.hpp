@@ -285,6 +285,23 @@ inline bool blockIsSolid(uint8_t id) {
     return id < B_COUNT ? BLOCK_DEFS[id].solid : true;
 }
 
+// 方块在格子内的形状，单位 1/16 格。默认是整格。
+// 下界传送门照原版 NetherPortalBlock：Shapes.rotateHorizontalAxis(
+// Block.column(4.0, 16.0, 0.0, 16.0))，即 4/16 厚、居中的薄板。
+// axis=0 表示门宽沿 X（板在 Z 方向薄，z∈[6,10]）；axis=1 表示门宽沿 Z（x∈[6,10]）。
+// 渲染、准星、碰撞必须共用这一份，否则会出现"看得见却挖不到"或反过来。
+struct BlockBox16 {
+    int x0 = 0, y0 = 0, z0 = 0, x1 = 16, y1 = 16, z1 = 16;
+};
+inline BlockBox16 blockShape16(uint8_t id, int portalAxis) {
+    BlockBox16 b;
+    if (id == B_NETHER_PORTAL) {
+        if (portalAxis == 0) { b.z0 = 6; b.z1 = 10; }
+        else { b.x0 = 6; b.x1 = 10; }
+    }
+    return b;
+}
+
 inline bool blockIsRenderable(uint8_t id) {
     return id != B_AIR;
 }

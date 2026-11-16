@@ -142,7 +142,7 @@ bool Window::pump() {
     if (!g_display) return false;
     // 捕获时把指针锁回中心：warp 本身会产生一个 Motion 事件，用 g_warpPending 忽略掉。
     if (capture_ && !g_warpPending) {
-            XWindowAttributes attr;
+        XWindowAttributes attr;
         if (XGetWindowAttributes(g_display, g_win, &attr)) {
             int cx = attr.width / 2, cy = attr.height / 2;
             XWarpPointer(g_display, None, g_win, 0, 0, 0, 0, cx, cy);
@@ -219,31 +219,26 @@ void Window::pollMouse(float& dx, float& dy) {
     XWindowAttributes attr;
     if (!XGetWindowAttributes(g_display, g_win, &attr)) return;
     int cx = attr.width / 2, cy = attr.height / 2;
-    int px = attr.x, py = attr.y;
-    XWindow child;
-    int rx = 0, ry = 0;
-    if (XTranslateCoordinates(g_display, g_win, RootWindow(g_display, g_screen), 0, 0, &rx, &ry, &child)) {
-        // 屏幕坐标 → 窗口内坐标。
-        px = rx - attr.x;
-        py = ry - attr.y;
-    }
+    // lastMX_/lastMY_ 由 pump() 维护成窗口内坐标：捕获时每帧先把指针 warp 回中心，
+    //  MotionNotify 再把真实位置写进来。所以位移 = 最后位置 - 中心。
+    // 不能用 XTranslateCoordinates 反推指针位置：它给的是窗口原点在 root 上的坐标，
+    //  减 attr.x 恒为 0，dx 会变成常数 -cx（视角永远朝一个方向转）。
     if (haveMouse_) {
-        dx = (float)(px - cx);
-        dy = (float)(py - cy);
+        dx = (float)(lastMX_ - cx);
+        dy = (float)(lastMY_ - cy);
     }
     haveMouse_ = true;
 }
 
 void Window::cursorPos(float& x, float& y) {
     x = y = 0;
-    if (!g_display) return;
-    XWindow child;
-    int rx = 0, ry = 0;
-    if (!XTranslateCoordinates(g_display, g_win, RootWindow(g_display, g_screen), 0, 0, &rx, &ry, &child))
-        return;
-    XWindowAttributes attr;
-    if (XGetWindowAttributes(g_display, g_win, &attr)) {
-        x = (float)(rx - attr.x);
-        y = (float)(ry - attr.y);
-    }
+    if (!g_display || !g_win) return;
+    // XQueryPointer 直接给相对于本窗口的坐标，比用窗口原点反推可靠。
+    XWindow root = RootWindow(g_display, g_screen);
+    XWindow child = 0;
+    int root_x = 0, root_y = 0, win_x = 0, win_y = 0;
+    unsigned int mask = 0;
+    if (!XQueryPointer(g_display, g_win, &root, &child, &root_x, &root_y, &win_x, &win_y, &mask)) return;
+    x = (float)win_x;
+    y = (float)win_y;
 }

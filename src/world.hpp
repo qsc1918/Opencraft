@@ -18,6 +18,7 @@
 #include <mutex>
 #include <queue>
 #include <shared_mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -56,6 +57,9 @@ struct Chunk {
     std::array<uint8_t, CHUNK_VOL> blocks{};
     std::atomic<int> state{0};        // 0=空 1=已生成 2=已构网格
     std::atomic<bool> dirty{false};
+    // 脏标记：内存里有尚未落盘的方块改动（原版 LevelChunk.markUnsaved）。
+    // 卸载或保存时写进 chunks/ 后清脏；区块照常从内存释放，不常驻。
+    std::atomic<bool> edited{false};
     std::atomic<bool> needsUpload{false};
     std::mutex meshLock;
     ChunkMeshData mesh;
@@ -138,6 +142,15 @@ public:
     void startWorkers(int n);
     void stopWorkers();
 
+    // 改动区块的落盘目录（saves/<世界>/chunks）。设了之后，玩家改过的区块
+    // 卸载时写盘、重新生成时读回，内存不再随探索距离增长。
+    void setEditsDir(const std::string& dir) { editsDir_ = dir; }
+    const std::string& editsDir() const { return editsDir_; }
+    static std::string chunkEditsFile(const std::string& dir, DimensionId dim, int cx, int cz);
+
+    // 把仍在内存里的改动区块立刻写盘（存档/退出时调用，避免只等卸载才写）。
+    void flushChunkEdits();
+
     // 维度切换
     void setDimension(DimensionId dim) { currentDim_ = dim; }
     DimensionId getDimension() const { return currentDim_; }
@@ -200,6 +213,10 @@ public:
     std::function<void(Chunk&)> onDestroyChunk;
 
 private:
+    // 改动区块读写；dir 为空时什么都不做。
+    bool loadChunkEdits(DimensionId dim, int cx, int cz, Chunk& c);
+    void saveChunkEdits(DimensionId dim, int cx, int cz, const Chunk& c);
+
     void workerLoop();
     void generateChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chunk>& c);
     void meshChunk(DimensionId dim, int cx, int cz, const std::shared_ptr<Chunk>& c);
@@ -217,6 +234,7 @@ private:
     mutable std::mutex mapLock_;
     std::array<DimStorage, DIM_COUNT> dims_;
     DimensionId currentDim_ = DIM_OVERWORLD;
+    std::string editsDir_;
     mutable std::shared_mutex blocksMutex_;
 
     std::priority_queue<WorldTask, std::vector<WorldTask>, std::function<bool(const WorldTask&, const WorldTask&)>> queue_;

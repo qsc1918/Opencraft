@@ -6,6 +6,9 @@
 #include <cstdio>
 #include <cstring>
 
+// GPU 的 2D 图像边长上限的保守值；图集超了就直接失败，别先分配几十 MB。
+static constexpr int kAtlasMaxDim = 16384;
+
 static const char* kTileFiles[T_COUNT] = {
     "grass_block_top.png", "grass_block_side.png", "dirt.png",          "stone.png",
     "bedrock.png",         "cobblestone.png",      "oak_planks.png",    "oak_log.png",
@@ -579,6 +582,13 @@ Atlas buildAtlas(const std::string& dir) {
     totalH = y + rowH;
     a.width = shelfW;
     a.height = totalH > 0 ? totalH : common;
+    // 高分辨率材质包会把图集堆到几万像素高，超过 GPU 的 maxImageDimension2D
+    // 创建图像会失败，而且这里会先分配几十 MB 的 RGBA 缓冲。提前拦住。
+    if (a.width > kAtlasMaxDim || a.height > kAtlasMaxDim) {
+        fprintf(stderr, "[atlas] 图集尺寸 %dx%d 超过上限 %d，请换用低分辨率贴图\n",
+                a.width, a.height, kAtlasMaxDim);
+        return Atlas{};   // built=false，renderer::init 会报错退出
+    }
     a.rgba.assign((size_t)a.width * a.height * 4, 255);
 
     // 3. 写入像素：按目标尺寸缩放 + 四周边缘扩展（clamp 采样）

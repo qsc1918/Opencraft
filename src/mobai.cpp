@@ -131,8 +131,10 @@ void LookControl::tick(Mob& mob) {
         cooldown_--;
         double xd = wx_ - mob.pos.x, zd = wz_ - mob.pos.z;
         if (std::abs(zd) > 1e-5 || std::abs(xd) > 1e-5) {
-            // getYRotD：目标水平角。
-            float yRotD = std::atan2((float)zd, (float)xd);
+            // getYRotD：目标水平角。本引擎约定 yaw=atan2(dx,dz)，0=+Z，
+            // 与 MoveControl、Mob::tick、renderer 的 headYaw 换算一致。
+            // 曾写成 atan2(zd,xd)，与约定相差 π/2−atan2(...)，正对目标时偏 90°。
+            float yRotD = std::atan2((float)xd, (float)zd);
             mob.yHeadRot = rotateIfNecessary(mob.yHeadRot, yRotD, yMaxRotSpeed_);
         }
         double yd = wy_ - (mob.pos.y + mob.type->height * 0.9f);

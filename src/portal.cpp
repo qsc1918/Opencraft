@@ -165,9 +165,9 @@ bool tryPlaceEyeOfEnder(World& w, int fx, int fy, int fz) {
 
     // 方环可能跨 2×2 区块；先把 5×5 范围内涉及的区块生成出来，
     // 否则 setBlock 对未生成的区块直接失败，门只会填上一部分（原版没这个问题）。
-    for (int rx = -4; rx <= 4; rx++)
-        for (int rz = -4; rz <= 4; rz++)
-            w.forceGenerateChunk(blockToChunkCoord(fx + rx), blockToChunkCoord(fz + rz));
+    for (int cx = blockToChunkCoord(fx - 4); cx <= blockToChunkCoord(fx + 4); cx++)
+        for (int cz = blockToChunkCoord(fz - 4); cz <= blockToChunkCoord(fz + 4); cz++)
+            w.forceGenerateChunk(cx, cz);
 
     // 变成有眼框架（保留原朝向）。原版插眼与生成末地传送门都不产生 NC 更新。
     w.setBlock(fx, fy, fz, frameId(blockFrameFacing(b), true), bu::U_NO_NC);
@@ -286,7 +286,10 @@ inline int motionBlockingHeight(const World& w, int x, int z) {
 inline Vec3 portalLandingPos(const World& w, int px, int py, int pz, int axis) {
     int wx = axis == 0 ? 1 : 0, wz = axis == 0 ? 0 : 1;
     int x0 = px, z0 = pz, y0 = py;
-    while (w.getBlock(x0 - wx, py, z0 - wz) == B_NETHER_PORTAL) { x0 -= wx; z0 -= wz; }
+    // 原版门最大 21 宽，防止异常地形让循环一直往左跑。
+    for (int guard = 0; guard < 21 && w.getBlock(x0 - wx, py, z0 - wz) == B_NETHER_PORTAL; guard++) {
+        x0 -= wx; z0 -= wz;
+    }
     while (y0 - 1 >= WORLD_MIN_Y && w.getBlock(x0, y0 - 1, z0) == B_NETHER_PORTAL) y0--;
     int width = 1;
     while (width < 21 && w.getBlock(x0 + wx * width, py, z0 + wz * width) == B_NETHER_PORTAL) width++;
@@ -322,8 +325,8 @@ bool findExistingNetherPortal(World& w, int tx, int ty, int tz, int radiusBlocks
                 for (int x = 0; x < CHUNK_SIZE; x++) {
                     if (blocks[chunkIndex(x, y, z)] != B_NETHER_PORTAL) continue;
                     int wx = minX + x, wz = minZ + z;
-                    int dx = wx - tx, dy = y - ty, dz = wz - tz;
-                    int d2 = dx * dx + dy * dy + dz * dz;
+                    int dx = wx - tx, dz = wz - tz;
+                    int d2 = dx * dx + dz * dz;
                     if (d2 < bestD2) { bestD2 = d2; bx = wx; by = y; bz = wz; }
                 }
     });

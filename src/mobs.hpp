@@ -23,6 +23,7 @@ struct Mob : Entity {
     float damage = 3.0f;         // 近战伤害
     float fallDistance = 0.0f;
     int   airSupply = 300;
+    int   lastDrownAge = -1;       // 上一次造成溺水伤害的整数秒，用于每秒只掉一次血
     float fuse = -1.0f;          // 苦力怕引信：<0 未点燃
     int   teleportTimer = 0;     // 末影人瞬移冷却
     int   angerTicks = 0;        // 末影人被注视后的愤怒时间

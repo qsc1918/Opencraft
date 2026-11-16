@@ -144,10 +144,9 @@ void generateColumn(uint32_t seed, int cx, int cz, uint8_t* out) {
             if (si.ocean) {
                 int floorY = height;
                 uint8_t mat = si.cold ? B_GRAVEL : B_SAND;
-                if (floorY >= SEA_LEVEL - 2) mat = si.cold ? B_GRAVEL : B_SAND;
+                // 顶层是海床材质，往下三层按冷/暖分别铺沙砾/沙子或泥土。
                 for (int y = floorY; y > floorY - 3 && y >= 5; y--)
-                    ref(out, lx, y, lz) = y == floorY ? mat : (si.cold && y == floorY ? mat : B_DIRT);
-                ref(out, lx, floorY, lz) = mat;
+                    ref(out, lx, y, lz) = (y == floorY || si.cold) ? mat : B_DIRT;
             } else {
                 uint8_t top, under;
                 if (si.desert) { top = B_SAND; under = B_SAND; }

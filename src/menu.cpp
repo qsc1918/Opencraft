@@ -64,7 +64,7 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
     makeDib(dirtRGBA_.data(), dirtW_, dirtH_, asBMP(dirtBmp_), asDC(dirtDC_), nullptr);
     makeDib(btnRGBA_.data(), btnW_, btnH_, asBMP(btnBmp_), asDC(btnDC_), nullptr);
     makeDib(btnHiRGBA_.data(), btnW_, btnH_, asBMP(btnHiBmp_), asDC(btnHiDC_), nullptr);
-    makeDib(fieldRGBA_.data(), btnW_, btnH_, asBMP(fieldBmp_), asDC(fieldDC_), nullptr);
+    makeDib(fieldRGBA_.data(), fieldW_, fieldH_, asBMP(fieldBmp_), asDC(fieldDC_), nullptr);
     makeDib(sliderRGBA_.data(), sliderW_, sliderH_, asBMP(sliderBmp_), asDC(sliderDC_), nullptr);
     makeDib(handleRGBA_.data(), handleW_, handleH_, asBMP(handleBmp_), asDC(handleDC_), nullptr);
     makeDib(handleHiRGBA_.data(), handleW_, handleH_, asBMP(handleHiBmp_), asDC(handleHiDC_), nullptr);
@@ -159,7 +159,7 @@ bool Menu::loadTextures(const std::string& assetDir) {
     // loadPNG 输出的就是自上而下 RGBA，与 DIB 一致，无需翻转。
     if (!load("gui/button.png", btnRGBA_, btnW_, btnH_)) { fprintf(stderr, "[menu] button.png load failed\n"); return false; }
     if (!load("gui/button_highlighted.png", btnHiRGBA_, btnW_, btnH_)) return false;
-    if (!load("gui/text_field.png", fieldRGBA_, btnW_, btnH_)) return false;
+    if (!load("gui/text_field.png", fieldRGBA_, fieldW_, fieldH_)) return false;
     if (!load("gui/slider.png", sliderRGBA_, sliderW_, sliderH_)) return false;
     if (!load("gui/slider_handle.png", handleRGBA_, handleW_, handleH_)) return false;
     if (!load("gui/slider_handle_highlighted.png", handleHiRGBA_, handleW_, handleH_)) return false;
@@ -190,6 +190,19 @@ void Menu::createMenuTexture(VkCtx& ctx) {
     sm.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sm.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     vkCreateSampler(ctx.device, &sm, nullptr, &sampler_);
+
+    // onResize 会销毁并重建 view_，descriptor set 里存的还是旧句柄，必须重绑。
+    if (set_ != VK_NULL_HANDLE) {
+        VkDescriptorImageInfo di = {sampler_, view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet wr = {};
+        wr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        wr.dstSet = set_;
+        wr.dstBinding = 0;
+        wr.descriptorCount = 1;
+        wr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        wr.pImageInfo = &di;
+        vkUpdateDescriptorSets(ctx.device, 1, &wr, 0, nullptr);
+    }
 }
 
 void Menu::destroyMenuTexture(VkCtx& ctx) {
@@ -353,7 +366,7 @@ void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float 
         SetTextAlign(dc, TA_LEFT);
         DrawTextW(dc, utf8ToWide("世界种子").c_str(), -1, &lr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         float fx = bx + 120, fy = 190, fw2 = bw - 120, fh2 = 22;
-        slice9(dc, asDC(fieldDC_), btnW_, btnH_, 3, fx, fy, fw2, fh2);
+        slice9(dc, asDC(fieldDC_), fieldW_, fieldH_, 3, fx, fy, fw2, fh2);
         RECT fr = {(int)(fx + 6), (int)fy, (int)(fx + fw2 - 6), (int)(fy + fh2)};
         SetTextColor(dc, RGB(255, 255, 255));
         DrawTextW(dc, utf8ToWide(data.seedText).c_str(), -1, &fr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -412,8 +425,21 @@ int Menu::hitTest(float cx, float cy) const {
 
 int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
                      float cx, float cy, bool mouseDown) {
-    ensureDIB(ctx.extent.width, ctx.extent.height);
+    const int wantW = ctx.extent.width, wantH = ctx.extent.height;
+    // 正常 resize 会走 main 的 onResize；这里兜住 extent 变但没通知的情况，
+    // 否则 staging 还是旧尺寸，下面的 memcpy 会越界写。
+    if (diw_ != wantW || dih_ != wantH) {
+        destroyMenuTexture(ctx);
+        ensureDIB(wantW, wantH);
+        createMenuTexture(ctx);
+    }
     renderToDIB(screen, data, cx, cy);
+
+    // 本帧要先等上一帧提交完，再重写共用的 staging；写在 memcpy 之后等于没等。
+    if (frameIdx_ > 0) {
+        uint32_t pslot = (uint32_t)((frameIdx_ - 1) % (uint64_t)VkCtx::MAX_FRAMES_IN_FLIGHT);
+        vkWaitForFences(ctx.device, 1, &ctx.frames[pslot].fence, VK_TRUE, UINT64_MAX);
+    }
 
     // 上传 DIB(BGRA) 到 staging(RGBA)：交换 R/B 通道
     {
@@ -434,12 +460,6 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
     uint32_t imageIndex;
     uint32_t slot = (uint32_t)(frameIdx_ % (uint64_t)VkCtx::MAX_FRAMES_IN_FLIGHT);
     VkCtx::Frame& f = ctx.frames[slot];
-    // 菜单只有一份 staging 缓冲，跨帧复用：重写前必须等上一帧提交完成，
-    // 否则在途帧会读到即将被覆盖的资源。
-    if (frameIdx_ > 0) {
-        uint32_t pslot = (uint32_t)((frameIdx_ - 1) % (uint64_t)VkCtx::MAX_FRAMES_IN_FLIGHT);
-        vkWaitForFences(ctx.device, 1, &ctx.frames[pslot].fence, VK_TRUE, UINT64_MAX);
-    }
     if (!ctx.acquireNext(f, imageIndex)) {
         ctx.recreateSwapchain(diw_, dih_);
         return MENU_NONE;

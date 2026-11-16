@@ -56,6 +56,8 @@ void showCursor(bool on);
 // Windows 侧额外做 OEM(GBK) → UTF-8 转换；Linux 侧终端本来就是 UTF-8，原样收。
 class ConsoleInput {
 public:
+    ConsoleInput() = default;
+    ~ConsoleInput() { stop(); }   // main 里是栈对象，退出时自动收线程
     void start();
     void stop();
     bool poll(std::string& line);
@@ -64,6 +66,8 @@ public:
 private:
     bool running_ = false;
     void* th_ = nullptr;   // std::thread*，头文件不暴露 <thread>
+    ConsoleInput(const ConsoleInput&) = delete;
+    ConsoleInput& operator=(const ConsoleInput&) = delete;
 };
 
 } // namespace platform

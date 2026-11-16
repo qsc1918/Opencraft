@@ -152,7 +152,9 @@ void ConsoleInput::stop() {
     g_consoleRunning.store(false, std::memory_order_relaxed);
     auto* th = (std::thread*)th_;
     if (th) {
-        if (th->joinable()) th->join();
+        // 读线程可能正阻塞在同步 ReadFile/read 上，标志唤不醒它，join 会把退出流程挂死。
+        // 进程退出时 OS 会回收线程；这里 detach 并释放 thread 对象，既不挂死也不泄漏。
+        if (th->joinable()) th->detach();
         delete th;
         th_ = nullptr;
     }

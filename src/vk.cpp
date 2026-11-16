@@ -21,6 +21,11 @@
 #include <cstring>
 #include <string>
 
+#ifdef __linux__
+// Vulkan 不接管 Xlib Display 的所有权，留一份在 shutdown 里销毁 surface 之后关闭。
+static void* g_xDisplay = nullptr;
+#endif
+
 // 窗口表面扩展按平台不同：Windows 用 win32 版，Linux(X11) 用 xlib 版
 #ifdef _WIN32
 static const char* kSurfaceExt = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
@@ -186,7 +191,9 @@ bool VkCtx::init(Window& win, int w, int h) {
 #else
     VkXlibSurfaceCreateInfoKHR sci = {};
     sci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-    sci.dpy = XOpenDisplay(nullptr);        // 表面持有自己的 Display 连接
+    sci.dpy = XOpenDisplay(nullptr);
+    // Vulkan 不接管 Display 的所有权，要自己留一份，在 surface 销毁后关闭。
+    g_xDisplay = sci.dpy;
     sci.window = (::XWindow)(uintptr_t)win.hwnd();
     if (vkCreateXlibSurfaceKHR(instance, &sci, nullptr, &surface) != VK_SUCCESS) {
         lastError = "Xlib surface creation failed";
@@ -516,8 +523,11 @@ bool VkCtx::recreateSwapchain(int w, int h) {
     extent = {std::max(1u, (uint32_t)w), std::max(1u, (uint32_t)h)};
     selectSwapFormat();
 
-    VkSurfaceCapabilitiesKHR caps;
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys, surface, &caps);
+    VkSurfaceCapabilitiesKHR caps = {};
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys, surface, &caps) != VK_SUCCESS) {
+        lastError = "surface capabilities query failed";
+        return false;
+    }
     uint32_t imgCount = caps.minImageCount + 1;
     if (caps.maxImageCount > 0 && imgCount > caps.maxImageCount) imgCount = caps.maxImageCount;
 
@@ -577,9 +587,11 @@ bool VkCtx::recreateSwapchain(int w, int h) {
 
 bool VkCtx::acquireNext(Frame& f, uint32_t& imageIndex) {
     vkWaitForFences(device, 1, &f.fence, VK_TRUE, UINT64_MAX);
+    imageIndex = 0;
     VkResult r = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, f.avail, VK_NULL_HANDLE, &imageIndex);
-    if (r == VK_ERROR_OUT_OF_DATE_KHR) return false;
-    vkResetFences(device, 1, &f.fence);
+    // 除 SUCCESS 与 SUBOPTIMAL 外，imageIndex 都不一定被写入，调用方会拿它下标访问。
+    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) return false;
+    if (vkResetFences(device, 1, &f.fence) != VK_SUCCESS) return false;
     return true;
 }
 
@@ -621,6 +633,9 @@ void VkCtx::shutdown() {
     if (cmdPool) vkDestroyCommandPool(device, cmdPool, nullptr);
     if (device) vkDestroyDevice(device, nullptr);
     if (surface) vkDestroySurfaceKHR(instance, surface, nullptr);
+#ifdef __linux__
+    if (g_xDisplay) { XCloseDisplay((Display*)g_xDisplay); g_xDisplay = nullptr; }
+#endif
     if (instance) vkDestroyInstance(instance, nullptr);
     device = VK_NULL_HANDLE;
     instance = VK_NULL_HANDLE;
