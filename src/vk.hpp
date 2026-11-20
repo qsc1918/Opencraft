@@ -64,6 +64,7 @@ struct VkCtx {
     std::vector<Frame> frames; // 大小 == MAX_FRAMES_IN_FLIGHT
 
     bool ok = false;
+    bool useGL = false; // 仅当 Vulkan 完全不可用时为 true；主后端始终是 Vulkan
     bool vsync = true;
     int desiredGpuIndex = -1; // >=0 时强制用该物理设备序号（--gpu-index / options.txt）
     std::vector<GpuInfo> gpus; // 枚举到的全部物理设备
@@ -72,6 +73,8 @@ struct VkCtx {
 
     bool init(Window& win, int w, int h);
     void shutdown();
+
+    // Vulkan 初始化失败后的唯一回退入口（定义在 gfx_gl.cpp）。
 
     bool recreateSwapchain(int w, int h);
     void destroySwapchainObjects();
@@ -88,3 +91,13 @@ struct VkCtx {
     VkPhysicalDeviceProperties props = {};
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 };
+
+// OpenGL 回退入口，只在 Vulkan 初始化失败时由 main 调用。
+bool gfxGLInit(VkCtx& ctx, Window& win, int w, int h, bool forceLegacy = false);
+bool gfxAngleInit(VkCtx& ctx, Window& win, int w, int h);
+void gfxGLSwap(VkCtx& ctx);
+void gfxGLShutdown(VkCtx& ctx);
+void gfxAngleSwap();
+void gfxAngleShutdown();
+extern bool g_gfxUseEGL;
+uint32_t& GfxSkyTriangle();

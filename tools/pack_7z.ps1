@@ -48,6 +48,31 @@ Copy-Item (Join-Path $root 'version.txt') (Join-Path $appDir 'version.txt') -For
 Get-ChildItem (Join-Path $build 'shaders') -Filter '*.spv' | ForEach-Object {
     Copy-Item $_.FullName (Join-Path $appDir "shaders\$($_.Name)") -Force
 }
+# 回退后端用的 GLSL 源码与字体是开源资源，不随贴图受 Mojang EULA 限制。
+foreach ($tier in @('gl330', 'gl120', 'gles100')) {
+    $src = Join-Path $build "shaders\$tier"
+    if (Test-Path $src) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $appDir "shaders\$tier") | Out-Null
+        Copy-Item (Join-Path $src '*.glsl') (Join-Path $appDir "shaders\$tier") -Force
+    }
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $appDir 'assets\font') | Out-Null
+Copy-Item (Join-Path $root 'assets\font\*') (Join-Path $appDir 'assets\font') -Recurse -Force
+# ANGLE 运行库（BSD-3-Clause / SwiftShader / Vulkan Loader 许可证一并附带）
+$angleDir = Join-Path $root 'third_party\angle\win64'
+if (Test-Path $angleDir) {
+    Get-ChildItem $angleDir -File | ForEach-Object {
+        Copy-Item $_.FullName (Join-Path $appDir $_.Name) -Force
+    }
+}
+# Win7/8/8.1 用旧版 ANGLE，运行时按系统版本从 angle-win7\ 加载。
+$angleWin7 = Join-Path $root 'third_party\angle\win7_x64'
+if (Test-Path $angleWin7) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $appDir 'angle-win7') | Out-Null
+    Get-ChildItem $angleWin7 -File | ForEach-Object {
+        Copy-Item $_.FullName (Join-Path $appDir "angle-win7\$($_.Name)") -Force
+    }
+}
 
 # 2) 打 7z 压缩包（带 Opencraft\ 前缀，解压后自动落进子目录）
 $archive = Join-Path $stage 'payload.7z'

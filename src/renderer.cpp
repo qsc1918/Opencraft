@@ -1,4 +1,5 @@
 #include "renderer.hpp"
+#include "gfx_shim.hpp"
 #include "camera.hpp"
 #include "vkutil.hpp"
 #include "entities.hpp"
@@ -72,13 +73,13 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     // 地形 UBO 要装下 tileRect[]（每图块 4 float），末尾必须留够对齐。
     const VkDeviceSize kTerrainUboSize = sizeof(TerrainUbo);
     for (int i = 0; i < VkCtx::MAX_FRAMES_IN_FLIGHT; i++) {
-        vkutil::createBuffer(ctx, kTerrainUboSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        gfxutil::createBuffer(ctx, kTerrainUboSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, terrainUBO_[i]);
         vkMapMemory(ctx.device, terrainUBO_[i].m, 0, kTerrainUboSize, 0, &terrainUBOMap_[i]);
-        vkutil::createBuffer(ctx, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        gfxutil::createBuffer(ctx, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, skyUBO_[i]);
         vkMapMemory(ctx.device, skyUBO_[i].m, 0, 64, 0, &skyUBOMap_[i]);
-        vkutil::createBuffer(ctx, 1 << 20, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        gfxutil::createBuffer(ctx, 1 << 20, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uiBuf_[i]);
         vkMapMemory(ctx.device, uiBuf_[i].m, 0, VK_WHOLE_SIZE, 0, &uiMap_[i]);
     }
@@ -136,12 +137,12 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     terrAttrs[0] = {0, 0, VK_FORMAT_R16G16B16A16_SINT, 0};
     terrAttrs[1] = {1, 0, VK_FORMAT_R8G8B8A8_UINT, 8};
 
-    terrainPipe_ = vkutil::makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
+    terrainPipe_ = gfxutil::makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
                                 "terrain.vert.spv", "terrain.frag.spv",
                                 &terrBinding, terrAttrs, 1, 2,
                                 VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_BACK_BIT,
                                 false, true, true);
-    waterPipe_ = vkutil::makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
+    waterPipe_ = gfxutil::makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
                               "water.vert.spv", "water.frag.spv",
                               &terrBinding, terrAttrs, 1, 2,
                               // 水面只有顶层一张面（网格化时就剔掉了侧面/底面），
@@ -149,7 +150,7 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
                               VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
                               true, true, false);
 
-    skyPipe_ = vkutil::makePipeline(ctx, ctx.renderPass, skyLayout_, shaderDir,
+    skyPipe_ = gfxutil::makePipeline(ctx, ctx.renderPass, skyLayout_, shaderDir,
                             "sky.vert.spv", "sky.frag.spv",
                             nullptr, nullptr, 0, 0,
                             VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
@@ -160,7 +161,7 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     uiAttrs[0] = {0, 0, VK_FORMAT_R32G32_SFLOAT, 0};
     uiAttrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, 8};
     uiAttrs[2] = {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 16};
-    uiPipe_ = vkutil::makePipeline(ctx, ctx.renderPass, uiLayout_, shaderDir,
+    uiPipe_ = gfxutil::makePipeline(ctx, ctx.renderPass, uiLayout_, shaderDir,
                            "ui.vert.spv", "ui.frag.spv",
                            &uiBinding, uiAttrs, 1, 3,
                            VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
@@ -175,7 +176,7 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
     // 实体管线：复用 terrain 的布局与描述符，但用 entity 着色器
     //（uv 按 0..255 映射整张贴图，生物模型才能按原版 texOffs 精确取子矩形），
     // 不剔面（盒模型内外面都可能可见），写深度。
-    entityPipe_ = vkutil::makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
+    entityPipe_ = gfxutil::makePipeline(ctx, ctx.renderPass, terrainLayout_, shaderDir,
                                "entity.vert.spv", "entity.frag.spv",
                                &terrBinding, terrAttrs, 1, 2,
                                VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
@@ -184,7 +185,7 @@ bool Renderer::init(VkCtx& ctx, Window& win, const std::string& assetDir,
 
     // 实体动态顶点缓冲：CPU 每帧构建盒模型，256KB 约够 3.6K 个方块面（12 字节/顶点）。
     for (int i = 0; i < VkCtx::MAX_FRAMES_IN_FLIGHT; i++) {
-        vkutil::createBuffer(ctx, 256 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        gfxutil::createBuffer(ctx, 256 * 1024, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, entityVB_[i]);
         vkMapMemory(ctx.device, entityVB_[i].m, 0, VK_WHOLE_SIZE, 0, &entityMap_[i]);
     }
@@ -237,7 +238,7 @@ void Renderer::createAtlasTexture(VkCtx& ctx) {
     vkBindImageMemory(ctx.device, atlasImage_, atlasMem_, 0);
 
     Buffer2 staging;
-    if (!vkutil::createBuffer(ctx, (VkDeviceSize)w * h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    if (!gfxutil::createBuffer(ctx, (VkDeviceSize)w * h * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging)) {
         fprintf(stderr, "[renderer] atlas staging alloc failed\n");
         return;
@@ -558,7 +559,7 @@ void Renderer::uploadPart(VkCtx& ctx, Chunk& c, bool opaque,
         }
     }
     if (!reused) {
-        if (!vkutil::createBuffer(ctx, needed, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        if (!gfxutil::createBuffer(ctx, needed, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, nb)) {
             // 旧缓冲已经进 retired_ 会被回收复用，这里必须把句柄清干净，
             // 否则本区块会拿着别人的缓冲画别的区块的几何。
@@ -743,7 +744,7 @@ bool Renderer::render(VkCtx& ctx, const Camera& cam, Player& player, Input& in, 
             shotW_ = ctx.extent.width;
             shotH_ = ctx.extent.height;
             Buffer2 b;
-            if (vkutil::createBuffer(ctx, (VkDeviceSize)shotW_ * shotH_ * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            if (gfxutil::createBuffer(ctx, (VkDeviceSize)shotW_ * shotH_ * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, b)) {
                 shotBuf_ = b.b;
                 shotMem_ = b.m;

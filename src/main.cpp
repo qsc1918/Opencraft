@@ -46,6 +46,8 @@ struct Args {
     bool invStart = false;
     int invPage = 0;
     int gpuIndex = -1;
+    std::string rendererArg = "auto"; // vulkan=只用主后端；opengl=诊断回退；auto=主后端失败再回退
+    bool forceLegacyGL = false;       // 强制 OpenGL 2.1 老设备档（诊断用）
     std::string crystalPos;
     std::string dimArg;
     std::string menuShot;
@@ -106,6 +108,8 @@ static Args parseArgs(int argc, char** argv) {
         else if (arg == "--crystal") a.crystalPos = next();
         else if (arg == "--dim") a.dimArg = next();
         else if (arg == "--gpu-index") a.gpuIndex = std::stoi(next());
+        else if (arg == "--renderer") a.rendererArg = next();
+        else if (arg == "--gl-legacy") a.forceLegacyGL = true;
         else if (arg == "--menu-shot") a.menuShot = next();
         else if (arg == "--menu-screen") a.menuScreen = std::stoi(next());
         else if (arg == "--spawn-portal") a.spawnPortal = true;
@@ -120,6 +124,8 @@ static Args parseArgs(int argc, char** argv) {
             printf("Usage: opencraft [--seed N] [--render-dist N] [--threads N] [--pos x,y,z]\n"
                    "  [--screenshot out.png] [--frames N] [--no-vsync] [--no-ui]\n"
                    "  [--time f] [--drive] [--break x,y,z] [--inventory] [--gpu-index N]\n"
+                   "  [--renderer vulkan|opengl|angle|auto]（默认 auto：Vulkan→GL→ANGLE）\n"
+                   "  [--gl-legacy] 诊断用：强制走 OpenGL 2.1 老设备档\n"
                    "  [--place x,y,z,id] [--use-eye x,y,z] [--spawn-portal]\n"
                    "  [--tp-dim overworld|nether|end] 进入世界后立刻切维度（调试）\n"
                    "  [--version] 打印版本号后退出\n");
@@ -192,7 +198,30 @@ int main(int argc, char** argv) {
     ctx.vsync = a.noVsync ? false : opts.vsync;
     // 显卡选择优先级：命令行 --gpu-index > options.txt > 自动（独显优先）
     ctx.desiredGpuIndex = a.gpuIndex >= 0 ? a.gpuIndex : opts.gpuIndex;
-    if (!ctx.init(win, 1280, 720)) { printf("Vulkan init failed: %s\n", ctx.lastError.c_str()); return 1; }
+    // 主后端永远是 Vulkan；OpenGL 只在显式指定或 Vulkan 完全不可用时作为回退。
+    bool vulkanTried = a.rendererArg == "auto" || a.rendererArg == "vulkan";
+    if (vulkanTried && ctx.init(win, 1280, 720)) {
+        printf("[main] 使用 Vulkan 主后端\n");
+    } else {
+        if (vulkanTried) printf("Vulkan init failed: %s\n", ctx.lastError.c_str());
+        if (a.rendererArg == "vulkan") return 1;
+        // Vulkan 初始化可能已留下实例/表面，先清掉再建 GL 上下文。
+        if (ctx.instance) {
+            if (ctx.surface) vkDestroySurfaceKHR(ctx.instance, ctx.surface, nullptr);
+            vkDestroyInstance(ctx.instance, nullptr);
+        }
+        ctx.instance = VK_NULL_HANDLE;
+        ctx.surface = VK_NULL_HANDLE;
+        bool glOk = a.rendererArg != "angle" && gfxGLInit(ctx, win, 1280, 720, a.forceLegacyGL);
+        if (!glOk && a.rendererArg != "opengl") {
+            printf("[main] 尝试 ANGLE / GLES2 兜底\n");
+            glOk = gfxAngleInit(ctx, win, 1280, 720);
+        }
+        if (!glOk) {
+            printf("OpenGL fallback failed: 本机没有可用的 GL/ANGLE 上下文\n");
+            return 1;
+        }
+    }
 
     Renderer renderer;
     Menu menu;
@@ -203,14 +232,9 @@ int main(int argc, char** argv) {
 
     // 游戏状态
     enum class GS { MainMenu, SaveSelect, NewWorld, Options, Video, Pause, Play };
-    // Linux 上还没有菜单（menu.cpp 是 GDI 实现的），所以一律直接进世界；
-    // 存档/种子等通过命令行参数与控制台指令来。
-#ifndef _WIN32
-    const bool startDirect = true;
-#else
+    // 像素字体菜单在所有平台可用；只有调试参数才跳过菜单直接进世界。
     const bool startDirect = !a.screenshot.empty() || a.drive || !a.breakBlock.empty()
                              || a.frames > 0 || !a.posStr.empty() || a.invStart;
-#endif
     GS gs = startDirect ? GS::Play : GS::MainMenu;
 
     std::unique_ptr<World> world;
@@ -993,11 +1017,7 @@ int main(int argc, char** argv) {
         if (gs == GS::Play) {
             if (escEdge) {
                 if (renderer.inventoryOpen()) { renderer.setInventoryOpen(false); win.setCapture(true); platform::showCursor(false); }
-#ifndef _WIN32
-                else { quitRequested = true; }   // Linux 没有暂停菜单：Esc 退出
-#else
                 else { gs = GS::Pause; win.setCapture(false); platform::showCursor(true); }
-#endif
             }
             if (eEdge) {
                 bool o = !renderer.inventoryOpen();

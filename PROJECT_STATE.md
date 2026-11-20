@@ -3,8 +3,11 @@
 > 本文件是"压缩上下文"式的项目现状说明：换一个 AI/会话接手时，读这一份 + `AGENTS.md`
 > 就能继续干活。**改动项目后请同步更新下面的「当前状态」一节。**
 >
-> 最后更新：**2026-10-17 代码质量清理**（结构性冗余 + 注释统一，功能未改，
-> 详见「已完成」表格最后一行与 `docs/code_review_2026-10-11.md`）；
+> 最后更新：**2026-11-17 跨平台像素字体与菜单**（菜单去 GDI，字体随资源烘焙，
+> Windows/Linux 逐字节一致，详见「已完成」表格与 `docs/renderer_backend_and_font_research.md`）；
+> 前一次是 **2026-11-16 OpenGL 回退后端**（新增独立 GL 3.3 后端，Vulkan 主路径保持逐字节不变）；
+> 前一次是 **2026-10-17 代码质量清理**（结构性冗余 + 注释统一，功能未改，
+> 详见「已完成」表格与 `docs/code_review_2026-10-11.md`）；
 > 前一次是 **2026-10-06 三块大改动** ——
 > ① **方块更新系统**（PP/NC 更新传播 + 计划刻 + 下落的方块，`src/blockupdate.*`）；
 > ② **实体与生物**（玩家成为实体 + 猪牛羊鸡/僵尸骷髅苦力怕蜘蛛/烈焰人末影人，
@@ -31,7 +34,9 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 
 | 模块 | 状态 |
 |------|------|
-| 渲染（Vulkan + 手写管线） | 可用；地形/水/天空/UI/菜单管线，图集 + mipmap；**标准 sRGB 工作流**（sRGB 贴图视图 + 线性着色 + sRGB 交换链，见 §4.11） |
+| 渲染（Vulkan + 手写管线） | 可用；地形/水/天空/UI/菜单管线，图集 + mipmap；**标准 sRGB 工作流**（sRGB 贴图视图 + 线性着色 + sRGB 交换链，见 §4.11）。Vulkan 是唯一主后端与默认选择 |
+| **OpenGL 回退（2026-11-16/18）** | 独立回退后端，仅在 Vulkan 不可用时启用；`--renderer vulkan|opengl|auto`（默认 auto）。薄派发层 `src/gfx_shim.hpp` + `src/gfx_gl.cpp`，不引入 GLEW/GLAD。完整档 GL 3.3（`shaders/gl330/`）+ 老设备档 GL 2.1（`shaders/gl120/`，`--gl-legacy` 可强制）：整数顶点转 float、sRGB 手写、天空改 CPU 三角形。GL 2.1 与 3.3 的场景/菜单截图逐字节相同；与 Vulkan 场景平均 RGB 210.23 vs 209.25（81 像素色差>8）；Vulkan 截图与改动前逐字节相同。ANGLE 兜底档已实施（`src/gfx_angle.cpp` + `shaders/gles100/`，运行库在 `third_party/angle/`，`--renderer angle` / `OPENCRAFT_ANGLE_SWIFTSHADER=1`），菜单与 GL 2.1 逐字节相同、场景仅 8 像素色差>8。Win7/8/8.1 自动改用 `angle-win7/` 里的 2023-02-12 旧版 ANGLE（新版静态依赖 Win8 API set），两版 ANGLE 截图逐字节相同。`.gitignore` 已放行 `assets/font/` 与 ANGLE DLL，否则 CI 出的包没有字体 |
+| **跨平台像素字体与菜单（2026-11-17/18）** | 菜单去掉 Windows GDI，改用 CPU RGBA 画布 + 自带的 12px 像素字（`src/font.*`、`assets/font/`、`tools/bake_font.py`），屏幕字高 24px、1px 淡阴影；Windows/Linux 菜单截图逐字节相同；Linux 不再直接进世界，`Esc` 也打开暂停菜单。字体为缝合像素字体（SIL OFL-1.1，许可证随资源分发） |
 | 区块系统 | 16×128×16 区块列，多线程生成 + 网格化，按维度分开存储 |
 | 主世界生成 | 简易噪声（高度图 + 洞穴 + 矿石 + 树 + 水），非原版，待翻新 |
 | **下界生成** | **已按 26.2 原版机制重写**：`nether/base_3d_noise` + slide 密度、基岩地板/天花板渐变、y=32 岩浆海、下界荒地群系表面规则 |

@@ -1,77 +1,79 @@
-// 菜单是用 GDI（DIB + BitBlt + DrawTextW）画的，只在 Windows 上实现
-// Linux 上暂时没有菜单：main.cpp 会直接进世界玩（见 README 的 Linux 说明）。
+// 菜单先在 RGBA 画布上用自带的像素字体绘制，再上传成纹理画全屏四边形。
+// 绘制过程不依赖任何系统字体服务，Windows 与 Linux 得到逐字节相同的画面。
 #include "menu.hpp"
-#ifdef _WIN32
-#include "vkutil.hpp"
+#include "gfx_shim.hpp"
 #include "window.hpp"
 #include "png.hpp"
 #include "version.hpp"
-#include <windows.h>
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <cmath>
-#include <string>
-#include <algorithm>
 
 namespace {
-const int BTN_BORDER = 3; // 200x20 按钮贴图的九宫格边框宽
+const int kBtnBorder = 3; // 200x20 按钮贴图的九宫格边框宽
+const int kTextScale = 2; // 12px 点阵字放大到 24px，复杂汉字笔画仍分得开
 
-// menu.hpp 里 GDI 句柄统一存成 void*（这样非 Windows 也能过编译），
-// 用到的时候转回 HDC/HBITMAP。
-inline HDC& asDC(void*& p) { return *(HDC*)&p; }
-inline HBITMAP& asBMP(void*& p) { return *(HBITMAP*)&p; }
-
-std::wstring utf8ToWide(const std::string& s) {
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    std::wstring w(n > 0 ? n - 1 : 0, 0);
-    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
-    return w;
+void SetPixel(std::vector<uint8_t>& canvas, int w, int h, int x, int y,
+              uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    if (x < 0 || y < 0 || x >= w || y >= h || a == 0) return;
+    uint8_t* dst = canvas.data() + ((size_t)y * w + x) * 4;
+    if (a == 255) { dst[0] = r; dst[1] = g; dst[2] = b; dst[3] = 255; return; }
+    int inv = 255 - a;
+    dst[0] = (uint8_t)((dst[0] * inv + r * a) / 255);
+    dst[1] = (uint8_t)((dst[1] * inv + g * a) / 255);
+    dst[2] = (uint8_t)((dst[2] * inv + b * a) / 255);
+    dst[3] = (uint8_t)std::min(255, dst[3] + a);
 }
 
-// 用 RGBA 缓冲创建自上而下的 32bpp DIB，并选入内存 DC。
-void makeDib(const uint8_t* rgba, int w, int h, HBITMAP& bmp, HDC& dc, uint8_t** bits) {
-    dc = CreateCompatibleDC(nullptr);
-    BITMAPINFO bmi = {};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -h;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    void* raw = nullptr;
-    bmp = CreateDIBSection(dc, &bmi, DIB_RGB_COLORS, &raw, nullptr, 0);
-    uint8_t* pbits = (uint8_t*)raw;
-    if (rgba && pbits) {
-        for (int i = 0, n = w * h; i < n; i++) {
-            pbits[i * 4 + 0] = rgba[i * 4 + 2];
-            pbits[i * 4 + 1] = rgba[i * 4 + 1];
-            pbits[i * 4 + 2] = rgba[i * 4 + 0];
-            pbits[i * 4 + 3] = rgba[i * 4 + 3];
+void FillRect(std::vector<uint8_t>& canvas, int cw, int ch,
+              int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) {
+    for (int yy = y; yy < y + h; yy++)
+        for (int xx = x; xx < x + w; xx++) SetPixel(canvas, cw, ch, xx, yy, r, g, b, a);
+}
+
+void BlitImage(std::vector<uint8_t>& canvas, int cw, int ch,
+               const std::vector<uint8_t>& src, int sw, int sh,
+               int sx, int sy, int dx, int dy, int dw, int dh) {
+    if (src.empty() || dw <= 0 || dh <= 0) return;
+    for (int yy = 0; yy < dh; yy++) {
+        int iy = sy + (int)((float)yy * sh / dh);
+        if (iy < 0 || iy >= sh) continue;
+        for (int xx = 0; xx < dw; xx++) {
+            int ix = sx + (int)((float)xx * sw / dw);
+            if (ix < 0 || ix >= sw) continue;
+            const uint8_t* p = src.data() + ((size_t)iy * sw + ix) * 4;
+            SetPixel(canvas, cw, ch, dx + xx, dy + yy, p[0], p[1], p[2], p[3]);
         }
     }
-    if (bits) *bits = pbits;
-    SelectObject(dc, bmp);
 }
-} // 匿名命名空间
+
+void Slice9(std::vector<uint8_t>& canvas, int cw, int ch,
+            const std::vector<uint8_t>& src, int sw, int sh, int border,
+            int x, int y, int w, int h) {
+    int b = border;
+    BlitImage(canvas, cw, ch, src, sw, sh, 0, 0, x, y, b, b);
+    BlitImage(canvas, cw, ch, src, sw, sh, sw - b, 0, x + w - b, y, b, b);
+    BlitImage(canvas, cw, ch, src, sw, sh, 0, sh - b, x, y + h - b, b, b);
+    BlitImage(canvas, cw, ch, src, sw, sh, sw - b, sh - b, x + w - b, y + h - b, b, b);
+    BlitImage(canvas, cw, ch, src, sw, sh, b, 0, x + b, y, w - 2 * b, b);
+    BlitImage(canvas, cw, ch, src, sw, sh, b, sh - b, x + b, y + h - b, w - 2 * b, b);
+    BlitImage(canvas, cw, ch, src, sw, sh, 0, b, x, y + b, b, h - 2 * b);
+    BlitImage(canvas, cw, ch, src, sw, sh, sw - b, b, x + w - b, y + b, b, h - 2 * b);
+    BlitImage(canvas, cw, ch, src, sw, sh, b, b, x + b, y + b, w - 2 * b, h - 2 * b);
+}
+
+} // namespace
 
 bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
-    if (!loadTextures(assetDir)) return false;
-    font_ = CreateFontA(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                        DEFAULT_PITCH | FF_DONTCARE, "Microsoft YaHei");
+    if (!LoadTextures(assetDir)) return false;
+    if (!font_.Load(assetDir + "/font/pixel.png", assetDir + "/font/pixel.fnt")) {
+        fprintf(stderr, "[menu] pixel font load failed\n");
+        return false;
+    }
+    EnsureCanvas(win.width(), win.height());
+    CreateMenuTexture(ctx);
 
-    // 按钮与输入框的绘制用贴图 DIB（高度与贴图一致）
-    makeDib(dirtRGBA_.data(), dirtW_, dirtH_, asBMP(dirtBmp_), asDC(dirtDC_), nullptr);
-    makeDib(btnRGBA_.data(), btnW_, btnH_, asBMP(btnBmp_), asDC(btnDC_), nullptr);
-    makeDib(btnHiRGBA_.data(), btnW_, btnH_, asBMP(btnHiBmp_), asDC(btnHiDC_), nullptr);
-    makeDib(fieldRGBA_.data(), fieldW_, fieldH_, asBMP(fieldBmp_), asDC(fieldDC_), nullptr);
-    makeDib(sliderRGBA_.data(), sliderW_, sliderH_, asBMP(sliderBmp_), asDC(sliderDC_), nullptr);
-    makeDib(handleRGBA_.data(), handleW_, handleH_, asBMP(handleBmp_), asDC(handleDC_), nullptr);
-    makeDib(handleHiRGBA_.data(), handleW_, handleH_, asBMP(handleHiBmp_), asDC(handleHiDC_), nullptr);
-    ensureDIB(win.width(), win.height());
-    createMenuTexture(ctx);
-
-    // 管线
     VkDescriptorSetLayoutBinding b0 = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
                                        VK_SHADER_STAGE_FRAGMENT_BIT};
     VkDescriptorSetLayoutCreateInfo li = {};
@@ -92,17 +94,15 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
     va[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, 8};
     va[2] = {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 16};
 
-    // 着色器目录沿用原来的两段式定位（exe 旁的 shaders/，失败回退相对路径）。
     std::string shaderDir = assetDir + "/../shaders";
-    if (vkutil::readFile(shaderDir + "/menu.vert.spv").empty()) shaderDir = "shaders";
-    pipe_ = vkutil::makePipeline(ctx, ctx.renderPass, layout_, shaderDir,
-                                 "menu.vert.spv", "menu.frag.spv",
-                                 &vb, va, 1, 3,
-                                 VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
-                                 false, false, false);
+    if (gfxutil::readFile(shaderDir + "/menu.vert.spv").empty()) shaderDir = "shaders";
+    pipe_ = gfxutil::makePipeline(ctx, ctx.renderPass, layout_, shaderDir,
+                                  "menu.vert.spv", "menu.frag.spv",
+                                  &vb, va, 1, 3,
+                                  VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, VK_CULL_MODE_NONE,
+                                  false, false, false);
     if (!pipe_) { fprintf(stderr, "[menu] pipeline creation failed\n"); return false; }
 
-    // 描述符集（菜单贴图）
     VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
     VkDescriptorPoolCreateInfo poolCI = {};
     poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -128,16 +128,15 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
     vkUpdateDescriptorSets(ctx.device, 1, &wr, 0, nullptr);
     mpool_ = pool;
 
-    // 全屏四边形。Vulkan 的 NDC (-1,-1) 在帧缓冲左上角，贴图第 0 行也在顶部，
-    // 故 v 必须随屏幕向下递增，否则画面上下颠倒。
+    // Vulkan 的 NDC (-1,-1) 在左上角，贴图第 0 行也在顶部，v 随屏幕向下递增。
     struct QV { float x, y, u, v, r, g, b, a; };
     QV quad[6] = {
         {-1,-1,0,0,1,1,1,1},{1,-1,1,0,1,1,1,1},{1,1,1,1,1,1,1,1},
         {-1,-1,0,0,1,1,1,1},{1,1,1,1,1,1,1,1},{-1,1,0,1,1,1,1,1},
     };
     Buffer2 qb;
-    if (!vkutil::createBuffer(ctx, sizeof(quad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, qb)) {
+    if (!gfxutil::createBuffer(ctx, sizeof(quad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, qb)) {
         return false;
     }
     quadBuf_ = qb.b;
@@ -146,18 +145,15 @@ bool Menu::init(VkCtx& ctx, Window& win, const std::string& assetDir) {
     vkMapMemory(ctx.device, quadMem_, 0, sizeof(quad), 0, &qp);
     memcpy(qp, quad, sizeof(quad));
     vkUnmapMemory(ctx.device, quadMem_);
-
     return true;
 }
 
-bool Menu::loadTextures(const std::string& assetDir) {
+bool Menu::LoadTextures(const std::string& assetDir) {
     auto load = [&](const std::string& rel, std::vector<uint8_t>& out, int& w, int& h) {
         return loadPNG((assetDir + "/" + rel).c_str(), out, w, h);
     };
-    // 泥土背景
     load("block/dirt.png", dirtRGBA_, dirtW_, dirtH_);
-    // loadPNG 输出的就是自上而下 RGBA，与 DIB 一致，无需翻转。
-    if (!load("gui/button.png", btnRGBA_, btnW_, btnH_)) { fprintf(stderr, "[menu] button.png load failed\n"); return false; }
+    if (!load("gui/button.png", btnRGBA_, btnW_, btnH_)) return false;
     if (!load("gui/button_highlighted.png", btnHiRGBA_, btnW_, btnH_)) return false;
     if (!load("gui/text_field.png", fieldRGBA_, fieldW_, fieldH_)) return false;
     if (!load("gui/slider.png", sliderRGBA_, sliderW_, sliderH_)) return false;
@@ -166,22 +162,17 @@ bool Menu::loadTextures(const std::string& assetDir) {
     return true;
 }
 
-void Menu::createMenuTexture(VkCtx& ctx) {
-    // GUI 贴图同样是 sRGB 字节：交给硬件解码，交换链再编码，显示值＝贴图原值。
-    if (!vkutil::createImage(ctx, (uint32_t)diw_, (uint32_t)dih_, VK_FORMAT_R8G8B8A8_SRGB,
-                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, img_, imgMem_)) {
-        return;
-    }
+void Menu::CreateMenuTexture(VkCtx& ctx) {
+    if (!gfxutil::createImage(ctx, (uint32_t)canvasW_, (uint32_t)canvasH_, VK_FORMAT_R8G8B8A8_SRGB,
+                              VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, img_, imgMem_)) return;
     Buffer2 st;
-    if (!vkutil::createBuffer(ctx, (VkDeviceSize)diw_ * dih_ * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, st)) {
-        return;
-    }
+    if (!gfxutil::createBuffer(ctx, (VkDeviceSize)canvasW_ * canvasH_ * 4,
+                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, st)) return;
     staging_ = st.b;
     stagingMem_ = st.m;
-
-    view_ = vkutil::create2DView(ctx.device, img_, VK_FORMAT_R8G8B8A8_SRGB);
+    view_ = gfxutil::create2DView(ctx.device, img_, VK_FORMAT_R8G8B8A8_SRGB);
 
     VkSamplerCreateInfo sm = {};
     sm.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -191,7 +182,6 @@ void Menu::createMenuTexture(VkCtx& ctx) {
     sm.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     vkCreateSampler(ctx.device, &sm, nullptr, &sampler_);
 
-    // onResize 会销毁并重建 view_，descriptor set 里存的还是旧句柄，必须重绑。
     if (set_ != VK_NULL_HANDLE) {
         VkDescriptorImageInfo di = {sampler_, view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkWriteDescriptorSet wr = {};
@@ -205,7 +195,7 @@ void Menu::createMenuTexture(VkCtx& ctx) {
     }
 }
 
-void Menu::destroyMenuTexture(VkCtx& ctx) {
+void Menu::DestroyMenuTexture(VkCtx& ctx) {
     vkDeviceWaitIdle(ctx.device);
     if (view_) vkDestroyImageView(ctx.device, view_, nullptr);
     if (img_) vkDestroyImage(ctx.device, img_, nullptr);
@@ -222,248 +212,144 @@ void Menu::destroyMenuTexture(VkCtx& ctx) {
     texReady_ = false;
 }
 
-void Menu::ensureDIB(int w, int h) {
-    if (asDC(dibDC_) && diw_ == w && dih_ == h) return;
-    if (asDC(dibDC_)) { DeleteDC(asDC(dibDC_)); asDC(dibDC_) = nullptr; }
-    if (asBMP(dibBmp_)) { DeleteObject(asBMP(dibBmp_)); asBMP(dibBmp_) = nullptr; }
-    diw_ = w;
-    dih_ = h;
-    asDC(dibDC_) = CreateCompatibleDC(nullptr);
-    BITMAPINFO bmi = {};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -h;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
-    asBMP(dibBmp_) = CreateDIBSection(asDC(dibDC_), &bmi, DIB_RGB_COLORS, &dibBits_, nullptr, 0);
-    SelectObject(asDC(dibDC_), asBMP(dibBmp_));
+void Menu::EnsureCanvas(int w, int h) {
+    if (canvasW_ == w && canvasH_ == h && !canvas_.empty()) return;
+    canvasW_ = w;
+    canvasH_ = h;
+    canvas_.assign((size_t)w * h * 4, 0);
 }
 
 void Menu::onResize(VkCtx& ctx, int w, int h) {
-    destroyMenuTexture(ctx);
-    ensureDIB(w, h);            // 先刷新 diw_/dih_
-    createMenuTexture(ctx);     // 再按真实尺寸重建贴图
+    DestroyMenuTexture(ctx);
+    EnsureCanvas(w, h);
+    CreateMenuTexture(ctx);
 }
 
-// 把按钮贴图按九宫格绘制到屏幕 DIB。
-static void slice9(HDC dst, HDC src, int tw, int th, int border,
-                   float dx, float dy, float dw, float dh) {
-    int b = border;
-    // 四角
-    BitBlt(dst, (int)dx, (int)dy, b, b, src, 0, 0, SRCCOPY);
-    BitBlt(dst, (int)(dx + dw - b), (int)dy, b, b, src, tw - b, 0, SRCCOPY);
-    BitBlt(dst, (int)dx, (int)(dy + dh - b), b, b, src, 0, th - b, SRCCOPY);
-    BitBlt(dst, (int)(dx + dw - b), (int)(dy + dh - b), b, b, src, tw - b, th - b, SRCCOPY);
-    // 四边
-    StretchBlt(dst, (int)(dx + b), (int)dy, (int)(dw - 2 * b), b,
-               src, b, 0, tw - 2 * b, b, SRCCOPY);
-    StretchBlt(dst, (int)(dx + b), (int)(dy + dh - b), (int)(dw - 2 * b), b,
-               src, b, th - b, tw - 2 * b, b, SRCCOPY);
-    StretchBlt(dst, (int)dx, (int)(dy + b), b, (int)(dh - 2 * b),
-               src, 0, b, b, th - 2 * b, SRCCOPY);
-    StretchBlt(dst, (int)(dx + dw - b), (int)(dy + b), b, (int)(dh - 2 * b),
-               src, tw - b, b, b, th - 2 * b, SRCCOPY);
-    // 中心
-    StretchBlt(dst, (int)(dx + b), (int)(dy + b), (int)(dw - 2 * b), (int)(dh - 2 * b),
-               src, b, b, tw - 2 * b, th - 2 * b, SRCCOPY);
-}
-
-void Menu::renderToDIB(Menuscreen screen, const MenuData& data, float cx, float cy) {
-    HDC dc = asDC(dibDC_);
+void Menu::RenderCanvas(Menuscreen screen, const MenuData& data, float cx, float cy) {
     // 泥土背景平铺，放大约 4 倍。
-    {
-        int ts = dirtW_ * 4; // 单个平铺块边长
-        for (int y = 0; y < dih_; y += ts)
-            for (int x = 0; x < diw_; x += ts)
-                StretchBlt(dc, x, y, ts, ts, asDC(dirtDC_), 0, 0, dirtW_, dirtH_, SRCCOPY);
+    int tile = dirtW_ * 4;
+    if (tile > 0) {
+        for (int y = 0; y < canvasH_; y += tile)
+            for (int x = 0; x < canvasW_; x += tile)
+                BlitImage(canvas_, canvasW_, canvasH_, dirtRGBA_, dirtW_, dirtH_, 0, 0, x, y, tile, tile);
     }
     btns_.clear();
     sliders_.clear();
-    int w = diw_, h = dih_;
-    int cxr = cx, cyr = cy;
+    int w = canvasW_, h = canvasH_;
+
+    auto drawText = [&](const std::string& text, int x, int y, uint32_t argb,
+                        bool centered = false, int boxW = 0, int scale = kTextScale) {
+        int px = x;
+        if (centered) px += (boxW - (int)font_.Width(text, scale)) / 2;
+        font_.DrawString(canvas_, canvasW_, canvasH_, text, px, y, argb, scale);
+    };
 
     auto addBtn = [&](int id, float x, float y, float bw, float bh, const std::string& text) {
-        bool hov = cxr >= x && cxr <= x + bw && cyr >= y && cyr <= y + bh;
-        slice9(dc, hov ? asDC(btnHiDC_) : asDC(btnDC_), btnW_, btnH_, BTN_BORDER, x, y, bw, bh);
-        RECT r = {(int)x, (int)y, (int)(x + bw), (int)(y + bh)};
-        SetTextColor(dc, RGB(255, 255, 255));
-        SetBkMode(dc, TRANSPARENT);
-        SetTextAlign(dc, TA_CENTER);
-        SelectObject(dc, font_);
-        DrawTextW(dc, utf8ToWide(text).c_str(), -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        bool hover = cx >= x && cx <= x + bw && cy >= y && cy <= y + bh;
+        Slice9(canvas_, canvasW_, canvasH_, hover ? btnHiRGBA_ : btnRGBA_,
+               btnW_, btnH_, kBtnBorder, (int)x, (int)y, (int)bw, (int)bh);
+        drawText(text, (int)x, (int)y + (int)(bh - font_.LineHeight(kTextScale)) / 2,
+                 0xFFFFFFFF, true, (int)bw);
         btns_.push_back({id, x, y, bw, bh});
     };
 
-    // MC 风格数值滑块（轨道 + 手柄），可同时放多个，拖动返回各自的 id
     auto addSlider = [&](int id, float x, float y, float bw, float bh,
                          int minV, int maxV, int* val, const char* label) {
         sliders_.push_back({id, x, y, bw, bh, minV, maxV, val, label});
-        // 轨道：九宫格拉伸，保留圆角。
-        slice9(dc, asDC(sliderDC_), sliderW_, sliderH_, BTN_BORDER, x, y, bw, bh);
+        Slice9(canvas_, canvasW_, canvasH_, sliderRGBA_, sliderW_, sliderH_,
+               kBtnBorder, (int)x, (int)y, (int)bw, (int)bh);
         int valv = *val;
-        if (valv < minV) valv = minV;
-        if (valv > maxV) valv = maxV;
+        valv = std::max(minV, std::min(maxV, valv));
         float frac = (float)(valv - minV) / (float)(maxV - minV);
-        frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
-        float handleX = x + frac * (bw - handleW_);
-        float handleY = y + (bh - handleH_) * 0.5f;
-        bool handleHover = cxr >= handleX && cxr <= handleX + handleW_ &&
-                           cyr >= handleY && cyr <= handleY + handleH_;
-        StretchBlt(dc, (int)handleX, (int)handleY, (int)handleW_, (int)handleH_,
-                   handleHover ? asDC(handleHiDC_) : asDC(handleDC_), 0, 0, handleW_, handleH_, SRCCOPY);
-        // 轨道下方的数值标签。
-        std::string vl = std::string(label) + "：" + std::to_string(valv);
-        RECT vr = {(int)x, (int)(y + bh + 4), (int)(x + bw), (int)(y + bh + 26)};
-        SetTextColor(dc, RGB(255, 255, 255));
-        SetBkMode(dc, TRANSPARENT);
-        SetTextAlign(dc, TA_CENTER);
-        SelectObject(dc, font_);
-        DrawTextW(dc, utf8ToWide(vl).c_str(), -1, &vr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        frac = std::max(0.0f, std::min(1.0f, frac));
+        int hx = (int)(x + frac * (bw - handleW_));
+        int hy = (int)(y + (bh - handleH_) * 0.5f);
+        bool hover = cx >= hx && cx <= hx + handleW_ && cy >= hy && cy <= hy + handleH_;
+        BlitImage(canvas_, canvasW_, canvasH_, hover ? handleHiRGBA_ : handleRGBA_,
+                  handleW_, handleH_, 0, 0, hx, hy, handleW_, handleH_);
+        drawText(std::string(label) + "：" + std::to_string(valv),
+                 (int)x, (int)(y + bh + 4), 0xFFFFFFFF, true, (int)bw);
     };
 
     if (screen == Menuscreen::MainMenu) {
-        float bw = 400, bh = 40;
-        float bx = (w - bw) / 2;
+        float bw = 400, bh = 40, bx = (w - bw) / 2;
         addBtn(MENU_SINGLEPLAYER, bx, 210, bw, bh, "单人游戏");
-        float bw2 = 190;
-        float bx2 = (w - 2 * bw2 - 20) / 2;
+        float bw2 = 190, bx2 = (w - 2 * bw2 - 20) / 2;
         addBtn(MENU_OPTIONS, bx2, 280, bw2, bh, "选项");
         addBtn(MENU_QUIT, bx2 + bw2 + 20, 280, bw2, bh, "退出游戏");
-
-        // 主界面右下角显示版本号（版本名-编译时间戳）
+        // 版本号右对齐。
         std::string ver = "Opencraft " + version::full();
-        RECT vr = {0, h - 28, w - 8, h - 6};
-        SetTextColor(dc, RGB(210, 210, 210));
-        SetBkMode(dc, TRANSPARENT);
-        SetTextAlign(dc, TA_RIGHT);
-        SelectObject(dc, font_);
-        DrawTextW(dc, utf8ToWide(ver).c_str(), -1, &vr,
-                  DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        font_.DrawString(canvas_, canvasW_, canvasH_, ver, w - 8 - (int)font_.Width(ver, 1), h - 24,
+                       0xFFD2D2D2, 1);
     } else if (screen == Menuscreen::SaveSelect) {
-        float bw = 400, bh = 36;
-        float bx = (w - bw) / 2;
+        float bw = 400, bh = 36, bx = (w - bw) / 2;
         addBtn(MENU_NEWWORLD, bx, 90, bw, 40, "新建世界");
         int y = 160;
-        for (int i = 0; i < (int)data.saves.size() && y < h - 90; i++) {
-            addBtn(MENU_SAVE_FIRST + i, bx, y, bw, bh, data.saves[i].name);
-            y += bh + 8;
+        for (size_t i = 0; i < data.saves.size() && y < h - 90; i++) {
+            addBtn(MENU_SAVE_FIRST + (int)i, bx, (float)y, bw, bh, data.saves[i].name);
+            y += (int)bh + 8;
         }
-        addBtn(MENU_BACK, bx, h - 70, bw, 40, "返回");
+        addBtn(MENU_BACK, bx, (float)(h - 70), bw, 40, "返回");
     } else if (screen == Menuscreen::NewWorld) {
-        float bw = 400, bh = 40;
-        float bx = (w - bw) / 2;
-        // 标题
-        RECT r = {(int)bx, 90, (int)(bx + bw), 150};
-        SetTextColor(dc, RGB(255, 255, 255));
-        SetBkMode(dc, TRANSPARENT);
-        SetTextAlign(dc, TA_CENTER);
-        SelectObject(dc, font_);
-        DrawTextW(dc, utf8ToWide(data.titleText).c_str(), -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-        // 种子标签与输入框。
-        RECT lr = {(int)bx, 180, (int)(bx + 120), 220};
-        SetTextAlign(dc, TA_LEFT);
-        DrawTextW(dc, utf8ToWide("世界种子").c_str(), -1, &lr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        float fx = bx + 120, fy = 190, fw2 = bw - 120, fh2 = 22;
-        slice9(dc, asDC(fieldDC_), fieldW_, fieldH_, 3, fx, fy, fw2, fh2);
-        RECT fr = {(int)(fx + 6), (int)fy, (int)(fx + fw2 - 6), (int)(fy + fh2)};
-        SetTextColor(dc, RGB(255, 255, 255));
-        DrawTextW(dc, utf8ToWide(data.seedText).c_str(), -1, &fr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
+        float bw = 400, bh = 40, bx = (w - bw) / 2;
+        drawText(data.titleText, (int)bx, 90, 0xFFFFFFFF, true, (int)bw);
+        drawText("世界种子", (int)bx, 183, 0xFFFFFFFF);
+        float fx = bx + 120, fy = 190, fw = bw - 120, fh = 22;
+        Slice9(canvas_, canvasW_, canvasH_, fieldRGBA_, fieldW_, fieldH_,
+               3, (int)fx, (int)fy, (int)fw, (int)fh);
+        drawText(data.seedText, (int)fx + 6, (int)fy + 3, 0xFFFFFFFF);
         addBtn(MENU_CREATE, bx, 280, bw, bh, "创建新的世界");
         addBtn(MENU_CANCEL, bx, 340, bw, bh, "取消");
     } else if (screen == Menuscreen::Options) {
-        float bw = 300, bh = 40;
-        float bx = (w - bw) / 2;
+        float bw = 300, bh = 40, bx = (w - bw) / 2;
         addBtn(MENU_VIDEO, bx, 260, bw, bh, "视频设置");
-        addBtn(MENU_BACK, bx, h - 90, bw, bh, "返回");
+        addBtn(MENU_BACK, bx, (float)(h - 90), bw, bh, "返回");
     } else if (screen == Menuscreen::VideoSettings) {
-        float bw = 300, bh = 40;
-        float bx = (w - bw) / 2;
-        std::string label = std::string("垂直同步：") + (data.vsync ? "开" : "关");
-        addBtn(MENU_VSYNC, bx, 150, bw, bh, label);
-        // 显卡选择：点击在"自动 / 各设备"间循环，重启后生效
-        float gbw = 660;
-        float gbx = (w - gbw) / 2;
+        float bw = 300, bh = 40, bx = (w - bw) / 2;
+        addBtn(MENU_VSYNC, bx, 150, bw, bh,
+               std::string("垂直同步：") + (data.vsync ? "开" : "关"));
+        float gbw = 660, gbx = (w - gbw) / 2;
         std::string gpuLabel = "显卡：";
         if (data.gpuIndex < 0 || data.gpuIndex >= (int)data.gpuNames.size())
             gpuLabel += "自动（优先独显）";
-        else
-            gpuLabel += data.gpuNames[data.gpuIndex];
-        if (data.gpuIndex >= 0 && data.gpuIndex != data.gpuActive)
-            gpuLabel += " ＊"; // 与本次运行不同：提示要重启才切换
+        else gpuLabel += data.gpuNames[data.gpuIndex];
+        if (data.gpuIndex >= 0 && data.gpuIndex != data.gpuActive) gpuLabel += " ＊";
         addBtn(MENU_GPU, gbx, 210, gbw, bh, gpuLabel);
-        // 提示行
-        RECT hr = {(int)gbx, 256, (int)(gbx + gbw), 278};
-        SetTextColor(dc, RGB(190, 190, 190));
-        SetBkMode(dc, TRANSPARENT);
-        SetTextAlign(dc, TA_CENTER);
-        SelectObject(dc, font_);
-        DrawTextW(dc, utf8ToWide("切换显卡后重新启动游戏才会生效").c_str(), -1, &hr,
-                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        drawText("切换显卡后重新启动游戏才会生效", (int)gbx, 256, 0xFFBEBEBE, true, (int)gbw);
         if (data.renderDistPtr)
             addSlider(MENU_RENDERDIST, bx, 310, bw, 20, data.renderDistMin,
                       data.renderDistMax, data.renderDistPtr, "渲染距离");
         if (data.texSharpPtr)
             addSlider(MENU_TEXSHARP, bx, 380, bw, 20, data.texSharpMin,
                       data.texSharpMax, data.texSharpPtr, "近景清晰");
-        addBtn(MENU_BACK, bx, h - 90, bw, bh, "返回");
+        addBtn(MENU_BACK, bx, (float)(h - 90), bw, bh, "返回");
     } else if (screen == Menuscreen::Pause) {
-        float bw = 400, bh = 40;
-        float bx = (w - bw) / 2;
+        float bw = 400, bh = 40, bx = (w - bw) / 2;
         addBtn(MENU_SAVEANDTITLE, bx, 230, bw, bh, "保存并返回标题屏幕");
         addBtn(MENU_OPTIONS, bx, 290, bw, bh, "选项");
     }
 }
 
-int Menu::hitTest(float cx, float cy) const {
+int Menu::HitTest(float cx, float cy) const {
     for (auto& b : btns_)
         if (cx >= b.x && cx <= b.x + b.w && cy >= b.y && cy <= b.y + b.h) return b.id;
     return MENU_NONE;
 }
 
-int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
-                     float cx, float cy, bool mouseDown) {
-    const int wantW = ctx.extent.width, wantH = ctx.extent.height;
-    // 正常 resize 会走 main 的 onResize；这里兜住 extent 变但没通知的情况，
-    // 否则 staging 还是旧尺寸，下面的 memcpy 会越界写。
-    if (diw_ != wantW || dih_ != wantH) {
-        destroyMenuTexture(ctx);
-        ensureDIB(wantW, wantH);
-        createMenuTexture(ctx);
-    }
-    renderToDIB(screen, data, cx, cy);
-
-    // 本帧要先等上一帧提交完，再重写共用的 staging；写在 memcpy 之后等于没等。
+void Menu::UploadAndDraw(VkCtx& ctx) {
     if (frameIdx_ > 0) {
         uint32_t pslot = (uint32_t)((frameIdx_ - 1) % (uint64_t)VkCtx::MAX_FRAMES_IN_FLIGHT);
         vkWaitForFences(ctx.device, 1, &ctx.frames[pslot].fence, VK_TRUE, UINT64_MAX);
     }
-
-    // 上传 DIB(BGRA) 到 staging(RGBA)：交换 R/B 通道
-    {
-        void* p;
-        if (vkMapMemory(ctx.device, stagingMem_, 0, VK_WHOLE_SIZE, 0, &p) == VK_SUCCESS) {
-            uint32_t* dst = (uint32_t*)p;
-            uint32_t* src = (uint32_t*)dibBits_;
-            size_t n = (size_t)diw_ * dih_;
-            for (size_t i = 0; i < n; i++) {
-                uint32_t px = src[i];
-                dst[i] = (px & 0xFF00FF00) | ((px & 0x00FF0000) >> 16) | ((px & 0x000000FF) << 16);
-            }
-            vkUnmapMemory(ctx.device, stagingMem_);
-        }
+    void* p;
+    if (vkMapMemory(ctx.device, stagingMem_, 0, VK_WHOLE_SIZE, 0, &p) == VK_SUCCESS) {
+        memcpy(p, canvas_.data(), canvas_.size());
+        vkUnmapMemory(ctx.device, stagingMem_);
     }
-
-    // 本帧
     uint32_t imageIndex;
     uint32_t slot = (uint32_t)(frameIdx_ % (uint64_t)VkCtx::MAX_FRAMES_IN_FLIGHT);
     VkCtx::Frame& f = ctx.frames[slot];
-    if (!ctx.acquireNext(f, imageIndex)) {
-        ctx.recreateSwapchain(diw_, dih_);
-        return MENU_NONE;
-    }
+    if (!ctx.acquireNext(f, imageIndex)) { ctx.recreateSwapchain(canvasW_, canvasH_); return; }
     frameIdx_++;
 
     VkCommandBuffer cb = ctx.cmds[slot];
@@ -472,7 +358,6 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cb, &bi);
 
-    // 布局转换 + 上传
     VkImageMemoryBarrier bar = {};
     bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -485,7 +370,7 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
                          0, 0, nullptr, 0, nullptr, 1, &bar);
     VkBufferImageCopy bic = {};
     bic.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    bic.imageExtent = {(uint32_t)diw_, (uint32_t)dih_, 1};
+    bic.imageExtent = {(uint32_t)canvasW_, (uint32_t)canvasH_, 1};
     vkCmdCopyBufferToImage(cb, staging_, img_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &bic);
     bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -506,31 +391,36 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
     vkCmdSetViewport(cb, 0, 1, &vp);
     VkRect2D sc = {{0, 0}, ctx.extent};
     vkCmdSetScissor(cb, 0, 1, &sc);
-
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &set_, 0, nullptr);
     VkBuffer qb = quadBuf_;
     VkDeviceSize off = 0;
     vkCmdBindVertexBuffers(cb, 0, 1, &qb, &off);
     vkCmdDraw(cb, 6, 1, 0, 0);
-
     vkCmdEndRenderPass(cb);
     vkEndCommandBuffer(cb);
-    if (!ctx.presentImage(imageIndex, f, cb)) { ctx.recreateSwapchain(diw_, dih_); return MENU_NONE; }
+    if (!ctx.presentImage(imageIndex, f, cb)) ctx.recreateSwapchain(canvasW_, canvasH_);
+}
 
-    // 滑块拖拽交互（渲染距离 / 近景清晰等）
+int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
+                     float cx, float cy, bool mouseDown) {
+    if ((int)ctx.extent.width != canvasW_ || (int)ctx.extent.height != canvasH_) {
+        DestroyMenuTexture(ctx);
+        EnsureCanvas((int)ctx.extent.width, (int)ctx.extent.height);
+        CreateMenuTexture(ctx);
+    }
+    RenderCanvas(screen, data, cx, cy);
+    UploadAndDraw(ctx);
+
     if (!sliders_.empty()) {
         for (size_t i = 0; i < sliders_.size(); i++) {
             const Slider& s = sliders_[i];
-            bool overSlider = cx >= s.x && cx <= s.x + s.w &&
-                              cy >= s.y && cy <= s.y + s.h;
-            if (mouseDown && (overSlider || dragSlider_ == (int)i)) {
-                float frac = (cx - s.x) / (s.w);
-                frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
+            bool over = cx >= s.x && cx <= s.x + s.w && cy >= s.y && cy <= s.y + s.h;
+            if (mouseDown && (over || dragSlider_ == (int)i)) {
+                float frac = (cx - s.x) / s.w;
+                frac = std::max(0.0f, std::min(1.0f, frac));
                 int val = s.minV + (int)std::lround(frac * (s.maxV - s.minV));
-                if (val < s.minV) val = s.minV;
-                if (val > s.maxV) val = s.maxV;
-                if (s.val) *s.val = val;
+                if (s.val) *s.val = std::max(s.minV, std::min(s.maxV, val));
                 sliderDragging_ = true;
                 dragSlider_ = (int)i;
                 prevMouseDown_ = mouseDown;
@@ -540,26 +430,25 @@ int Menu::renderMenu(VkCtx& ctx, Menuscreen screen, const MenuData& data,
     }
     sliderDragging_ = false;
     dragSlider_ = -1;
-
-    if (mouseDown && !prevMouseDown_) {
-        // 锁存按下状态：否则同一次按住会在切换后的新界面上
-        // 误触发恰好位于光标下的按钮。
-        prevMouseDown_ = true;
-        return hitTest(cx, cy);
-    }
+    if (mouseDown && !prevMouseDown_) { prevMouseDown_ = true; return HitTest(cx, cy); }
     prevMouseDown_ = mouseDown;
     return MENU_NONE;
 }
 
 bool Menu::debugSaveMenu(const std::string& path) const {
-    if (!dibBits_) return false;
-    const uint8_t* src = (const uint8_t*)dibBits_;
-    std::vector<uint8_t> bgra(src, src + (size_t)diw_ * dih_ * 4);
-    return savePNG(path, diw_, dih_, bgra);
+    if (canvas_.empty()) return false;
+    std::vector<uint8_t> bgra(canvas_.size());
+    for (size_t i = 0; i < canvas_.size(); i += 4) {
+        bgra[i] = canvas_[i + 2];
+        bgra[i + 1] = canvas_[i + 1];
+        bgra[i + 2] = canvas_[i];
+        bgra[i + 3] = canvas_[i + 3];
+    }
+    return savePNG(path, canvasW_, canvasH_, bgra);
 }
 
 void Menu::shutdown(VkCtx& ctx) {
-    destroyMenuTexture(ctx);
+    DestroyMenuTexture(ctx);
     vkDeviceWaitIdle(ctx.device);
     if (quadBuf_) vkDestroyBuffer(ctx.device, quadBuf_, nullptr);
     if (quadMem_) vkFreeMemory(ctx.device, quadMem_, nullptr);
@@ -567,38 +456,10 @@ void Menu::shutdown(VkCtx& ctx) {
     if (dsl_) vkDestroyDescriptorSetLayout(ctx.device, dsl_, nullptr);
     if (layout_) vkDestroyPipelineLayout(ctx.device, layout_, nullptr);
     if (pipe_) vkDestroyPipeline(ctx.device, pipe_, nullptr);
-    if (font_) DeleteObject(font_);
-    if (asDC(dibDC_)) DeleteDC(asDC(dibDC_));
-    if (asBMP(dibBmp_)) DeleteObject(asBMP(dibBmp_));
-    if (asDC(btnDC_)) DeleteDC(asDC(btnDC_));
-    if (asBMP(btnBmp_)) DeleteObject(asBMP(btnBmp_));
-    if (asDC(btnHiDC_)) DeleteDC(asDC(btnHiDC_));
-    if (asBMP(btnHiBmp_)) DeleteObject(asBMP(btnHiBmp_));
-    if (asDC(fieldDC_)) DeleteDC(asDC(fieldDC_));
-    if (asBMP(fieldBmp_)) DeleteObject(asBMP(fieldBmp_));
-    if (asDC(sliderDC_)) DeleteDC(asDC(sliderDC_));
-    if (asBMP(sliderBmp_)) DeleteObject(asBMP(sliderBmp_));
-    if (asDC(handleDC_)) DeleteDC(asDC(handleDC_));
-    if (asBMP(handleBmp_)) DeleteObject(asBMP(handleBmp_));
-    if (asDC(handleHiDC_)) DeleteDC(asDC(handleHiDC_));
-    if (asBMP(handleHiBmp_)) DeleteObject(asBMP(handleHiBmp_));
-    if (asDC(dirtDC_)) DeleteDC(asDC(dirtDC_));
-    if (asBMP(dirtBmp_)) DeleteObject(asBMP(dirtBmp_));
     quadBuf_ = VK_NULL_HANDLE;
     quadMem_ = VK_NULL_HANDLE;
     mpool_ = VK_NULL_HANDLE;
     dsl_ = VK_NULL_HANDLE;
     layout_ = VK_NULL_HANDLE;
     pipe_ = VK_NULL_HANDLE;
-    font_ = nullptr;
 }
-
-#else  // !_WIN32 —— Linux 暂不提供菜单，main.cpp 会直接进世界
-// 菜单整套是 GDI 画的（九宫格位图 + DrawTextW 文本），移植到 X11 需要
-// 另做字体栅格化，暂时不做。Linux 上直接跳过菜单进世界，控制台指令仍可用。
-bool Menu::init(VkCtx&, Window&, const std::string&) { return true; }
-void Menu::shutdown(VkCtx&) {}
-int  Menu::renderMenu(VkCtx&, Menuscreen, const MenuData&, float, float, bool) { return MENU_NONE; }
-void Menu::onResize(VkCtx&, int, int) {}
-bool Menu::debugSaveMenu(const std::string&) const { return false; }
-#endif  // _WIN32

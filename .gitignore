@@ -5,7 +5,10 @@
 /build-dbg/
 
 # 游戏资源（从 Minecraft 提取，按 Mojang EULA 不随仓库分发）
-/assets/
+# 例外：font/ 是 OFL 授权的开源字体烘焙产物，必须入库，否则 CI 出的包没有菜单字体。
+/assets/*
+!/assets/font/
+!/assets/font/**
 
 # 根目录的测试截图
 /*.png
@@ -18,6 +21,8 @@
 *.a
 *.lib
 *.dll
+# ANGLE 运行库是 BSD-3-Clause，随包分发，必须入库。
+!/third_party/angle/**/*.dll
 
 # 编辑器 / IDE 配置
 .vscode/

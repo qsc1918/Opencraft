@@ -9,12 +9,17 @@
 #include <vector>
 
 // 缓冲 + 显存句柄对，destroy 后自动置空（重复 destroy 安全）。
+// 兼容派发层的释放入口：Vulkan 时原样转发，OpenGL 回退时释放 GL 资源。
+// 声明放在这里是因为 Buffer2::destroy 是内联的，GL 模式下绝不能调用空的 volk 指针。
+void gfxDestroyBuffer(VkDevice device, VkBuffer buffer, const VkAllocationCallbacks* callbacks);
+void gfxFreeMemory(VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks* callbacks);
+
 struct Buffer2 {
     VkBuffer b = VK_NULL_HANDLE;
     VkDeviceMemory m = VK_NULL_HANDLE;
     void destroy(VkDevice d) {
-        if (b) vkDestroyBuffer(d, b, nullptr);
-        if (m) vkFreeMemory(d, m, nullptr);
+        if (b) gfxDestroyBuffer(d, b, nullptr);
+        if (m) gfxFreeMemory(d, m, nullptr);
         b = VK_NULL_HANDLE;
         m = VK_NULL_HANDLE;
     }

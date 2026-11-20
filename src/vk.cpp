@@ -431,6 +431,7 @@ bool VkCtx::init(Window& win, int w, int h) {
 }
 
 uint32_t VkCtx::findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props) const {
+    if (useGL) return 0; // GL 回退没有 Vulkan 内存类型，句柄只是索引
     VkPhysicalDeviceMemoryProperties mp;
     vkGetPhysicalDeviceMemoryProperties(phys, &mp);
     for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
@@ -516,6 +517,7 @@ void VkCtx::destroyDepth() {
 }
 
 bool VkCtx::recreateSwapchain(int w, int h) {
+    if (useGL) { extent = { (uint32_t)w, (uint32_t)h }; return true; }
     vkDeviceWaitIdle(device);
     destroySwapchainObjects();
     destroyDepth();
@@ -586,6 +588,7 @@ bool VkCtx::recreateSwapchain(int w, int h) {
 }
 
 bool VkCtx::acquireNext(Frame& f, uint32_t& imageIndex) {
+    if (useGL) { imageIndex = 0; return true; }
     vkWaitForFences(device, 1, &f.fence, VK_TRUE, UINT64_MAX);
     imageIndex = 0;
     VkResult r = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, f.avail, VK_NULL_HANDLE, &imageIndex);
@@ -596,6 +599,7 @@ bool VkCtx::acquireNext(Frame& f, uint32_t& imageIndex) {
 }
 
 bool VkCtx::presentImage(uint32_t imageIndex, Frame& f, VkCommandBuffer cmd) {
+    if (useGL) { gfxGLSwap(*this); return true; }
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo si = {};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -620,6 +624,7 @@ bool VkCtx::presentImage(uint32_t imageIndex, Frame& f, VkCommandBuffer cmd) {
 }
 
 void VkCtx::shutdown() {
+    if (useGL) { gfxGLShutdown(*this); return; }
     vkDeviceWaitIdle(device);
     destroySwapchainObjects();
     destroyDepth();

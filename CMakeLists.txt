@@ -109,8 +109,11 @@ add_executable(opencraft
   src/camera.cpp
   src/player.cpp
   src/renderer.cpp
+  src/gfx_gl.cpp
+  src/gfx_angle.cpp
   src/save.cpp
   src/menu.cpp
+  src/font.cpp
   src/version.cpp
   src/volk_impl.c
 )
@@ -127,12 +130,14 @@ target_compile_definitions(opencraft PRIVATE VK_NO_PROTOTYPES)
 if(WIN32)
   # user32/gdi32：窗口与菜单。ole32/oleaut32 原来给 WIC 读 PNG 用，
   # 现在 PNG 读写都是自带的（png_decode.cpp / png.cpp），已不再需要。
-  target_link_libraries(opencraft PRIVATE user32 gdi32)
+  # opengl32 只提供 GL 1.1 入口与 wgl 上下文函数，3.3 函数由 gfx_gl.cpp 动态加载
+  target_link_libraries(opencraft PRIVATE user32 gdi32 opengl32)
 else()
   # X11 窗口 + Vulkan Xlib surface；dl/pthread 是动态加载器与线程要的
   find_package(X11 REQUIRED)
-  target_include_directories(opencraft PRIVATE ${X11_INCLUDE_DIR})
-  target_link_libraries(opencraft PRIVATE ${X11_LIBRARIES} ${CMAKE_DL_LIBS} pthread)
+  find_package(OpenGL REQUIRED)
+  target_include_directories(opencraft PRIVATE ${X11_INCLUDE_DIR} ${OPENGL_INCLUDE_DIR})
+  target_link_libraries(opencraft PRIVATE ${X11_LIBRARIES} ${OPENGL_LIBRARIES} ${CMAKE_DL_LIBS} pthread)
 endif()
 
 # 版本号：编译时读 version.txt 的 [current]，再拼上当前时间戳
@@ -198,6 +203,56 @@ foreach(s ${SHADER_FILES})
 endforeach()
 add_custom_target(shaders ALL DEPENDS ${SPV_TARGETS})
 add_dependencies(opencraft shaders)
+
+# OpenGL 回退用的是独立 GLSL 330 源码，不能复用 Vulkan 的 SPIR-V。
+# 复制到 build/shaders/gl330/，运行时与 exe 旁的 shaders/ 走同一定位逻辑。
+add_custom_target(gl_shaders ALL
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${SPV}/gl330
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gl330 ${SPV}/gl330
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gl120 ${SPV}/gl120
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gles100 ${SPV}/gles100
+  COMMENT "复制 OpenGL 回退着色器"
+)
+add_dependencies(opencraft gl_shaders)
+
+# ANGLE 兜底档的运行库与许可证：动态加载，不参与链接。
+if(WIN32)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64|aarch64")
+    set(ANGLE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/angle/winarm64)
+  else()
+    set(ANGLE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/angle/win64)
+  endif()
+  set(ANGLE_FILES libEGL.dll libGLESv2.dll d3dcompiler_47.dll vk_swiftshader.dll
+                  vk_swiftshader_icd.json vulkan-1.dll LICENSE
+                  SWIFTSHADER_LICENSE.txt VULKAN_LOADER_LICENSE.txt)
+else()
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64|arm64")
+    set(ANGLE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/angle/linuxarm64)
+  else()
+    set(ANGLE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/angle/linux64)
+  endif()
+  set(ANGLE_FILES libEGL.so libGLESv2.so libvk_swiftshader.so
+                  vk_swiftshader_icd.json LICENSE SWIFTSHADER_LICENSE.txt)
+endif()
+foreach(f ${ANGLE_FILES})
+  add_custom_command(TARGET opencraft POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ANGLE_DIR}/${f} $<TARGET_FILE_DIR:opencraft>/${f}
+    COMMENT "复制 ANGLE 运行库 ${f}"
+  )
+endforeach()
+
+# Win7/8/8.1 专用的旧版 ANGLE (2023-02-12)：新版 DLL 静态依赖 Win8 才有的
+# api-ms-win-core-synch-l1-2-0.dll，在 Win7 上根本加载不了。
+if(WIN32)
+  set(ANGLE_WIN7_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/angle/win7_x64)
+  foreach(f libEGL.dll libGLESv2.dll d3dcompiler_47.dll commit.txt LICENSE)
+    add_custom_command(TARGET opencraft POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:opencraft>/angle-win7
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ANGLE_WIN7_DIR}/${f} $<TARGET_FILE_DIR:opencraft>/angle-win7/${f}
+      COMMENT "复制 Win7 ANGLE 运行库 ${f}"
+    )
+  endforeach()
+endif()
 
 # 资源与版本文件复制到 exe 旁边（程序按相对路径读取）
 set(COPY_EXTRA)

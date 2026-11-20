@@ -29,10 +29,11 @@ cmake --build build
 
 ## Linux
 
-Linux 版用 X11 + Vulkan（Xlib surface），和 Windows 版共用同一份渲染/世界/生物代码：
+Linux 版用 X11 + Vulkan（Xlib surface），Vulkan 不可用时可回退 OpenGL 3.3；
+和 Windows 版共用同一份渲染/世界/生物/菜单代码：
 
 ```sh
-sudo apt install cmake ninja-build libx11-dev libvulkan-dev glslang-tools
+sudo apt install cmake ninja-build libx11-dev libvulkan-dev libgl1-mesa-dev glslang-tools
 python tools/extract_assets.py            # 从 jar 提取贴图（C++ 那个提取器只在 Windows 上编）
 cmake -G Ninja -S . -B build-linux -DOPENCRAFT_AUTO_PACKAGE=OFF
 cmake --build build-linux
@@ -41,9 +42,16 @@ cmake --build build-linux
 
 几点说明：
 
-* **菜单暂时只有 Windows 版**。菜单是用 GDI（DIB 九宫格 + `DrawTextW`）画的，
-  移植到 X11 要另做字体栅格化。Linux 上启动会直接进世界，种子与存档用命令行参数
-  和控制台指令（`help` 看用法），`Esc` 退出。
+* 菜单不再依赖 GDI：用自带的像素字体（缝合像素 12px，OFL-1.1）在 CPU 画布上绘制，
+  Windows/Linux 的菜单截图逐字节相同。字体资源在 `assets/font/`，重新烘焙见
+  `tools/bake_font.py`。`Esc` 在 Windows/Linux 都打开暂停菜单。
+* 渲染后端默认 Vulkan 优先；Vulkan 初始化失败才回退 OpenGL，完整档是 3.3，
+  老设备自动退到 2.1，最后才试 ANGLE / GLES2。可用 `--renderer vulkan|opengl|angle|auto`
+  与 `--gl-legacy` 显式指定（诊断用）；`OPENCRAFT_ANGLE_SWIFTSHADER=1` 强制软件渲染。
+  ANGLE 运行库与许可证随包放在 `third_party/angle/`；Win7/8/8.1 会自动改用
+  `angle-win7/` 里的 2023-02-12 旧版 ANGLE（新版 ANGLE 静态依赖 Win8 才有的
+  `api-ms-win-core-synch-l1-2-0.dll`，在 Win7 上加载失败）。
+  诊断可用 `OPENCRAFT_ANGLE_WIN7=1` 强制加载旧版。
 * 着色器编译器优先 `glslc`（Vulkan SDK 自带），没有就退回 `glslangValidator`。
 * 无头环境（CI / 服务器）可以用 `xvfb-run`；没有显卡时 Mesa 的 lavapipe
   （`mesa-vulkan-drivers`）也能跑，只是慢。
