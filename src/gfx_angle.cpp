@@ -1,6 +1,7 @@
 // ANGLE / GLES2 兜底档：用 EGL 创建 D3D11（或 SwiftShader）上下文，
 // 复用 gfx_gl.cpp 的派发层与 GLSL ES 100 着色器。Vulkan 主后端完全不受影响。
 #include "vk.hpp"
+#include "gfx_shim.hpp"
 #include "gl_api.hpp"
 #include "window.hpp"
 #include "platform.hpp"
@@ -211,6 +212,7 @@ void InitContextState(VkCtx& ctx, int w, int h) {
     if (interval) interval(eglDisplay, ctx.vsync ? 1 : 0);
 
     g_gfxUseGL = true;
+    g_gfxBackend = GfxBackend::Angle;
     g_gfxUseEGL = true;
     g_glLegacy = true;
     g_gfxUseGLES = true;

@@ -7,6 +7,7 @@
 #include "window.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -38,6 +39,8 @@ struct BufferRec {
     uint32_t legacyGl = 0;
     uint32_t legacyIndexGl = 0;
     size_t legacyVertexBytes = 0;
+    // 缓冲会被 freePool_ 复用并原地改写，签名变化时必须重做转换，否则画出旧几何。
+    uint8_t signature[32] = {};
 };
 struct ImageRec {
     int w = 0, h = 0;
@@ -135,7 +138,12 @@ void UploadBuffer(VkBuffer buffer) {
 // 老设备档把 12 字节整数顶点（4×int16 + 4×uint8）转成两个 vec4 浮点属性。
 void EnsureLegacyFormat(VkBuffer buffer, size_t vertexBytes) {
     BufferRec* b = Lookup(g_buffers, (uint64_t)buffer);
-    if (!b || b->legacyGl || vertexBytes == 0 || vertexBytes > b->cpu.size()) return;
+    if (!b || vertexBytes == 0 || vertexBytes > b->cpu.size()) return;
+    size_t sigBytes = std::min<size_t>(32, b->cpu.size());
+    if (b->legacyGl && b->legacyVertexBytes == vertexBytes &&
+        memcmp(b->cpu.data(), b->signature, sigBytes) == 0) return;
+    if (b->legacyGl) { gfxgl::DeleteBuffers(1, &b->legacyGl); b->legacyGl = 0; }
+    if (b->legacyIndexGl) { gfxgl::DeleteBuffers(1, &b->legacyIndexGl); b->legacyIndexGl = 0; }
     size_t count = vertexBytes / 12;
     std::vector<float> converted(count * 8);
     for (size_t i = 0; i < count; i++) {
@@ -160,6 +168,8 @@ void EnsureLegacyFormat(VkBuffer buffer, size_t vertexBytes) {
                           b->cpu.data() + vertexBytes, gfxgl::kStaticDraw);
     }
     b->legacyVertexBytes = vertexBytes;
+    memset(b->signature, 0, sizeof(b->signature));
+    memcpy(b->signature, b->cpu.data(), sigBytes);
 }
 
 void SetUniforms(PipelineRec& p, int kind, DescSetRec* set) {
@@ -344,7 +354,6 @@ bool LoadFunctions(Proc (*gp)(const char*), bool legacy) {
 
 void ClearFunctions() { getProc = nullptr; }
 
-} // namespace gfxgl
 
 // ---------------------------------------------------------------------------
 // 上下文：Win32 用 WGL，Linux 用 GLX。都只创建一次，进程退出时销毁。
@@ -424,8 +433,7 @@ bool CreateGlContext(Window& win, bool core) {
         auto createAttribs = (CreateAttribsFn)wglGetProcAddress("wglCreateContextAttribsARB");
         if (createAttribs) {
             const int attribs[] = {
-                0x2028, 3, 0x2029, 3,        // MAJOR / MINOR
-                0x9126, 0x00000001,          // PROFILE_MASK = CORE
+                0x2091, 3, 0x2092, 3,        // MAJOR / MINOR
                 0
             };
             g_glctx.rc = createAttribs(g_glctx.dc, nullptr, attribs);
@@ -497,6 +505,7 @@ bool gfxGLInit(VkCtx& ctx, Window& win, int w, int h, bool forceLegacy) {
     SetVsync(ctx.vsync);
 
     g_gfxUseGL = true;
+    g_gfxBackend = GfxBackend::OpenGL;
     ctx.useGL = true;
     ctx.ok = true;
     ctx.extent = { (uint32_t)w, (uint32_t)h };
@@ -514,8 +523,9 @@ bool gfxGLInit(VkCtx& ctx, Window& win, int w, int h, bool forceLegacy) {
 }
 
 void gfxGLSwap(VkCtx& ctx) {
-    if (!g_glctx.valid) return;
+    // ANGLE 上下文不走 WGL，不能用 g_glctx.valid 判断，否则 eglSwapBuffers 永远不会被调用。
     if (g_gfxUseEGL) { gfxAngleSwap(); return; }
+    if (!g_glctx.valid) return;
 #ifdef _WIN32
     SwapBuffers(g_glctx.dc);
 #else
@@ -552,7 +562,6 @@ void gfxGLShutdown(VkCtx& ctx) {
 // gfx* 派发：Vulkan 原样转发，OpenGL 分支实现相同语义。
 // ---------------------------------------------------------------------------
 VkResult gfxCreateImage(VkDevice d, const VkImageCreateInfo* ci, const VkAllocationCallbacks* a, VkImage* out) {
-    if (!g_gfxUseGL) return vkCreateImage(d, ci, a, out);
     ImageRec rec;
     rec.w = (int)ci->extent.width;
     rec.h = (int)ci->extent.height;
@@ -571,7 +580,6 @@ VkResult gfxCreateImage(VkDevice d, const VkImageCreateInfo* ci, const VkAllocat
     return VK_SUCCESS;
 }
 void gfxDestroyBuffer(VkDevice d, VkBuffer b, const VkAllocationCallbacks* a) {
-    if (!g_gfxUseGL) return vkDestroyBuffer(d, b, a);
     BufferRec* r = Lookup(g_buffers, (uint64_t)b);
     if (r) {
         if (r->gl) gfxgl::DeleteBuffers(1, &r->gl);
@@ -581,13 +589,11 @@ void gfxDestroyBuffer(VkDevice d, VkBuffer b, const VkAllocationCallbacks* a) {
     g_buffers.erase((uint64_t)b);
 }
 void gfxDestroyImage(VkDevice d, VkImage i, const VkAllocationCallbacks* a) {
-    if (!g_gfxUseGL) return vkDestroyImage(d, i, a);
     ImageRec* r = Lookup(g_images, (uint64_t)i);
     if (r && r->gl) gfxgl::DeleteTextures(1, &r->gl);
     g_images.erase((uint64_t)i);
 }
 void gfxGetImageMemoryRequirements(VkDevice d, VkImage i, VkMemoryRequirements* mr) {
-    if (!g_gfxUseGL) return vkGetImageMemoryRequirements(d, i, mr);
     ImageRec* r = Lookup(g_images, (uint64_t)i);
     size_t bytes = r ? (size_t)r->w * r->h * 4 : 4;
     *mr = {};
@@ -595,7 +601,6 @@ void gfxGetImageMemoryRequirements(VkDevice d, VkImage i, VkMemoryRequirements* 
     mr->alignment = 4;
 }
 VkResult gfxAllocateMemory(VkDevice d, const VkMemoryAllocateInfo* ai, const VkAllocationCallbacks* a, VkDeviceMemory* out) {
-    if (!g_gfxUseGL) return vkAllocateMemory(d, ai, a, out);
     MemRec rec;
     rec.size = (size_t)ai->allocationSize;
     *out = (VkDeviceMemory)(uintptr_t)NextHandle();
@@ -603,17 +608,14 @@ VkResult gfxAllocateMemory(VkDevice d, const VkMemoryAllocateInfo* ai, const VkA
     return VK_SUCCESS;
 }
 void gfxFreeMemory(VkDevice d, VkDeviceMemory m, const VkAllocationCallbacks* a) {
-    if (!g_gfxUseGL) return vkFreeMemory(d, m, a);
     g_mems.erase((uint64_t)m);
 }
 VkResult gfxBindImageMemory(VkDevice d, VkImage i, VkDeviceMemory m, VkDeviceSize off) {
-    if (!g_gfxUseGL) return vkBindImageMemory(d, i, m, off);
     MemRec* mr = Lookup(g_mems, (uint64_t)m);
     if (mr) mr->image = i;
     return VK_SUCCESS;
 }
 VkResult gfxMapMemory(VkDevice d, VkDeviceMemory m, VkDeviceSize off, VkDeviceSize size, VkMemoryMapFlags flags, void** out) {
-    if (!g_gfxUseGL) return vkMapMemory(d, m, off, size, flags, out);
     MemRec* mr = Lookup(g_mems, (uint64_t)m);
     if (!mr) return VK_ERROR_MEMORY_MAP_FAILED;
     // 缓冲的 CPU 镜像只有一份：缓冲记录和它的内存记录共享同一块数据，
@@ -631,25 +633,19 @@ VkResult gfxMapMemory(VkDevice d, VkDeviceMemory m, VkDeviceSize off, VkDeviceSi
     return VK_SUCCESS;
 }
 void gfxUnmapMemory(VkDevice d, VkDeviceMemory m) {
-    if (!g_gfxUseGL) vkUnmapMemory(d, m);
 }
 
 VkResult gfxCreateDescriptorSetLayout(VkDevice d, const VkDescriptorSetLayoutCreateInfo* ci, const VkAllocationCallbacks* a, VkDescriptorSetLayout* out) {
-    if (!g_gfxUseGL) return vkCreateDescriptorSetLayout(d, ci, a, out);
     *out = (VkDescriptorSetLayout)(uintptr_t)NextHandle(); return VK_SUCCESS;
 }
 void gfxDestroyDescriptorSetLayout(VkDevice d, VkDescriptorSetLayout l, const VkAllocationCallbacks* a) {
-    if (!g_gfxUseGL) vkDestroyDescriptorSetLayout(d, l, a);
 }
 VkResult gfxCreateDescriptorPool(VkDevice d, const VkDescriptorPoolCreateInfo* ci, const VkAllocationCallbacks* a, VkDescriptorPool* out) {
-    if (!g_gfxUseGL) return vkCreateDescriptorPool(d, ci, a, out);
     *out = (VkDescriptorPool)(uintptr_t)NextHandle(); return VK_SUCCESS;
 }
 void gfxDestroyDescriptorPool(VkDevice d, VkDescriptorPool p, const VkAllocationCallbacks* a) {
-    if (!g_gfxUseGL) vkDestroyDescriptorPool(d, p, a);
 }
 VkResult gfxAllocateDescriptorSets(VkDevice d, const VkDescriptorSetAllocateInfo* ai, VkDescriptorSet* out) {
-    if (!g_gfxUseGL) return vkAllocateDescriptorSets(d, ai, out);
     for (uint32_t i = 0; i < ai->descriptorSetCount; i++) {
         out[i] = (VkDescriptorSet)(uintptr_t)NextHandle();
         g_sets[(uint64_t)out[i]] = DescSetRec{};
@@ -657,7 +653,6 @@ VkResult gfxAllocateDescriptorSets(VkDevice d, const VkDescriptorSetAllocateInfo
     return VK_SUCCESS;
 }
 void gfxUpdateDescriptorSets(VkDevice d, uint32_t n, const VkWriteDescriptorSet* w, uint32_t c, const VkCopyDescriptorSet* cp) {
-    if (!g_gfxUseGL) return vkUpdateDescriptorSets(d, n, w, c, cp);
     for (uint32_t i = 0; i < n; i++) {
         DescSetRec* ds = Lookup(g_sets, (uint64_t)w[i].dstSet);
         if (!ds) continue;
@@ -670,21 +665,17 @@ void gfxUpdateDescriptorSets(VkDevice d, uint32_t n, const VkWriteDescriptorSet*
     }
 }
 VkResult gfxCreatePipelineLayout(VkDevice d, const VkPipelineLayoutCreateInfo* ci, const VkAllocationCallbacks* a, VkPipelineLayout* out) {
-    if (!g_gfxUseGL) return vkCreatePipelineLayout(d, ci, a, out);
     *out = (VkPipelineLayout)(uintptr_t)NextHandle(); return VK_SUCCESS;
 }
 void gfxDestroyPipelineLayout(VkDevice d, VkPipelineLayout l, const VkAllocationCallbacks* a) {
-    if (!g_gfxUseGL) vkDestroyPipelineLayout(d, l, a);
 }
 void gfxDestroyPipeline(VkDevice d, VkPipeline p, const VkAllocationCallbacks* a) {
-    if (!g_gfxUseGL) return vkDestroyPipeline(d, p, a);
     PipelineRec* r = Lookup(g_pipelines, (uint64_t)p);
     if (r && r->program) gfxgl::DeleteProgram(r->program);
     g_pipelines.erase((uint64_t)p);
 }
 
 VkResult gfxCreateSampler(VkDevice d, const VkSamplerCreateInfo* ci, const VkAllocationCallbacks* a, VkSampler* out) {
-    if (!g_gfxUseGL) return vkCreateSampler(d, ci, a, out);
     SamplerRec rec;
     rec.nearest = ci->minFilter == VK_FILTER_NEAREST && ci->magFilter == VK_FILTER_NEAREST;
     rec.mip = ci->maxLod > 0.5f && ci->mipmapMode != VK_SAMPLER_MIPMAP_MODE_NEAREST;
@@ -694,19 +685,16 @@ VkResult gfxCreateSampler(VkDevice d, const VkSamplerCreateInfo* ci, const VkAll
     return VK_SUCCESS;
 }
 void gfxDestroySampler(VkDevice d, VkSampler s, const VkAllocationCallbacks* a) {
-    if (!g_gfxUseGL) vkDestroySampler(d, s, a);
-    else g_samplers.erase((uint64_t)s);
+    g_samplers.erase((uint64_t)s);
 }
 VkResult gfxCreateImageView(VkDevice d, const VkImageViewCreateInfo* ci, const VkAllocationCallbacks* a, VkImageView* out) {
-    if (!g_gfxUseGL) return vkCreateImageView(d, ci, a, out);
     ImageRec* r = Lookup(g_images, (uint64_t)ci->image);
     *out = (VkImageView)(uintptr_t)NextHandle();
     g_views[(uint64_t)*out] = ViewRec{ r ? r->gl : 0 };
     return VK_SUCCESS;
 }
 void gfxDestroyImageView(VkDevice d, VkImageView v, const VkAllocationCallbacks* a) {
-    if (!g_gfxUseGL) vkDestroyImageView(d, v, a);
-    else g_views.erase((uint64_t)v);
+    g_views.erase((uint64_t)v);
 }
 
 VkResult gfxResetCommandBuffer(VkCommandBuffer cb, VkCommandBufferResetFlags f) {
@@ -722,11 +710,9 @@ void gfxCmdPipelineBarrier(VkCommandBuffer cb, VkPipelineStageFlags s1, VkPipeli
                            VkDependencyFlags dep, uint32_t a, const VkMemoryBarrier* mb,
                            uint32_t b, const VkBufferMemoryBarrier* bb,
                            uint32_t c, const VkImageMemoryBarrier* ib) {
-    if (!g_gfxUseGL) vkCmdPipelineBarrier(cb, s1, s2, dep, a, mb, b, bb, c, ib);
 }
 void gfxCmdCopyBufferToImage(VkCommandBuffer cb, VkBuffer src, VkImage img, VkImageLayout,
                              uint32_t n, const VkBufferImageCopy* copies) {
-    if (!g_gfxUseGL) return vkCmdCopyBufferToImage(cb, src, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, n, copies);
     BufferRec* br = Lookup(g_buffers, (uint64_t)src);
     ImageRec* ir = Lookup(g_images, (uint64_t)img);
     if (!br || !ir || !ir->gl) return;
@@ -743,7 +729,6 @@ void gfxCmdCopyBufferToImage(VkCommandBuffer cb, VkBuffer src, VkImage img, VkIm
 }
 void gfxCmdCopyImageToBuffer(VkCommandBuffer cb, VkImage img, VkImageLayout layout, VkBuffer dst,
                              uint32_t n, const VkBufferImageCopy* copies) {
-    if (!g_gfxUseGL) return vkCmdCopyImageToBuffer(cb, img, layout, dst, n, copies);
     BufferRec* br = Lookup(g_buffers, (uint64_t)dst);
     if (!br || !n) return;
     int w = (int)copies[0].imageExtent.width, h = (int)copies[0].imageExtent.height;
@@ -756,31 +741,27 @@ void gfxCmdCopyImageToBuffer(VkCommandBuffer cb, VkImage img, VkImageLayout layo
 }
 void gfxCmdBlitImage(VkCommandBuffer cb, VkImage src, VkImageLayout srcLayout, VkImage dst, VkImageLayout dstLayout,
                      uint32_t n, const VkImageBlit* blits, VkFilter f) {
-    if (!g_gfxUseGL) vkCmdBlitImage(cb, src, srcLayout, dst, dstLayout, n, blits, f);
 }
 void gfxCmdBeginRenderPass(VkCommandBuffer cb, const VkRenderPassBeginInfo* rp, VkSubpassContents sc) {
-    if (!g_gfxUseGL) return vkCmdBeginRenderPass(cb, rp, sc);
     const VkClearValue* cv = rp->pClearValues;
     if (rp->clearValueCount > 0) {
         gfxgl::ClearColor(cv[0].color.float32[0], cv[0].color.float32[1],
                           cv[0].color.float32[2], cv[0].color.float32[3]);
     }
     if (rp->clearValueCount > 1) gfxgl::ClearDepth(cv[1].depthStencil.depth);
+    // glClear 的深度写入受 DepthMask 影响，上一帧若以 UI/水收尾会留下 false。
+    gfxgl::DepthMask(gfxgl::kTrue);
     gfxgl::Clear(gfxgl::kColorBufferBit | gfxgl::kDepthBufferBit);
 }
 void gfxCmdEndRenderPass(VkCommandBuffer cb) {
-    if (!g_gfxUseGL) vkCmdEndRenderPass(cb);
 }
 void gfxCmdSetViewport(VkCommandBuffer cb, uint32_t f, uint32_t n, const VkViewport* vp) {
-    if (!g_gfxUseGL) return vkCmdSetViewport(cb, f, n, vp);
     gfxgl::Viewport((int)vp->x, (int)vp->y, (int)vp->width, (int)vp->height);
 }
 void gfxCmdSetScissor(VkCommandBuffer cb, uint32_t f, uint32_t n, const VkRect2D* r) {
-    if (!g_gfxUseGL) return vkCmdSetScissor(cb, f, n, r);
     gfxgl::Scissor(r->offset.x, r->offset.y, (int)r->extent.width, (int)r->extent.height);
 }
 void gfxCmdBindPipeline(VkCommandBuffer cb, VkPipelineBindPoint bp, VkPipeline p) {
-    if (!g_gfxUseGL) return vkCmdBindPipeline(cb, bp, p);
     g_boundPipe = p;
     PipelineRec* pr = Lookup(g_pipelines, (uint64_t)p);
     if (!pr) return;
@@ -795,16 +776,13 @@ void gfxCmdBindPipeline(VkCommandBuffer cb, VkPipelineBindPoint bp, VkPipeline p
 }
 void gfxCmdBindDescriptorSets(VkCommandBuffer cb, VkPipelineBindPoint bp, VkPipelineLayout l,
                               uint32_t f, uint32_t n, const VkDescriptorSet* s, uint32_t d, const uint32_t* o) {
-    if (!g_gfxUseGL) return vkCmdBindDescriptorSets(cb, bp, l, f, n, s, d, o);
     if (n) g_boundSet = s[0];
     g_boundLayout = l;
 }
 void gfxCmdBindVertexBuffers(VkCommandBuffer cb, uint32_t f, uint32_t n, const VkBuffer* b, const VkDeviceSize* o) {
-    if (!g_gfxUseGL) return vkCmdBindVertexBuffers(cb, f, n, b, o);
     if (n) { g_boundVB = b[0]; UploadBuffer(b[0]); }
 }
 void gfxCmdBindIndexBuffer(VkCommandBuffer cb, VkBuffer b, VkDeviceSize off, VkIndexType t) {
-    if (!g_gfxUseGL) return vkCmdBindIndexBuffer(cb, b, off, t);
     g_boundIB = b;
     g_indexType = t;
     g_indexOffset = off;
@@ -821,11 +799,9 @@ void gfxCmdBindIndexBuffer(VkCommandBuffer cb, VkBuffer b, VkDeviceSize off, VkI
 }
 void gfxCmdPushConstants(VkCommandBuffer cb, VkPipelineLayout l, VkShaderStageFlags st,
                          uint32_t off, uint32_t size, const void* data) {
-    if (!g_gfxUseGL) return vkCmdPushConstants(cb, l, st, off, size, data);
     memcpy(g_origin, data, std::min<size_t>(size, sizeof(g_origin)));
 }
 void gfxCmdDraw(VkCommandBuffer cb, uint32_t vc, uint32_t ic, uint32_t vf, uint32_t fi) {
-    if (!g_gfxUseGL) return vkCmdDraw(cb, vc, ic, vf, fi);
     PipelineRec* pr = Lookup(g_pipelines, (uint64_t)g_boundPipe);
     if (!pr) return;
     PrepareDraw(g_boundPipe, g_boundSet);
@@ -874,7 +850,6 @@ void gfxCmdDraw(VkCommandBuffer cb, uint32_t vc, uint32_t ic, uint32_t vf, uint3
     gfxgl::DrawArrays(gfxgl::kTriangles, (int)fi, (int)vc);
 }
 void gfxCmdDrawIndexed(VkCommandBuffer cb, uint32_t ic, uint32_t inst, uint32_t fi, int32_t vi, uint32_t fInst) {
-    if (!g_gfxUseGL) return vkCmdDrawIndexed(cb, ic, inst, fi, vi, fInst);
     PipelineRec* pr = Lookup(g_pipelines, (uint64_t)g_boundPipe);
     if (!pr) return;
     PrepareDraw(g_boundPipe, g_boundSet);
@@ -899,25 +874,20 @@ void gfxCmdDrawIndexed(VkCommandBuffer cb, uint32_t ic, uint32_t inst, uint32_t 
                         (const void*)(uintptr_t)(g_indexOffset + fi * stride));
 }
 VkResult gfxQueueSubmit(VkQueue q, uint32_t n, const VkSubmitInfo* si, VkFence f) {
-    if (!g_gfxUseGL) return vkQueueSubmit(q, n, si, f);
     gfxgl::Flush();
     return VK_SUCCESS;
 }
 VkResult gfxQueueWaitIdle(VkQueue q) {
-    if (!g_gfxUseGL) return vkQueueWaitIdle(q);
     gfxgl::Finish();
     return VK_SUCCESS;
 }
 VkResult gfxWaitForFences(VkDevice d, uint32_t n, const VkFence* f, VkBool32 wait, uint64_t t) {
-    if (!g_gfxUseGL) return vkWaitForFences(d, n, f, wait, t);
     return VK_SUCCESS;
 }
 void gfxDeviceWaitIdle(VkDevice d) {
-    if (!g_gfxUseGL) vkDeviceWaitIdle(d);
-    else gfxgl::Finish();
+    gfxgl::Finish();
 }
 void gfxGetPhysicalDeviceFeatures(VkPhysicalDevice p, VkPhysicalDeviceFeatures* f) {
-    if (!g_gfxUseGL) return vkGetPhysicalDeviceFeatures(p, f);
     if (f) *f = {};
 }
 
@@ -926,7 +896,6 @@ namespace gfxutil {
 std::vector<char> readFile(const std::string& path) { return vkutil::readFile(path); }
 
 bool createBuffer(VkCtx& ctx, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, Buffer2& out) {
-    if (!g_gfxUseGL) return vkutil::createBuffer(ctx, size, usage, props, out);
     BufferRec rec;
     rec.size = (size_t)size;
     rec.cpu.assign(rec.size, 0);
@@ -945,29 +914,27 @@ bool createBuffer(VkCtx& ctx, VkDeviceSize size, VkBufferUsageFlags usage, VkMem
 }
 bool createImage(VkCtx& ctx, uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage,
                  VkMemoryPropertyFlags props, VkImage& image, VkDeviceMemory& mem) {
-    if (!g_gfxUseGL) return vkutil::createImage(ctx, w, h, fmt, usage, props, image, mem);
     VkImageCreateInfo ci = {};
     ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ci.extent = { w, h, 1 };
     ci.format = fmt;
     ci.mipLevels = 1;
-    if (gfxCreateImage(ctx.device, &ci, nullptr, &image) != VK_SUCCESS) return false;
+    if (gfxgl::gfxCreateImage(ctx.device, &ci, nullptr, &image) != VK_SUCCESS) return false;
     VkMemoryRequirements mr = {};
-    gfxGetImageMemoryRequirements(ctx.device, image, &mr);
+    gfxgl::gfxGetImageMemoryRequirements(ctx.device, image, &mr);
     VkMemoryAllocateInfo ai = {};
     ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     ai.allocationSize = mr.size;
-    if (gfxAllocateMemory(ctx.device, &ai, nullptr, &mem) != VK_SUCCESS) return false;
-    gfxBindImageMemory(ctx.device, image, mem, 0);
+    if (gfxgl::gfxAllocateMemory(ctx.device, &ai, nullptr, &mem) != VK_SUCCESS) return false;
+    gfxgl::gfxBindImageMemory(ctx.device, image, mem, 0);
     return true;
 }
 VkImageView create2DView(VkDevice dev, VkImage image, VkFormat format) {
-    if (!g_gfxUseGL) return vkutil::create2DView(dev, image, format);
     VkImageViewCreateInfo ci = {};
     ci.image = image;
     ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     VkImageView out;
-    gfxCreateImageView(VK_NULL_HANDLE, &ci, nullptr, &out);
+    gfxgl::gfxCreateImageView(VK_NULL_HANDLE, &ci, nullptr, &out);
     return out;
 }
 VkPipeline makePipeline(VkCtx& ctx, VkRenderPass rp, VkPipelineLayout layout,
@@ -975,16 +942,13 @@ VkPipeline makePipeline(VkCtx& ctx, VkRenderPass rp, VkPipelineLayout layout,
                         const VkVertexInputBindingDescription* bindings, const VkVertexInputAttributeDescription* attrs,
                         uint32_t bindingCount, uint32_t attrCount, VkPrimitiveTopology topo, VkCullModeFlags cull,
                         bool blend, bool depthTest, bool depthWrite) {
-    if (!g_gfxUseGL) return vkutil::makePipeline(ctx, rp, layout, shaderDir, vsName, fsName,
-                                                 bindings, attrs, bindingCount, attrCount, topo,
-                                                 cull, blend, depthTest, depthWrite);
     std::string path = GlShaderPath(shaderDir, vsName);
     std::string vsSrc = ReadText(path);
     if (vsSrc.empty()) { fprintf(stderr, "[gl] 找不到着色器 %s\n", path.c_str()); return VK_NULL_HANDLE; }
     std::string fsSrc = ReadText(GlShaderPath(shaderDir, fsName));
     if (fsSrc.empty()) { fprintf(stderr, "[gl] 找不到着色器 %s\n", fsName); return VK_NULL_HANDLE; }
-    uint32_t v = CompileShader(gfxgl::kVertShader, vsSrc, vsName);
-    uint32_t f = CompileShader(gfxgl::kFragShader, fsSrc, fsName);
+    uint32_t v = ::CompileShader(gfxgl::kVertShader, vsSrc, vsName);
+    uint32_t f = ::CompileShader(gfxgl::kFragShader, fsSrc, fsName);
     if (!v || !f) { if (v) gfxgl::DeleteShader(v); if (f) gfxgl::DeleteShader(f); return VK_NULL_HANDLE; }
     uint32_t p = gfxgl::CreateProgram();
     gfxgl::AttachShader(p, v);
@@ -1013,3 +977,9 @@ VkPipeline makePipeline(VkCtx& ctx, VkRenderPass rp, VkPipelineLayout layout,
     return out;
 }
 } // namespace gfxutil
+} // namespace gfxgl
+
+bool gfxGLInit(VkCtx& ctx, Window& win, int w, int h, bool forceLegacy) { return gfxgl::gfxGLInit(ctx, win, w, h, forceLegacy); }
+void gfxGLSwap(VkCtx& ctx) { gfxgl::gfxGLSwap(ctx); }
+void gfxGLShutdown(VkCtx& ctx) { gfxgl::gfxGLShutdown(ctx); }
+uint32_t& GfxSkyTriangle() { return gfxgl::GfxSkyTriangle(); }

@@ -92,12 +92,25 @@ struct VkCtx {
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 };
 
-// OpenGL 回退入口，只在 Vulkan 初始化失败时由 main 调用。
+// 非 Vulkan 后端的统一入口：init 由 main 按 --renderer 选择，其余由 VkCtx 调用。
 bool gfxGLInit(VkCtx& ctx, Window& win, int w, int h, bool forceLegacy = false);
 bool gfxAngleInit(VkCtx& ctx, Window& win, int w, int h);
+bool gfxD3D11Init(VkCtx& ctx, Window& win, int w, int h);
+bool gfxD3D12Init(VkCtx& ctx, Window& win, int w, int h);
+bool gfxD3D9Init(VkCtx& ctx, Window& win, int w, int h);
 void gfxGLSwap(VkCtx& ctx);
 void gfxGLShutdown(VkCtx& ctx);
 void gfxAngleSwap();
 void gfxAngleShutdown();
+void gfxSwap(VkCtx& ctx);
+void gfxShutdown(VkCtx& ctx);
+void gfxOnResize(VkCtx& ctx, int w, int h);
+void gfxD3D11Swap();
+void gfxD3D11Resize(int w, int h);
+void gfxD3D12Swap();
+void gfxD3D9Swap();
+void gfxD3D11Shutdown(VkCtx& ctx);
+void gfxD3D12Shutdown(VkCtx& ctx);
+void gfxD3D9Shutdown(VkCtx& ctx);
 extern bool g_gfxUseEGL;
 uint32_t& GfxSkyTriangle();

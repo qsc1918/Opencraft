@@ -9,6 +9,7 @@
 #include "portal.hpp"
 #include "raycast.hpp"
 #include "renderer.hpp"
+#include "gfx_shim.hpp"
 #include "save.hpp"
 #include "menu.hpp"
 #include "vk.hpp"
@@ -124,7 +125,7 @@ static Args parseArgs(int argc, char** argv) {
             printf("Usage: opencraft [--seed N] [--render-dist N] [--threads N] [--pos x,y,z]\n"
                    "  [--screenshot out.png] [--frames N] [--no-vsync] [--no-ui]\n"
                    "  [--time f] [--drive] [--break x,y,z] [--inventory] [--gpu-index N]\n"
-                   "  [--renderer vulkan|opengl|angle|auto]（默认 auto：Vulkan→GL→ANGLE）\n"
+                   "  [--renderer vulkan|opengl|angle|d3d11|d3d12|d3d9|auto]（默认 auto：Vulkan→GL→ANGLE）\n"
                    "  [--gl-legacy] 诊断用：强制走 OpenGL 2.1 老设备档\n"
                    "  [--place x,y,z,id] [--use-eye x,y,z] [--spawn-portal]\n"
                    "  [--tp-dim overworld|nether|end] 进入世界后立刻切维度（调试）\n"
@@ -180,6 +181,9 @@ int main(int argc, char** argv) {
     Args a = parseArgs(argc, argv);
 #ifdef _WIN32
     SetProcessDPIAware();   // Windows 上别让系统缩放弄糊界面
+    // 源码与字面量都是 UTF-8，控制台默认代码页是 GBK，会把中文输出弄乱。
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
 #endif
 
     if (a.showVersion) {
@@ -198,29 +202,36 @@ int main(int argc, char** argv) {
     ctx.vsync = a.noVsync ? false : opts.vsync;
     // 显卡选择优先级：命令行 --gpu-index > options.txt > 自动（独显优先）
     ctx.desiredGpuIndex = a.gpuIndex >= 0 ? a.gpuIndex : opts.gpuIndex;
-    // 主后端永远是 Vulkan；OpenGL 只在显式指定或 Vulkan 完全不可用时作为回退。
-    bool vulkanTried = a.rendererArg == "auto" || a.rendererArg == "vulkan";
+    // 主后端永远是 Vulkan；D3D / OpenGL / ANGLE 只在显式指定或 Vulkan 失败时启用。
+    const bool isD3D = a.rendererArg == "d3d11" || a.rendererArg == "d3d12" || a.rendererArg == "d3d9";
+    bool vulkanTried = !isD3D && (a.rendererArg == "auto" || a.rendererArg == "vulkan");
     if (vulkanTried && ctx.init(win, 1280, 720)) {
         printf("[main] 使用 Vulkan 主后端\n");
+        g_gfxBackend = GfxBackend::Vulkan;
     } else {
         if (vulkanTried) printf("Vulkan init failed: %s\n", ctx.lastError.c_str());
         if (a.rendererArg == "vulkan") return 1;
-        // Vulkan 初始化可能已留下实例/表面，先清掉再建 GL 上下文。
+        // Vulkan 初始化可能已留下实例/表面，先清掉再建其他上下文。
         if (ctx.instance) {
             if (ctx.surface) vkDestroySurfaceKHR(ctx.instance, ctx.surface, nullptr);
             vkDestroyInstance(ctx.instance, nullptr);
         }
         ctx.instance = VK_NULL_HANDLE;
         ctx.surface = VK_NULL_HANDLE;
-        bool glOk = a.rendererArg != "angle" && gfxGLInit(ctx, win, 1280, 720, a.forceLegacyGL);
-        if (!glOk && a.rendererArg != "opengl") {
-            printf("[main] 尝试 ANGLE / GLES2 兜底\n");
-            glOk = gfxAngleInit(ctx, win, 1280, 720);
+        bool gfxOk = false;
+        if (a.rendererArg == "d3d11") gfxOk = gfxD3D11Init(ctx, win, 1280, 720);
+        else if (a.rendererArg == "d3d12") gfxOk = gfxD3D12Init(ctx, win, 1280, 720);
+        else if (a.rendererArg == "d3d9") gfxOk = gfxD3D9Init(ctx, win, 1280, 720);
+        else {
+            bool glOk = a.rendererArg != "angle" && gfxGLInit(ctx, win, 1280, 720, a.forceLegacyGL);
+            if (!glOk && a.rendererArg != "opengl") {
+                printf("[main] 尝试 ANGLE / GLES2 兜底\n");
+                glOk = gfxAngleInit(ctx, win, 1280, 720);
+            }
+            gfxOk = glOk;
+            if (!glOk) printf("OpenGL fallback failed: 本机没有可用的 GL/ANGLE 上下文\n");
         }
-        if (!glOk) {
-            printf("OpenGL fallback failed: 本机没有可用的 GL/ANGLE 上下文\n");
-            return 1;
-        }
+        if (!gfxOk) return 1;
     }
 
     Renderer renderer;

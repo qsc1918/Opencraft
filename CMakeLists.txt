@@ -109,6 +109,7 @@ add_executable(opencraft
   src/camera.cpp
   src/player.cpp
   src/renderer.cpp
+  src/gfx_dispatch.cpp
   src/gfx_gl.cpp
   src/gfx_angle.cpp
   src/save.cpp
@@ -117,6 +118,11 @@ add_executable(opencraft
   src/version.cpp
   src/volk_impl.c
 )
+
+# D3D 后端只在 Windows 编译，Linux 产物与改动前一致。
+if(WIN32)
+  target_sources(opencraft PRIVATE src/gfx_d3d11.cpp src/gfx_d3d12.cpp src/gfx_d3d9.cpp)
+endif()
 
 # 生成头文件目录（版本号）也要能被包含
 # volk 走仓库内的 third_party/volk，不用 SDK 的：SDK 里是 Include/Volk（大写），
@@ -211,7 +217,8 @@ add_custom_target(gl_shaders ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gl330 ${SPV}/gl330
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gl120 ${SPV}/gl120
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/shaders/gles100 ${SPV}/gles100
-  COMMENT "复制 OpenGL 回退着色器"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/shaders/hlsl11 ${SPV}/hlsl11
+  COMMENT "复制 OpenGL 回退与 D3D11 着色器"
 )
 add_dependencies(opencraft gl_shaders)
 

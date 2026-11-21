@@ -62,6 +62,22 @@ Opencraft 是一个 C++20 写的单进程体素沙盒游戏，自带手写 Vulka
 
 ### 未完成 / 已知差距
 
+- **独立 D3D 后端（2026-11-21 进行中，未完成）**：派发层已重构为 `GfxBackend` 枚举 +
+  `gfx_dispatch.cpp`。`--renderer d3d11` 当前走 ANGLE 的 D3D11 上下文，原生 D3D11 实现保留在
+  `src/gfx_d3d11.cpp`，可用 `OPENCRAFT_D3D11_NATIVE=1` 打开继续调试，但画面尚未通过验证。
+  D3D12/D3D9 仍是返回失败的入口占位。`auto` 顺序保持 Vulkan→GL→ANGLE。
+- **控制台中文**：Windows 入口已调用 `SetConsoleOutputCP(CP_UTF8)` / `SetConsoleCP(CP_UTF8)`，
+  cmd / PowerShell / 双击运行均可正常显示中文输出。
+- **OpenGL 3.3 档**：`CreateGlContext` 原来把 `WGL_CONTEXT_MAJOR_VERSION_ARB` / `MINOR` 错写成
+  `0x2028` / `0x2029`（正确是 `0x2091` / `0x2092`），导致核心上下文永远创建失败、每次都退回
+  GL 2.1。修正后 Intel 4.6 驱动能正常走 3.3 完整档。
+- **GL 地形遮挡错乱**：`glClear` 受上一帧残留的 `DepthMask(false)` 影响，移动/转视角后深度没有
+  真正清空，近处地形被旧深度挡掉。`CmdBeginRenderPass` 清屏前强制 `DepthMask(true)` 修复。
+- **GL 老设备档**：区块缓冲会被 `freePool_` 复用并原地改写，`EnsureLegacyFormat` 现在按数据签名
+  重建转换后的顶点/索引缓冲，避免复用后画出上一块几何。
+- **ANGLE 白屏**：`gfxGLSwap` 原来先检查 `g_glctx.valid`，ANGLE 不经过 WGL 所以该标志永远为
+  false，`eglSwapBuffers` 从未被调用，交互窗口一直显示白色（静态截图走 `readPixels` 所以测不出）。
+  现在 EGL 分支在检查前直接交换。
 - **主世界生成**没按原版，等后续翻新（用户明确说这是以后的事）。
 - **末影龙 / 折跃门 / 龙蛋 / 末地城**暂不做（用户暂时不要）；龙相关代码是旧的，未与新生成对齐。
 - 紫颂果（吃、传送）未做；紫颂花只做种植与生长。

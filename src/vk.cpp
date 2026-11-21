@@ -517,7 +517,7 @@ void VkCtx::destroyDepth() {
 }
 
 bool VkCtx::recreateSwapchain(int w, int h) {
-    if (useGL) { extent = { (uint32_t)w, (uint32_t)h }; return true; }
+    if (useGL) { extent = { (uint32_t)w, (uint32_t)h }; gfxOnResize(*this, w, h); return true; }
     vkDeviceWaitIdle(device);
     destroySwapchainObjects();
     destroyDepth();
@@ -599,7 +599,7 @@ bool VkCtx::acquireNext(Frame& f, uint32_t& imageIndex) {
 }
 
 bool VkCtx::presentImage(uint32_t imageIndex, Frame& f, VkCommandBuffer cmd) {
-    if (useGL) { gfxGLSwap(*this); return true; }
+    if (useGL) { gfxSwap(*this); return true; }
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo si = {};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -624,7 +624,7 @@ bool VkCtx::presentImage(uint32_t imageIndex, Frame& f, VkCommandBuffer cmd) {
 }
 
 void VkCtx::shutdown() {
-    if (useGL) { gfxGLShutdown(*this); return; }
+    if (useGL) { gfxShutdown(*this); return; }
     vkDeviceWaitIdle(device);
     destroySwapchainObjects();
     destroyDepth();
